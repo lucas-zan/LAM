@@ -8,7 +8,8 @@ use localagentmanager_core::{
     execute_create_account as core_execute_create_account,
     execute_create_relay as core_execute_create_relay, execute_sync as core_execute_sync,
     get_profile_quota as core_get_profile_quota, list_accounts as core_list_accounts,
-    list_cached_quotas as core_list_cached_quotas, list_providers as core_list_providers,
+    list_cached_accounts as core_list_cached_accounts, list_cached_quotas as core_list_cached_quotas,
+    list_providers as core_list_providers,
     list_sessions as core_list_sessions, open_terminal_for_login as core_open_terminal_for_login,
     open_terminal_with_command as core_open_terminal_with_command,
     open_terminal_with_resume as core_open_terminal_with_resume,
@@ -74,6 +75,12 @@ pub fn health_check() -> Result<HealthCheck, AppError> {
 pub async fn list_accounts() -> Result<Vec<CodexAccount>, AppError> {
     let home = home_root()?;
     run_blocking(move || core_list_accounts(&home)).await
+}
+
+#[tauri::command]
+pub async fn list_cached_accounts() -> Result<Vec<CodexAccount>, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_list_cached_accounts(&home)).await
 }
 
 #[tauri::command]

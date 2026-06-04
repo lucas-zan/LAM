@@ -1,8 +1,20 @@
 mod commands;
 mod tray;
 
+use tauri::{Manager, WindowEvent};
+
 fn main() {
     tauri::Builder::default()
+        .on_window_event(|window, event| {
+            if window.label() != tray::POPOVER_LABEL {
+                return;
+            }
+            if let WindowEvent::Focused(false) = event {
+                if window.is_visible().unwrap_or(false) {
+                    let _ = tray::hide_quota_popover(window.app_handle());
+                }
+            }
+        })
         .setup(|app| {
             tray::setup_tray(app.handle())?;
             Ok(())
@@ -10,6 +22,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::health_check,
             commands::list_accounts,
+            commands::list_cached_accounts,
             commands::list_sessions,
             commands::plan_create_account,
             commands::execute_create_account,

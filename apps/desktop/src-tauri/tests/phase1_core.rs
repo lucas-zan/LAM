@@ -1,7 +1,8 @@
 use localagentmanager_core::{
     attach_provider_to_profile, build_resume_command, create_account_plan, create_provider,
     create_relay_plan, delete_provider, execute_attach_provider_to_profile, execute_create_account,
-    execute_create_relay, execute_sync, get_profile_quota, list_accounts, list_cached_quotas,
+    execute_create_relay, execute_sync, get_profile_quota, list_accounts, list_cached_accounts,
+    list_cached_quotas,
     list_providers, list_sessions, plan_attach_provider_to_profile, refresh_all_quotas,
     relay_resume_session, sync_plan, terminal_applescript, AttachProviderRequest,
     CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, RelayResumeRequest,
@@ -582,6 +583,23 @@ fn resume_command_is_escaped_and_has_no_arbitrary_shell_input() {
     let script = terminal_applescript(&command.command);
     assert!(script.contains("tell application \"Terminal\""));
     assert!(script.contains("do script"));
+}
+
+#[test]
+fn accounts_cache_roundtrip_and_fast_read() {
+    let home = temp_home("accounts-cache");
+    seed_codex_home(&home, "a");
+    seed_codex_home(&home, "b");
+
+    assert!(list_cached_accounts(&home).unwrap().is_empty());
+
+    let scanned = list_accounts(&home).unwrap();
+    assert_eq!(scanned.len(), 2);
+
+    let cached = list_cached_accounts(&home).unwrap();
+    assert_eq!(cached.len(), 2);
+    assert!(cached.iter().any(|account| account.id == "a"));
+    assert!(cached.iter().any(|account| account.id == "b"));
 }
 
 #[test]

@@ -1,27 +1,42 @@
-import { useCallback, useEffect, useState } from "react";
-import type { CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties, PointerEvent } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import {
   hideQuotaPopover,
   listAccounts,
+  listCachedAccounts,
   listCachedQuotas,
   listSessions,
   openTerminalWithCommand,
   openTerminalWithResume,
   relayResumeSession,
-  refreshAllQuotas,
+  getProfileQuota,
   inTauri,
   setQuotaPopoverOpacity,
 } from "../lib/api";
-import { quotaColorState, quotaRemainingPercent } from "../lib/quota";
+import {
+  averagePrimaryRemainingPercent,
+  countAccountsWithAvailableQuota,
+  countAccountsWithQuotaData,
+  mergeQuotaSnapshots,
+  quotaColorState,
+  quotaRemainingPercent,
+} from "../lib/quota";
 import { formatResetCountdown } from "../lib/reset";
 import type { ThemeMode } from "../lib/theme";
 import { TRAY_POPOVER_OPACITY_PERCENT } from "../lib/tray-popover-prefs";
 import type { CodexAccount, CodexSession, DivergedSessionStrategy, UsageQuotaSnapshot } from "../lib/types";
 import { IconClock, IconClose, IconExternalLink, IconLogo, IconRefresh } from "./icons";
 import { UIButton } from "./ui-button";
+
+type ProviderGroup = {
+  id: string;
+  title: string;
+  meta: string;
+  accounts: CodexAccount[];
+};
 
 function formatError(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -78,17 +93,6 @@ function quotaStateFromRemaining(remaining: number | null) {
   return remaining === null ? "na" : quotaColorState(100 - remaining);
 }
 
-function averageRemaining(quotas: UsageQuotaSnapshot[]): number | null {
-  const values = quotas
-    .flatMap((quota) => [
-      quotaRemainingPercent(quota.primaryUsedPercent),
-      quotaRemainingPercent(quota.secondaryUsedPercent),
-    ])
-    .filter((value): value is number => value !== null);
-  if (!values.length) return null;
-  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
-}
-
 function sortByLatestActivity(accounts: CodexAccount[]) {
   return [...accounts].sort((a, b) => {
     const aLatest = a.latestSessionModifiedAt ?? 0;
@@ -128,6 +132,7 @@ export function TrayQuotaPanel() {
   const [status, setStatus] = useState("Loading…");
   const [refreshing, setRefreshing] = useState(false);
   const [relayingAccountId, setRelayingAccountId] = useState<string>("");
+  const [activeProviderId, setActiveProviderId] = useState("codex");
   const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => readResolvedTheme());
 
   const applyTheme = useCallback(() => {
@@ -175,13 +180,37 @@ export function TrayQuotaPanel() {
       setStatus("Refreshing…");
     }
     try {
+      if (!forceRefresh) {
+        try {
+          const cached = await listCachedAccounts();
+          if (cached.length) {
+            setAccounts(cached);
+            void loadActiveSession(cached);
+            const cachedIds = cached.map((a) => a.id);
+            const cachedQuotas = await listCachedQuotas(cachedIds.length ? cachedIds : undefined);
+            setQuotas(cachedQuotas);
+            setStatus(`Cached · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+          }
+        } catch {
+          /* cache miss is fine */
+        }
+      }
+
       const accountData = await listAccounts();
       setAccounts(accountData);
       void loadActiveSession(accountData);
       const ids = accountData.map((a) => a.id);
       if (forceRefresh && ids.length) {
-        const result = await refreshAllQuotas(ids);
-        setQuotas(result.snapshots);
+        await Promise.all(
+          ids.map(async (profileId) => {
+            try {
+              const snapshot = await getProfileQuota(profileId, true);
+              setQuotas((current) => mergeQuotaSnapshots(current, snapshot));
+            } catch (err) {
+              setStatus(formatError(err));
+            }
+          }),
+        );
         setStatus(`Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       } else {
         const cached = await listCachedQuotas(ids.length ? ids : undefined);
@@ -215,6 +244,12 @@ export function TrayQuotaPanel() {
       return;
     }
     await getCurrentWebviewWindow().hide();
+  }
+
+  function onClosePointerDown(event: PointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    void closePopover();
   }
 
   async function openMain() {
@@ -254,22 +289,33 @@ export function TrayQuotaPanel() {
     }
   }
 
-  const liveQuotaCount = quotas.filter(
-    (quota) => quota.primaryUsedPercent !== null && quota.primaryUsedPercent !== undefined,
-  ).length;
-  const avgRemaining = averageRemaining(quotas);
+  const accountsWithQuotaData = countAccountsWithQuotaData(quotas);
+  const availableQuotaAccounts = countAccountsWithAvailableQuota(accounts, quotas);
+  const avg5hRemaining = averagePrimaryRemainingPercent(quotas);
   const activeAccount = activeSession ? accounts.find((account) => account.id === activeSession.accountId) : undefined;
   const orderedAccounts = sortByLatestActivity(accounts);
-  const accountGroups = accounts.length
-    ? [
-        {
-          id: "codex",
-          title: "Codex",
-          meta: "CLI",
-          accounts: orderedAccounts,
-        },
-      ]
-    : [];
+
+  const providerGroups = useMemo<ProviderGroup[]>(() => {
+    if (!accounts.length) return [];
+    return [
+      {
+        id: "codex",
+        title: "Codex",
+        meta: "CLI",
+        accounts: orderedAccounts,
+      },
+    ];
+  }, [accounts.length, orderedAccounts]);
+
+  const showProviderTabs = providerGroups.length > 1;
+  const activeGroup =
+    providerGroups.find((group) => group.id === activeProviderId) ?? providerGroups[0];
+
+  useEffect(() => {
+    if (!providerGroups.some((group) => group.id === activeProviderId)) {
+      setActiveProviderId(providerGroups[0]?.id ?? "codex");
+    }
+  }, [activeProviderId, providerGroups]);
 
   return (
     <div className="trayPopoverPanel" data-theme={resolvedTheme}>
@@ -280,33 +326,47 @@ export function TrayQuotaPanel() {
           </span>
           <div>
             <h2>LAM quota</h2>
-            <p><IconClock size={12} /> {status}</p>
+            <p>
+              <IconClock size={12} /> {status}
+            </p>
           </div>
         </div>
-        <button
-          type="button"
-          className={`trayPopoverClose trayRefreshButton ${refreshing ? "isRefreshing" : ""}`}
-          aria-label={refreshing ? "Refreshing quotas" : "Refresh quotas"}
-          aria-busy={refreshing}
-          disabled={refreshing}
-          onClick={() => void load(true)}
-        >
-          <IconRefresh size={16} />
-        </button>
+        <div className="trayPopoverHeadActions">
+          <button
+            type="button"
+            className={`trayPopoverIconBtn trayRefreshButton ${refreshing ? "isRefreshing" : ""}`}
+            aria-label={refreshing ? "Refreshing quotas" : "Refresh quotas"}
+            aria-busy={refreshing}
+            disabled={refreshing}
+            onClick={() => void load(true)}
+          >
+            <IconRefresh size={14} />
+          </button>
+          <button
+            type="button"
+            className="trayPopoverIconBtn trayDismissButton"
+            aria-label="Close panel"
+            onPointerDown={onClosePointerDown}
+          >
+            <IconClose size={14} />
+          </button>
+        </div>
       </header>
 
       <section className="trayStats" aria-label="Quota summary">
         <div>
           <span>Accounts</span>
-          <strong>{accounts.length}</strong>
+          <strong>
+            {accountsWithQuotaData}/{accounts.length || 0}
+          </strong>
         </div>
         <div>
-          <span>Average</span>
-          <strong>{avgRemaining === null ? "N/A" : `${avgRemaining}%`}</strong>
+          <span>5h avg</span>
+          <strong>{avg5hRemaining === null ? "N/A" : `${avg5hRemaining}%`}</strong>
         </div>
         <div>
-          <span>Live</span>
-          <strong>{liveQuotaCount}</strong>
+          <span>Usable</span>
+          <strong>{availableQuotaAccounts}</strong>
         </div>
       </section>
 
@@ -317,67 +377,102 @@ export function TrayQuotaPanel() {
       </section>
 
       <div className="trayPopoverList">
-        {!accounts.length ? (
+        {!activeGroup ? (
           <p className="trayPopoverEmpty">No Codex profiles found.</p>
         ) : (
-          accountGroups.map((group) => (
-            <section className="trayProviderGroup" key={group.id} aria-label={`${group.title} accounts`}>
-              <div className="trayProviderGroupHead">
-                <div>
-                  <span className="trayProviderIcon" aria-hidden>
-                    <IconLogo size={16} />
-                  </span>
-                  <strong>{group.title}</strong>
-                  <em>{group.accounts.length}</em>
-                </div>
-                <span>{group.meta}</span>
+          <>
+            {showProviderTabs ? (
+              <div className="trayProviderTabs" role="tablist" aria-label="Provider groups">
+                {providerGroups.map((group) => (
+                  <button
+                    key={group.id}
+                    type="button"
+                    role="tab"
+                    id={`tray-tab-${group.id}`}
+                    aria-selected={group.id === activeGroup.id}
+                    aria-controls={`tray-panel-${group.id}`}
+                    className={`trayProviderTab ${group.id === activeGroup.id ? "isActive" : ""}`}
+                    onClick={() => setActiveProviderId(group.id)}
+                  >
+                    {group.title}
+                    <em>{group.accounts.length}</em>
+                  </button>
+                ))}
               </div>
+            ) : null}
+
+            <div
+              className="trayProviderPanel"
+              role="tabpanel"
+              id={`tray-panel-${activeGroup.id}`}
+              aria-labelledby={showProviderTabs ? `tray-tab-${activeGroup.id}` : undefined}
+            >
+              {showProviderTabs ? (
+                <div className="trayProviderPanelMeta">
+                  <span>{activeGroup.meta}</span>
+                </div>
+              ) : null}
+
               <div className="trayProviderRows">
-                {group.accounts.map((account) => {
+                {activeGroup.accounts.map((account) => {
                   const quota = quotas.find((q) => q.profileId === account.id);
                   const title = account.displayName.trim() || account.id;
                   const remaining = accountRemaining(quota);
                   const state = quotaStateFromRemaining(remaining);
+                  const isActiveAccount = activeSession?.accountId === account.id;
                   return (
                     <div className="trayAccountRow" key={account.id}>
-                      <div className="trayAccountMain">
-                        <TrayAccountRing remaining={remaining} title={title} />
-                        <strong>{title}</strong>
+                      <div className="trayAccountRowTop">
+                        <div className="trayAccountMain">
+                          <TrayAccountRing remaining={remaining} title={title} />
+                          <div className="trayAccountNameWrap">
+                            <strong title={title}>{title}</strong>
+                            {isActiveAccount ? (
+                              <span className="accountActiveBadge" aria-label="Active session account">
+                                Active
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <strong className={`trayAccountRemaining trayAccountRemaining--${state}`}>
+                          {remaining === null ? "N/A" : `${remaining}%`}
+                        </strong>
+                        <button
+                          type="button"
+                          className="trayRelayButton"
+                          disabled={!activeSession || relayingAccountId === account.id}
+                          onClick={() => void relayTo(account)}
+                        >
+                          {activeSession?.accountId === account.id ? "Resume" : "Relay"}
+                        </button>
                       </div>
                       <div className="trayAccountMeters">
                         <TrayQuotaMeter label="5h" used={quota?.primaryUsedPercent} resetAt={quota?.resetAt} />
-                        <TrayQuotaMeter label="7d" used={quota?.secondaryUsedPercent} resetAt={quota?.secondaryResetAt} />
+                        <TrayQuotaMeter label="weekly" used={quota?.secondaryUsedPercent} resetAt={quota?.secondaryResetAt} />
                       </div>
-                      <strong className={`trayAccountRemaining trayAccountRemaining--${state}`}>
-                        {remaining === null ? "N/A" : `${remaining}%`}
-                      </strong>
-                      <button
-                        type="button"
-                        className="trayRelayButton"
-                        disabled={!activeSession || relayingAccountId === account.id}
-                        onClick={() => void relayTo(account)}
-                      >
-                        {activeSession?.accountId === account.id ? "Resume" : "Relay"}
-                      </button>
                     </div>
                   );
                 })}
               </div>
-            </section>
-          ))
+            </div>
+          </>
         )}
       </div>
 
       <footer className="trayPopoverFoot">
         <div className="trayPopoverActions">
+          <UIButton
+            size="sm"
+            variant="ghost"
+            onPointerDown={onClosePointerDown}
+          >
+            <IconClose size={13} />
+            Close
+          </UIButton>
+          <span />
           <UIButton size="sm" variant="primary" onClick={() => void openMain()}>
             <IconExternalLink size={13} />
             Open
-          </UIButton>
-          <span />
-          <UIButton size="sm" variant="ghost" onClick={() => void closePopover()}>
-            <IconClose size={13} />
-            Close
           </UIButton>
         </div>
       </footer>

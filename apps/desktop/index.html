@@ -4,6 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LAM (LocalAgentManager)</title>
+    <script>
+      (function () {
+        var theme = localStorage.getItem("lam-theme");
+        var dark =
+          theme === "dark" ||
+          (theme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        document.documentElement.style.background = dark ? "#0b0d12" : "#eef0f4";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

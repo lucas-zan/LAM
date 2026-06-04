@@ -42,7 +42,7 @@ const checks = [
   ["grouped sync plan", app.includes("planGrouped") && app.includes("Will copy")],
   [
     "quota status states",
-    app.includes("Quota live") &&
+    app.includes("Quota usable") &&
       app.includes("\"N/A\"") &&
       app.includes("% left") &&
       app.includes("quotaColorState") &&
@@ -58,10 +58,15 @@ const checks = [
     "tray quota reference style",
     app.includes("trayBrandMark") &&
       app.includes("trayStats") &&
-      app.includes("trayProviderGroup") &&
-      app.includes("trayProviderGroupHead") &&
+      app.includes("trayProviderTabs") &&
+      app.includes("trayProviderPanel") &&
+      app.includes("showProviderTabs") &&
       app.includes("trayAccountRow") &&
+      app.includes("trayAccountRowTop") &&
+      app.includes("accountActiveBadge") &&
+      !app.includes("trayAccountRow--active") &&
       app.includes("trayAccountRing") &&
+      app.includes("trayRelayButton") &&
       app.includes("trayRefreshButton") &&
       app.includes("trayResetLine") &&
       app.includes("trayQuotaMeter") &&
@@ -69,15 +74,22 @@ const checks = [
       app.includes("trayQuotaMeter--warn") &&
       app.includes("trayQuotaMeter--danger") &&
       app.includes("formatResetCountdown") &&
+      app.includes('label="5h"') &&
+      app.includes('label="weekly"') &&
+      app.includes("grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)") &&
       app.includes("Refreshing…") &&
       app.includes("latestSessionModifiedAt") &&
       app.includes("LAM quota") &&
+      app.includes("countAccountsWithAvailableQuota") &&
+      app.includes("accountsWithQuotaData") &&
+      app.includes("availableQuotaAccounts") &&
+      app.includes("height: 24px") &&
       app.includes("trayPopoverActions") &&
-      app.includes("inset: 3px") &&
-      app.includes("height: 3px") &&
-      app.includes("border: 0") &&
-      app.includes("background: transparent") &&
-      app.includes("rgba(36, 37, 36, 0.97)") &&
+      app.includes("inset: 4px") &&
+      app.includes("height: 5px") &&
+      app.includes("rgba(32, 33, 32, 0.98)") &&
+      !app.includes("trayProviderGroup") &&
+      !app.includes("trayAccountCard") &&
       !app.includes("trayRefreshBtn") &&
       !app.includes("trayOpacityMini"),
   ],
@@ -100,16 +112,30 @@ const checks = [
       app.includes("width: 100%"),
   ],
   [
+    "startup accounts cache then scan",
+    app.includes("listCachedAccounts") &&
+      app.includes("applyAccountsList") &&
+      app.includes("fromCache: true") &&
+      app.includes("scanning…") &&
+      api.includes("list_cached_accounts") &&
+      tauriCommands.includes("pub async fn list_cached_accounts") &&
+      tauriCore.includes("fn list_cached_accounts") &&
+      tauriCore.includes("accounts-cache.json"),
+  ],
+  [
     "startup quota is nonblocking",
     app.includes("void loadCachedQuotas(accountData.map((account) => account.id))") &&
       app.includes("scheduleQuotaRefresh(accountData.map((account) => account.id), QUOTA_INITIAL_DELAY_MS)") &&
-      app.includes("Promise.allSettled(targets.map((profileId) => getProfileQuota(profileId, true)))") &&
-      app.includes("quotaRefreshInFlightRef.current") &&
+      app.includes("getProfileQuota(profileId, true)") &&
+      app.includes("mergeQuotaSnapshots(current, snapshot)") &&
+      !app.includes("quotaRefreshInFlightRef") &&
+      !app.includes("refreshAllQuotas(ids)") &&
       !app.includes("await refreshAllQuotas(accountData.map((account) => account.id))"),
   ],
   [
     "cached real quota startup path",
     app.includes("listCachedQuotas") &&
+      app.includes("listCachedAccounts") &&
       api.includes("list_cached_quotas") &&
       api.includes("invoke<UsageQuotaSnapshot[]>(\"list_cached_quotas\""),
   ],

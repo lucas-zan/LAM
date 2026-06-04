@@ -2,7 +2,7 @@ use localagentmanager_core::{list_accounts, refresh_all_quotas, AppError};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{
     image::Image,
     include_image,
@@ -14,12 +14,36 @@ use tauri::{
 const TRAY_MENU_ICON: Image<'_> = include_image!("icons/tray-menu-template.png");
 
 pub const TRAY_ID: &str = "lam-quota-tray";
+pub const POPOVER_LABEL: &str = "quota-popover";
 const REFRESH_MENU_ID: &str = "tray-refresh";
 const SHOW_MENU_ID: &str = "tray-show";
-const POPOVER_LABEL: &str = "quota-popover";
+const MAIN_LABEL: &str = "main";
 
 static TRAY_BUSY: Mutex<bool> = Mutex::new(false);
 static POPOVER_OPACITY_PERCENT: AtomicU8 = AtomicU8::new(100);
+static TRAY_CLICK_SUPPRESS_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
+
+const TRAY_CLICK_SUPPRESS_AFTER_CLOSE: Duration = Duration::from_millis(650);
+
+fn suppress_tray_clicks_for(duration: Duration) {
+    if let Ok(mut guard) = TRAY_CLICK_SUPPRESS_UNTIL.lock() {
+        *guard = Some(Instant::now() + duration);
+    }
+}
+
+fn tray_clicks_suppressed() -> bool {
+    let Ok(mut guard) = TRAY_CLICK_SUPPRESS_UNTIL.lock() else {
+        return false;
+    };
+    let Some(until) = *guard else {
+        return false;
+    };
+    if Instant::now() < until {
+        return true;
+    }
+    *guard = None;
+    false
+}
 
 #[cfg(target_os = "macos")]
 fn apply_macos_popover_chrome<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), AppError> {
@@ -99,6 +123,10 @@ pub fn hide_quota_popover<R: Runtime>(app: &AppHandle<R>) -> Result<(), AppError
     let Some(window) = app.get_webview_window(POPOVER_LABEL) else {
         return Ok(());
     };
+    if !window.is_visible().unwrap_or(false) {
+        return Ok(());
+    }
+    suppress_tray_clicks_for(TRAY_CLICK_SUPPRESS_AFTER_CLOSE);
     window
         .hide()
         .map_err(|err| AppError::new("POPOVER_HIDE_FAILED", err.to_string()))
@@ -160,7 +188,7 @@ fn position_quota_popover<R: Runtime>(window: &WebviewWindow<R>, tray_rect: Opti
     if let Ok(Some(monitor)) = window.primary_monitor() {
         let size = monitor.size();
         let scale = monitor.scale_factor();
-        let width = 380.0;
+        let width = 328.0;
         let x = (size.width as f64 / scale) - width - 10.0;
         let _ = window.set_position(PhysicalPosition::new(
             (x * scale) as i32,
@@ -238,7 +266,14 @@ pub fn refresh_tray_menu_background<R: Runtime>(app: AppHandle<R>, force_fetch: 
     });
 }
 
+pub fn prepare_main_window_for_tray_only<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(main) = app.get_webview_window(MAIN_LABEL) {
+        let _ = main.hide();
+    }
+}
+
 pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), AppError> {
+    prepare_main_window_for_tray_only(app);
     let icon = load_tray_icon();
     let menu = build_tray_menu(app)?;
     let app_click = app.clone();
@@ -250,6 +285,9 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), AppError> {
         .show_menu_on_left_click(false)
         .icon_as_template(true)
         .on_tray_icon_event(move |_tray, event| {
+            if tray_clicks_suppressed() {
+                return;
+            }
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,

@@ -347,7 +347,12 @@ pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
         });
     }
     accounts.sort_by(|a, b| a.id.cmp(&b.id));
+    write_accounts_cache(home_root, &accounts)?;
     Ok(accounts)
+}
+
+pub fn list_cached_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
+    Ok(read_accounts_cache(home_root)?.unwrap_or_default())
 }
 
 pub fn list_sessions(home_root: &Path, profile_id: &str) -> Result<Vec<CodexSession>> {
@@ -1609,6 +1614,46 @@ fn provider_store_path(home_root: &Path) -> PathBuf {
 
 fn quota_cache_dir(home_root: &Path) -> PathBuf {
     config_root(home_root).join("quota-cache")
+}
+
+fn accounts_cache_path(home_root: &Path) -> PathBuf {
+    config_root(home_root).join("accounts-cache.json")
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountsCacheFile {
+    home_root: String,
+    fetched_at: u64,
+    accounts: Vec<CodexAccount>,
+}
+
+fn write_accounts_cache(home_root: &Path, accounts: &[CodexAccount]) -> Result<()> {
+    if accounts.is_empty() {
+        return Ok(());
+    }
+    let payload = AccountsCacheFile {
+        home_root: home_root.to_string_lossy().to_string(),
+        fetched_at: system_secs(SystemTime::now()),
+        accounts: accounts.to_vec(),
+    };
+    let body = serde_json::to_string_pretty(&payload)
+        .map_err(|err| AppError::new("ACCOUNTS_CACHE_INVALID", err.to_string()))?;
+    write_file_private(&accounts_cache_path(home_root), &format!("{body}\n"))
+}
+
+fn read_accounts_cache(home_root: &Path) -> Result<Option<Vec<CodexAccount>>> {
+    let path = accounts_cache_path(home_root);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let body = fs::read_to_string(path)?;
+    let payload: AccountsCacheFile = serde_json::from_str(&body)
+        .map_err(|err| AppError::new("ACCOUNTS_CACHE_INVALID", err.to_string()))?;
+    if payload.home_root != home_root.to_string_lossy() {
+        return Ok(None);
+    }
+    Ok(Some(payload.accounts))
 }
 
 fn read_provider_store(home_root: &Path) -> Result<Vec<ProviderProfile>> {

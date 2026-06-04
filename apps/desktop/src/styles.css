@@ -448,27 +448,27 @@ html[data-tray-popover="1"] #root {
   display: grid;
   grid-template-rows: auto auto auto 1fr auto;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
   background:
-    linear-gradient(180deg, rgba(36, 37, 36, 0.97), rgba(28, 29, 28, 0.98)),
-    #1f201f;
-  color: #f5f5f4;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+    linear-gradient(180deg, rgba(32, 33, 32, 0.98), rgba(22, 23, 22, 0.99)),
+    #171817;
+  color: #f4f4f2;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
   font-variant-numeric: tabular-nums;
-  backdrop-filter: blur(18px) saturate(1.05);
-  -webkit-backdrop-filter: blur(18px) saturate(1.05);
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
 }
 html[data-theme="dark"] .trayPopoverPanel {
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.34);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
 }
 .trayPopoverHead {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  padding: 16px 18px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 .trayBrand {
   display: flex;
@@ -504,9 +504,19 @@ html[data-theme="dark"] .trayPopoverPanel {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.trayPopoverClose {
-  width: 38px;
-  height: 38px;
+.trayPopoverHeadActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.trayDismissButton:hover {
+  color: #ffb4bc;
+  background: rgba(255, 64, 85, 0.14);
+}
+.trayPopoverIconBtn {
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
   position: relative;
   z-index: 2;
@@ -519,7 +529,7 @@ html[data-theme="dark"] .trayPopoverPanel {
   cursor: pointer;
   border: 0;
 }
-.trayPopoverClose:hover {
+.trayPopoverIconBtn:hover {
   color: #ffffff;
   background: rgba(255, 255, 255, 0.13);
 }
@@ -543,47 +553,57 @@ html[data-theme="dark"] .trayPopoverPanel {
 .trayStats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.025);
 }
 .trayStats div {
+  position: relative;
   display: grid;
   justify-items: center;
   gap: 2px;
-  padding: 12px 8px 11px;
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 11px 6px 10px;
 }
-.trayStats div:first-child { border-left: 0; }
+.trayStats div:not(:first-child)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+}
 .trayStats span {
-  color: rgba(244, 244, 242, 0.54);
-  font-size: 11px;
-  font-weight: 700;
+  color: rgba(244, 244, 242, 0.48);
+  font-size: 10px;
+  font-weight: 750;
 }
 .trayStats strong {
-  color: #f5f5f4;
-  font-size: 22px;
+  color: #fafaf9;
+  font-size: 20px;
   line-height: 1;
-  font-weight: 850;
+  font-weight: 900;
 }
 .trayActiveSource {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr);
-  gap: 7px;
+  gap: 6px;
   align-items: center;
-  padding: 8px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.025);
+  padding: 7px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.02);
   min-width: 0;
 }
 .trayActiveSource span,
 .trayActiveSource em {
-  color: rgba(245, 245, 244, 0.45);
+  color: rgba(245, 245, 244, 0.42);
   font-size: 10px;
   font-style: normal;
   font-weight: 800;
 }
 .trayActiveSource strong {
-  color: rgba(245, 245, 244, 0.78);
+  color: rgba(245, 245, 244, 0.88);
   font-size: 11px;
   font-weight: 850;
 }
@@ -594,107 +614,123 @@ html[data-theme="dark"] .trayPopoverPanel {
 }
 .trayPopoverList {
   overflow-y: auto;
-  padding: 10px 12px 8px;
-  display: grid;
-  gap: 10px;
-}
-.trayProviderGroup {
+  padding: 8px 10px 8px;
   display: grid;
   gap: 7px;
-  min-width: 0;
+  min-height: 0;
 }
-.trayProviderGroupHead {
+.trayProviderTabs {
   display: flex;
+  gap: 6px;
+  padding: 2px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.trayProviderTab {
+  flex: 1;
+  min-height: 30px;
+  border: 0;
+  border-radius: 8px;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-  padding: 0 2px;
-  color: rgba(245, 245, 244, 0.82);
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  cursor: pointer;
+  color: rgba(245, 245, 244, 0.62);
+  font-size: 12px;
+  font-weight: 800;
+  background: transparent;
 }
-.trayProviderGroupHead div {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-.trayProviderGroupHead strong {
-  font-size: 14px;
-  font-weight: 850;
-  color: #f5f5f4;
-}
-.trayProviderGroupHead em {
-  min-width: 20px;
-  height: 18px;
-  padding: 0 6px;
+.trayProviderTab em {
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
   border-radius: 999px;
   display: inline-grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(245, 245, 244, 0.62);
-  font-size: 11px;
+  font-size: 10px;
   font-style: normal;
   font-weight: 850;
+  color: rgba(245, 245, 244, 0.5);
+  background: rgba(255, 255, 255, 0.06);
 }
-.trayProviderGroupHead > span {
+.trayProviderTab.isActive {
+  color: #f5f5f4;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.trayProviderTab.isActive em {
+  color: rgba(245, 245, 244, 0.78);
+}
+.trayProviderPanel {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.trayProviderPanelMeta {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 2px;
+}
+.trayProviderPanelMeta span {
   color: rgba(245, 245, 244, 0.42);
   font-size: 10px;
   font-weight: 850;
   letter-spacing: 0.04em;
-}
-.trayProviderIcon {
-  width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  border-radius: 5px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.06);
 }
 .trayProviderRows {
   display: grid;
   gap: 6px;
 }
 .trayAccountRow {
-  border: 1px solid rgba(255, 255, 255, 0.055);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
   display: grid;
-  grid-template-columns: minmax(92px, 0.82fr) minmax(132px, 1.42fr) minmax(34px, auto) minmax(44px, auto);
+  gap: 8px;
+  padding: 9px 10px 10px;
+  min-width: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+.trayAccountRowTop {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 9px;
-  padding: 8px 10px;
+  gap: 8px;
   min-width: 0;
 }
 .trayAccountMain {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   min-width: 0;
 }
 .trayAccountRing {
-  --ring-color: rgba(245, 245, 244, 0.32);
+  --ring-color: rgba(245, 245, 244, 0.28);
   --ring-value: 0%;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
   border-radius: 999px;
-  background: conic-gradient(var(--ring-color) var(--ring-value), rgba(255, 255, 255, 0.11) 0);
+  background: conic-gradient(var(--ring-color) var(--ring-value), rgba(255, 255, 255, 0.09) 0);
   position: relative;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 .trayAccountRing::after {
   content: "";
   position: absolute;
-  inset: 3px;
+  inset: 4px;
   border-radius: inherit;
-  background: #252625;
+  background: #1f201f;
 }
-.trayAccountRing--safe { --ring-color: #2fd071; }
-.trayAccountRing--warn { --ring-color: #f5c84c; }
-.trayAccountRing--danger { --ring-color: #ff4055; }
-.trayAccountRing--empty,
-.trayAccountRing--na { --ring-color: rgba(245, 245, 244, 0.26); }
-.trayAccountMain > strong {
+.trayAccountNameWrap {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.trayAccountNameWrap > strong {
   font-weight: 800;
   min-width: 0;
   overflow: hidden;
@@ -703,79 +739,107 @@ html[data-theme="dark"] .trayPopoverPanel {
   color: #f7f7f5;
   font-size: 13px;
 }
-.trayAccountMeters {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+.accountActiveBadge {
+  color: #2fd071;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.trayAccountNameWrap .accountActiveBadge {
+  font-size: 9px;
+}
+.cardTitleRow {
+  display: flex;
+  align-items: center;
   gap: 8px;
   min-width: 0;
 }
+.cardTitleRow h3 {
+  min-width: 0;
+}
+.trayAccountMeters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
 .trayAccountRemaining {
-  justify-self: end;
-  font-size: 14px;
-  font-weight: 850;
+  font-size: 17px;
+  font-weight: 900;
   line-height: 1;
   white-space: nowrap;
+  letter-spacing: -0.02em;
 }
-.trayAccountRemaining--safe { color: #2fd071; }
-.trayAccountRemaining--warn { color: #f5c84c; }
-.trayAccountRemaining--danger { color: #ff4055; }
+.trayAccountRemaining--safe { color: #34d875; }
+.trayAccountRemaining--warn { color: #f7c948; }
+.trayAccountRemaining--danger { color: #ff4d62; }
 .trayAccountRemaining--empty,
-.trayAccountRemaining--na { color: rgba(245, 245, 244, 0.38); }
+.trayAccountRemaining--na { color: rgba(245, 245, 244, 0.35); }
 .trayRelayButton {
-  justify-self: end;
   border: 0;
-  background: rgba(124, 92, 255, 0.14);
-  color: #9d8cff;
+  background: rgba(124, 92, 255, 0.2);
+  color: #b5a8ff;
   border-radius: 999px;
-  min-height: 24px;
-  padding: 0 8px;
+  min-height: 26px;
+  padding: 0 10px;
   font-size: 10px;
   font-weight: 850;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.22);
 }
-.trayRelayButton:hover {
-  background: rgba(124, 92, 255, 0.2);
-  color: #c8beff;
+.trayRelayButton:hover:not(:disabled) {
+  filter: brightness(1.1);
 }
 .trayRelayButton:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
+.trayAccountRing--safe { --ring-color: #34d875; }
+.trayAccountRing--warn { --ring-color: #f7c948; }
+.trayAccountRing--danger { --ring-color: #ff4d62; }
+.trayAccountRing--empty,
+.trayAccountRing--na { --ring-color: rgba(245, 245, 244, 0.26); }
 .trayQuotaMeter {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 .trayQuotaMeterHead {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 .trayQuotaMeterHead span {
-  color: rgba(245, 245, 244, 0.52);
+  color: rgba(245, 245, 244, 0.46);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 750;
   white-space: nowrap;
 }
 .trayQuotaMeterHead strong {
   font-size: 11px;
-  font-weight: 850;
-  color: rgba(245, 245, 244, 0.74);
+  font-weight: 900;
+  color: rgba(245, 245, 244, 0.82);
   white-space: nowrap;
 }
 .trayQuotaTrack {
-  height: 3px;
+  height: 5px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.12);
   overflow: hidden;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.22);
 }
 .trayQuotaTrack i {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: rgba(245, 245, 244, 0.38);
+  background: rgba(245, 245, 244, 0.42);
   transition: width 0.25s ease;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.06);
 }
 .trayResetLine {
   display: block;
@@ -783,34 +847,34 @@ html[data-theme="dark"] .trayPopoverPanel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: rgba(245, 245, 244, 0.36);
+  color: rgba(245, 245, 244, 0.32);
   font-size: 9px;
   font-weight: 700;
-  line-height: 1;
+  line-height: 1.15;
 }
 .trayQuotaMeter--safe .trayQuotaMeterHead strong,
 .trayQuotaMeter--safe .trayQuotaTrack i {
-  background: #2fd071;
+  background: linear-gradient(90deg, #2fd071, #34d875);
 }
-.trayQuotaMeter--safe .trayQuotaMeterHead strong { color: #2fd071; background: transparent; }
+.trayQuotaMeter--safe .trayQuotaMeterHead strong { color: #34d875; background: transparent; }
 .trayQuotaMeter--warn .trayQuotaMeterHead strong,
 .trayQuotaMeter--warn .trayQuotaTrack i {
-  background: #f5c84c;
+  background: linear-gradient(90deg, #e8b020, #f7c948);
 }
-.trayQuotaMeter--warn .trayQuotaMeterHead strong { color: #f5c84c; background: transparent; }
+.trayQuotaMeter--warn .trayQuotaMeterHead strong { color: #f7c948; background: transparent; }
 .trayQuotaMeter--danger .trayQuotaMeterHead strong,
 .trayQuotaMeter--danger .trayQuotaTrack i {
-  background: #ff4055;
+  background: linear-gradient(90deg, #ff3350, #ff4d62);
 }
-.trayQuotaMeter--danger .trayQuotaMeterHead strong { color: #ff4055; background: transparent; }
+.trayQuotaMeter--danger .trayQuotaMeterHead strong { color: #ff4d62; background: transparent; }
 .trayQuotaMeter--empty .trayQuotaMeterHead strong { color: rgba(245, 245, 244, 0.38); }
 .trayQuotaMeter--empty .trayQuotaTrack i,
 .trayQuotaMeter--na .trayQuotaTrack i { width: 0 !important; }
 .trayPopoverEmpty { margin: 16px 18px; color: var(--muted); font-size: 12px; }
 .trayPopoverFoot {
-  padding: 9px 14px 11px;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+  padding: 8px 10px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.025);
 }
 .trayPopoverActions {
   display: grid;

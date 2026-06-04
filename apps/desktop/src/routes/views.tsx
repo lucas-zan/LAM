@@ -1,3 +1,4 @@
+import { countAccountsWithAvailableQuota, countAccountsWithQuotaData } from "../lib/quota";
 import type { CodexAccount, CodexSession, DivergedSessionStrategy, HealthCheck, ProviderProfile, UsageQuotaSnapshot } from "../lib/types";
 import { QuotaWindow } from "../components/quota-window";
 import { IconCopy, IconProviders, IconInfo, MetricIcon, type MetricIconName } from "../components/icons";
@@ -26,15 +27,16 @@ export function Overview({
   refreshAccountQuota: (profileId: string) => void;
   refreshingQuotaIds: string[];
 }) {
-  const realtimeCount = quotas.filter((quota) => quota.primaryUsedPercent !== null && quota.primaryUsedPercent !== undefined).length;
+  const accountsWithQuotaData = countAccountsWithQuotaData(quotas);
+  const availableQuotaAccounts = countAccountsWithAvailableQuota(accounts, quotas);
   const sessionTotal = accounts.reduce((sum, account) => sum + account.sessionCount, 0);
   return (
     <div className="overviewPage">
       <div className="metricGrid">
-        <Metric icon="accounts" label="Accounts" value={accounts.length} />
+        <Metric icon="accounts" label="Accounts" value={`${accountsWithQuotaData}/${accounts.length || 0}`} />
         <Metric icon="sessions" label="Sessions" value={sessionTotal} />
         <Metric icon="providers" label="Providers" value={providers.length} />
-        <Metric icon="quota" label="Quota live" value={realtimeCount} />
+        <Metric icon="quota" label="Quota usable" value={availableQuotaAccounts} />
       </div>
       <Accounts
         accounts={accounts}
@@ -98,10 +100,18 @@ export function Accounts({
           const quota = quotas.find((item) => item.profileId === account.id);
           const providerLabel = account.providerId ?? "unknown";
           const modelLabel = account.model ?? "unknown";
+          const isActiveAccount = currentSession?.accountId === account.id;
           return (
             <article className="card accountCard" key={account.id} onClick={() => select(account.id)}>
               <div className="cardHead">
-                <h3>{account.displayName}</h3>
+                <div className="cardTitleRow">
+                  <h3>{account.displayName}</h3>
+                  {isActiveAccount ? (
+                    <span className="accountActiveBadge" aria-label="Active session account">
+                      Active
+                    </span>
+                  ) : null}
+                </div>
                 <div className="cardHeadActions">
                   <UIButton
                     variant="icon"

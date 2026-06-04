@@ -12,6 +12,7 @@ import {
   healthCheck,
   inTauri,
   listAccounts,
+  listCachedAccounts,
   listCachedQuotas,
   listProviders,
   listSessions,
@@ -49,6 +50,7 @@ import type {
   SyncResult,
   UsageQuotaSnapshot,
 } from "./lib/types";
+import { mergeQuotaSnapshots } from "./lib/quota";
 import { routeTitle as routeTitleFromModule } from "./routes/types";
 import * as Views from "./routes/views";
 
@@ -128,7 +130,6 @@ export function App() {
   const [refreshingQuotaIds, setRefreshingQuotaIds] = useState<string[]>([]);
   const [appReady, setAppReady] = useState(false);
   const quotaTimerRef = useRef<number | null>(null);
-  const quotaRefreshInFlightRef = useRef(false);
 
   const selectedAccount = accounts.find((account) => account.id === selectedAccountId) ?? accounts[0];
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? sessions[0];
@@ -158,40 +159,65 @@ export function App() {
     return themeMode;
   }, [themeMode]);
 
+  function applyAccountsList(accountData: CodexAccount[], options?: { fromCache?: boolean }) {
+    setAccounts(accountData);
+    setAppReady(true);
+    const keepSelection =
+      selectedAccountId && accountData.some((account) => account.id === selectedAccountId);
+    const nextAccount = keepSelection ? selectedAccountId : accountData[0]?.id ?? "";
+    setSelectedAccountId(nextAccount);
+
+    if (nextAccount) {
+      void listSessions(nextAccount)
+        .then((items) => {
+          setSessions(items);
+          setSelectedSessionId(items[0]?.id ?? "");
+        })
+        .catch((err) => setError(formatError(err)));
+    } else {
+      setSessions([]);
+      setSelectedSessionId("");
+    }
+
+    if (accountData.length) {
+      void refreshActiveSession(accountData);
+      void loadCachedQuotas(accountData.map((account) => account.id));
+      scheduleQuotaRefresh(accountData.map((account) => account.id), QUOTA_INITIAL_DELAY_MS);
+    } else {
+      setQuotas([]);
+    }
+
+    setStatus(
+      options?.fromCache
+        ? `Cached ${accountData.length} accounts · scanning…`
+        : `Loaded ${accountData.length} accounts`,
+    );
+  }
+
   async function refresh() {
     setError("");
+    if (inTauri()) {
+      try {
+        const cached = await listCachedAccounts();
+        if (cached.length) {
+          applyAccountsList(cached, { fromCache: true });
+        }
+      } catch {
+        /* cache miss is fine */
+      }
+    }
+
     try {
-      const [healthData, accountData, providerData] = await Promise.all([
-        healthCheck(),
-        listAccounts(),
-        listProviders(),
-      ]);
-      setHealth(healthData);
-      setAccounts(accountData);
-      setProviders(providerData);
-      const nextAccount = selectedAccountId || accountData[0]?.id || "";
-      setSelectedAccountId(nextAccount);
-      setAppReady(true);
+      void healthCheck()
+        .then(setHealth)
+        .catch((err) => setError(formatError(err)));
 
-      if (nextAccount) {
-        void listSessions(nextAccount)
-          .then((items) => {
-            setSessions(items);
-            setSelectedSessionId(items[0]?.id ?? "");
-          })
-          .catch((err) => setError(formatError(err)));
-      } else {
-        setSessions([]);
-      }
+      const accountData = await listAccounts();
+      applyAccountsList(accountData);
 
-      if (accountData.length) {
-        void refreshActiveSession(accountData);
-        void loadCachedQuotas(accountData.map((account) => account.id));
-        scheduleQuotaRefresh(accountData.map((account) => account.id), QUOTA_INITIAL_DELAY_MS);
-      } else {
-        setQuotas([]);
-      }
-      setStatus(`Loaded ${accountData.length} accounts`);
+      void listProviders()
+        .then(setProviders)
+        .catch((err) => setError(formatError(err)));
     } catch (err) {
       setAppReady(true);
       setError(formatError(err));
@@ -416,30 +442,35 @@ export function App() {
   async function refreshQuotas(profileIds?: string[]) {
     const targets = profileIds?.length ? profileIds : accounts.map((account) => account.id);
     if (!targets.length) return;
-    if (quotaRefreshInFlightRef.current) return;
-    quotaRefreshInFlightRef.current = true;
     setRefreshingQuotaIds((current) => Array.from(new Set([...current, ...targets])));
-    try {
-      const results = await Promise.allSettled(targets.map((profileId) => getProfileQuota(profileId, true)));
-      const snapshots: UsageQuotaSnapshot[] = [];
-      const warnings: string[] = [];
-      results.forEach((result, index) => {
-        if (result.status === "fulfilled") {
-          snapshots.push(result.value);
-        } else {
-          warnings.push(`${targets[index]}: ${formatError(result.reason)}`);
+
+    let completed = 0;
+    let failed = 0;
+
+    await Promise.all(
+      targets.map(async (profileId) => {
+        try {
+          const snapshot = await getProfileQuota(profileId, true);
+          setQuotas((current) => mergeQuotaSnapshots(current, snapshot));
+          completed += 1;
+        } catch (err) {
+          failed += 1;
+          setError((current) => current || `${profileId}: ${formatError(err)}`);
+        } finally {
+          setRefreshingQuotaIds((current) => current.filter((id) => id !== profileId));
         }
-      });
-      setQuotas((current) => {
-        const next = new Map(current.map((item) => [item.profileId, item]));
-        for (const snapshot of snapshots) next.set(snapshot.profileId, snapshot);
-        return Array.from(next.values());
-      });
-      setStatus(warnings.length ? `Refreshed ${snapshots.length} quota snapshots; ${warnings.length} unavailable` : `Refreshed ${snapshots.length} quota snapshots`);
+      }),
+    );
+
+    if (completed || failed) {
+      setStatus(
+        failed
+          ? `Refreshed ${completed} quota snapshots; ${failed} unavailable`
+          : `Refreshed ${completed} quota snapshots`,
+      );
+    }
+    if (completed) {
       void syncTrayQuota();
-    } finally {
-      quotaRefreshInFlightRef.current = false;
-      setRefreshingQuotaIds((current) => current.filter((id) => !targets.includes(id)));
     }
   }
 

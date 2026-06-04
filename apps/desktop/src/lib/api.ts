@@ -37,6 +37,11 @@ export async function listAccounts(): Promise<CodexAccount[]> {
   return invoke<CodexAccount[]>("list_accounts");
 }
 
+export async function listCachedAccounts(): Promise<CodexAccount[]> {
+  if (!inTauri()) return [];
+  return invoke<CodexAccount[]>("list_cached_accounts");
+}
+
 export async function listSessions(accountId: string): Promise<CodexSession[]> {
   if (!inTauri()) return [];
   return invoke<CodexSession[]>("list_sessions", { accountId });

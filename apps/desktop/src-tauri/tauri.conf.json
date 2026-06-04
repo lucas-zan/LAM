@@ -17,14 +17,15 @@
         "width": 1280,
         "height": 820,
         "minWidth": 1100,
-        "minHeight": 700
+        "minHeight": 700,
+        "visible": false
       },
       {
         "label": "quota-popover",
         "title": "LAM Quota",
         "url": "index.html",
-        "width": 380,
-        "height": 460,
+        "width": 328,
+        "height": 480,
         "visible": false,
         "decorations": false,
         "transparent": true,
