@@ -30,8 +30,8 @@ Lam 的目标：**不上传 session/代码/prompt**，把账号边界、Provider
 | **边界清晰** | Account（`CODEX_HOME`）· Provider（元数据 + 密钥引用）· Session（`sessions/`）分层。 |
 | **安全默认** | 默认只同步 `sessions/`；**永不复制 `auth.json`**；不默认合并 `history.jsonl`。 |
 | **可审计写操作** | 建号、Relay、Sync、Attach Provider：plan → 确认 → execute。 |
-| **Codex-first** | Phase 1 打通扫描、Resume、Safe Sync、Provider Center；预留 `AgentAdapter`。 |
-| **桌面原生** | macOS：**Tauri v2 + Rust + React**（非 Electron）。见 [`docs/DESKTOP-RUNTIME.md`](docs/DESKTOP-RUNTIME.md)。 |
+| **Codex-first** | Phase 1 扫描 / Resume / Safe Sync；Provider Center（1.5 基础能力已落地）；预留 `AgentAdapter`。 |
+| **桌面原生** | **macOS**：**Tauri v2 + Rust + React**（非 Electron；其它系统暂无计划）。见 [`docs/DESKTOP-RUNTIME.md`](docs/DESKTOP-RUNTIME.md)。 |
 
 ---
 
@@ -58,6 +58,7 @@ Lam 的目标：**不上传 session/代码/prompt**，把账号边界、Provider
 | 2 | 账号卡 **「↑ Sync To…」** 或 **Sync** | **Safe Sync**：仅复制 **`sessions/`**（须先 dry-run）；阻止 `auth.json`、sqlite、cache 等。 |
 | 3 | **「→ Login」** | 在 relay 的 `CODEX_HOME` 下执行 `codex login`，不把 A 的 auth 拷过去。 |
 | 4 | **Sessions** → Copy / Terminal / Details | 生成 `CODEX_HOME=<profile> codex resume <id>`，打开终端或复制命令。 |
+| 5 | **Relay / Continue**（Overview 账号卡、托盘浮层） | 在已选定活跃 session 时，按需把该 session 资产复制到目标 profile（`relay_resume_session`），再打开终端执行 `codex resume`（分叉策略见 Settings）。 |
 
 推荐端到端流程（与设计文档 §4.3–4.5 一致）：
 
@@ -88,13 +89,15 @@ Lam 的目标：**不上传 session/代码/prompt**，把账号边界、Provider
 - 托管账号 / Relay 的 plan & execute。
 - Safe Sync（仅 `sessions/`、目标备份、manifest）。
 - Resume 命令构建与 Terminal 拉起。
+- **`relay_resume_session`**：单 session 复制/合并到目标 profile（含分叉策略）并返回 resume 命令。
 - Provider CRUD、密钥引用、Attach、mismatch 检测。
+- 账号/额度**本地缓存**（`accounts-cache.json`、quota 缓存）以加快启动。
 
 **桌面 UI**
 
 - Overview（账号 + 额度）、Sessions、Relay、Providers、Sync、Settings。
 - 额度：app-server 5h/weekly；失败显示 **N/A**。
-- **macOS 菜单栏托盘：** **左键**点 LAM 弹出**彩色额度浮层**（与 Overview 相同的蓝色进度条）；**右键**可刷新额度或打开主窗口。后台每 5 分钟刷新，应用内刷新后同步。
+- **macOS 菜单栏托盘：** **左键**弹出紧凑**额度浮层**（5h / weekly 进度条；有最近 session 时可在账号行 **Relay / Resume**）。**右键**刷新额度或打开主窗口。点击浮层外或 **Close** 会收起（不会自动弹出主窗口，除非点 **Open**）。后台每 5 分钟刷新；启动先读缓存账号/额度，再按账号并行拉取真实额度。
 - Sync 须先 dry-run。
 
 **不在 Phase 1**
@@ -114,16 +117,34 @@ Lam 的目标：**不上传 session/代码/prompt**，把账号边界、Provider
 
 ---
 
-## 未来规划
+## 路线图
 
-| 阶段 | 主题 | 方向 |
-|------|------|------|
-| **Phase 1 收尾** | 产品与 UI | 活动时间线、跨账号 Sessions、Settings、手工验收。 |
-| **Phase 1.2** | 额度 | 稳定 rate limits；缓存与刷新。 |
-| **Phase 1.5** | Provider | 与规格对齐与测试补全。 |
-| **接力体验** | Relay | 引导式「额度不足 → Relay → Sync → Resume」；跨 profile 会话列表。 |
-| **Phase 2** | 多 Agent | `AgentAdapter` 等。 |
-| **更长期** | 平台 | 可选跨平台打包；保持 local-first。 |
+### 已交付（Phase 1 核心 + 1.2 额度 + 1.5 Provider 基础）
+
+| 领域 | 内容 |
+|------|------|
+| **账号与 Relay** | 扫描 `~/.codex*`；创建受管账号；**Relay 工作区**；Safe Sync（仅 `sessions/`，须 dry-run）。 |
+| **额度 Quota** | Overview 展示 app-server **5h / weekly**；**菜单栏托盘浮层**；本地缓存；**按账号并行刷新**；不可用显示 N/A。 |
+| **接力** | `codex resume` 命令；**`relay_resume_session`**（复制/合并 session 到目标 profile），入口：Overview **Relay/Continue**、托盘 **Relay/Resume**；分叉策略见 Settings。 |
+| **Provider** | Provider Center CRUD、密钥引用（env/Keychain）、Attach、mismatch 提示。 |
+| **桌面** | Tauri v2；托盘优先启动（主窗口经 **Open** 打开）；点击浮层外收起。 |
+
+### 下一步（Phase 1 收尾 — 仅 macOS）
+
+**平台范围：** 当前**只做 macOS**，暂无 Linux/Windows 移植计划；优先打磨托盘、浮层、Terminal 集成与 Phase 1 验收。
+
+| 主题 | 方向 |
+|------|------|
+| **产品与 UI** | 活动时间线；**跨 profile 统一 Sessions 列表**；Settings 完善；[`docs/PHASE1-ACCEPTANCE.md`](docs/PHASE1-ACCEPTANCE.md) 验收签字。 |
+| **接力体验** | 额度不足时的**引导式向导**（一条流走完 relay → sync → login → resume），而不只是分散按钮。 |
+| **额度与 Relay 打磨** | 边界场景、陈旧数据提示、Provider/额度相关测试与文档对齐。 |
+| **macOS 打磨** | 菜单栏托盘体验、浮层焦点与收起、app-server 额度稳定性、签名打包准备。 |
+
+### 更长期
+
+| 阶段 | 方向 |
+|------|------|
+| **Phase 2** | `AgentAdapter`；Claude Code / OpenCode 等，不削弱 Codex 安全默认。 |
 
 详见 [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md)、[`docs/TODO.md`](docs/TODO.md)。
 
@@ -132,7 +153,7 @@ Lam 的目标：**不上传 session/代码/prompt**，把账号边界、Provider
 ## 环境要求
 
 - Node.js + npm、Rust + Cargo
-- macOS 日常开发推荐；签名打包才需完整 Xcode
+- **macOS** — 当前支持的目标平台（托盘、Terminal 集成）；暂无 Linux/Windows 计划。签名打包才需完整 Xcode
 - 可选：已登录 Codex CLI；测试可用 `.fake-home`
 
 ---
@@ -150,7 +171,7 @@ make start
 LAM_HOME="$(pwd)/.fake-home" make start
 ```
 
-- `make start` 为 **Tauri 原生窗口**；终端 Vite 地址仅为嵌入开发服务器。
+- `make start` 启动 **Tauri 应用**（macOS 上为菜单栏托盘）。**主窗口默认隐藏**，需从托盘打开（浮层 **Open** 或右键「Open LocalAgentManager」）。终端里的 Vite 地址只是内嵌开发服务器。
 - 默认扫描真实 home；仅显式设置 `LAM_HOME` 时用 fixture。
 
 ---
@@ -199,6 +220,7 @@ Makefile
 |------|------|
 | [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md) | 主规格 |
 | [`docs/TODO.md`](docs/TODO.md) | 实施清单 |
+| [`docs/IMPLEMENTATION-ISSUES.md`](docs/IMPLEMENTATION-ISSUES.md) | 问题级跟踪 |
 | [`docs/DESKTOP-RUNTIME.md`](docs/DESKTOP-RUNTIME.md) | Tauri 与启动说明 |
 | [`docs/CORRECTION-PLAN.md`](docs/CORRECTION-PLAN.md) | UI/规格纠偏 |
 | [`docs/PHASE1-ACCEPTANCE.md`](docs/PHASE1-ACCEPTANCE.md) | Phase 1 验收 |
@@ -207,4 +229,6 @@ Makefile
 
 ## 许可证
 
-公开发布前请自行补充 License；初版提交暂未固定协议。
+本项目采用 **[MIT License](LICENSE)**，可自由使用、修改、合并、发布、分发、再授权和出售副本。
+
+再分发时请附带 [`LICENSE`](LICENSE) 中的版权声明与许可全文。在 README 或关于页**注明来源于 LocalAgentManager** 非 MIT 强制要求，但**欢迎**这样做，便于项目传播。

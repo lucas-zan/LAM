@@ -1,6 +1,10 @@
 # 开发路线图
 
-> **历史草稿 / 已被替代：** 当前实施路线图以 `docs/FINAL-DESIGN.md` §8 和 `docs/IMPLEMENTATION-ISSUES.md` 为准。本文只保留早期 Codex-only 规划作为参考，不再作为排期或验收依据。
+> **历史草稿 / 已被替代：** 当前路线图以 **根目录 [`README.md`](../README.md) / [`README.zh-CN.md`](../README.zh-CN.md) 的 Roadmap 章节** 为准（已区分「已交付 / 下一步 / 更长期」）。规格与验收仍见 `docs/FINAL-DESIGN.md` §8–9、`docs/PHASE1-ACCEPTANCE.md`。
+>
+> **说明：** Phase 1.2（额度托盘/缓存/并行刷新）与 Relay 核心（工作区、Safe Sync、`relay_resume_session`）**已实现**；尚未完成的是跨 profile 会话总览、额度不足时的**单页引导向导**等体验项。
+>
+> **平台：** 当前**仅规划 macOS**，先打磨托盘与 Phase 1 验收；**无 Linux/Windows 排期**（下文 Phase 5 等为历史草稿）。
 
 版本：0.1 draft
 

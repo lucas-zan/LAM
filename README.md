@@ -30,8 +30,8 @@ Authoritative design: [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md). Task track
 | **Clear boundaries** | Account (`CODEX_HOME`) · Provider (metadata + secret refs) · Session (`sessions/` assets). |
 | **Safe defaults** | Sync **`sessions/` only** by default; **never copy `auth.json`**; do not merge `history.jsonl` by default. |
 | **Auditable writes** | Create account, relay, sync, attach provider: **plan → confirm → execute**. |
-| **Codex-first delivery** | Scan, resume, safe sync, provider center in Phase 1; `AgentAdapter` hook for Phase 2. |
-| **Native desktop** | **Tauri v2 + Rust + React** on macOS (not Electron). See [`docs/DESKTOP-RUNTIME.md`](docs/DESKTOP-RUNTIME.md). |
+| **Codex-first delivery** | Scan, resume, safe sync, provider center (Phase 1.5 basics shipped); `AgentAdapter` hook for Phase 2. |
+| **Native desktop** | **Tauri v2 + Rust + React** on **macOS** (not Electron; other OSes not planned yet). See [`docs/DESKTOP-RUNTIME.md`](docs/DESKTOP-RUNTIME.md). |
 
 ---
 
@@ -58,6 +58,7 @@ Each profile is an isolated home directory:
 | 2 | **Sync To…** (account card or Sync) | **Safe Sync** copies **`sessions/` only** from source → relay (dry-run required). Blocks `auth.json`, sqlite, cache, etc. |
 | 3 | **Login** on relay | Opens Terminal with `CODEX_HOME=<relay> codex login` so B’s auth lives in the relay home — not copied from A. |
 | 4 | **Resume** (Sessions → Copy / Terminal / Details) | Builds `CODEX_HOME=<profile> codex resume <id>` and opens Terminal or clipboard. |
+| 5 | **Relay / Continue** (Overview account card, tray popover) | With an active session selected, copies the session asset to the target profile when needed (`relay_resume_session`), then opens Terminal with `codex resume` (diverged-session strategies in Settings). |
 
 End-to-end relay flow (documented in [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md) §4.3–4.5):
 
@@ -89,14 +90,16 @@ Planned improvements: guided relay wizard, cross-profile session browsing, clear
 - Managed account / relay workspace plan & execute.
 - Safe sync (`sessions/` only, target backup, manifest).
 - Resume command builder (shell-escaped) + Terminal launch.
+- **`relay_resume_session`:** copy/merge a single session into a target profile (with diverged strategies) and return a resume command.
 - Provider metadata CRUD; secrets via env/Keychain refs only (no API keys in UI).
 - Attach provider to profile; **provider mismatch** warnings on sessions.
+- Account/quota **disk cache** for faster startup (`accounts-cache.json`, cached quota snapshots).
 
 **Desktop UI (`apps/desktop`)**
 
 - Routes: **Overview** (accounts + quota), **Sessions**, **Relay**, **Providers**, **Sync**, **Settings**.
 - Quota via Codex app-server (5h / weekly); shows **N/A** when unavailable (no fake percentages).
-- **Menu bar tray (macOS):** **left-click** the LAM menu bar item to open a **colorful quota popover** (same blue progress bars as Overview). **Right-click** for Refresh / Open app. Background refresh every 5 minutes (and after in-app quota refresh).
+- **Menu bar tray (macOS):** **left-click** opens a compact **quota popover** (5h / weekly meters, per-account **Relay** or **Resume** when a latest session exists). **Right-click** for Refresh / Open app. Click outside the panel or **Close** dismisses it (main window stays hidden unless you choose **Open**). Background refresh every 5 minutes (startup also loads cached accounts/quota first, then refreshes per account in parallel).
 - Sync modal: dry-run required before execute.
 
 **Explicitly out of Phase 1**
@@ -119,16 +122,34 @@ See [`docs/PHASE1-ACCEPTANCE.md`](docs/PHASE1-ACCEPTANCE.md), [`docs/CORRECTION-
 
 ---
 
-## Future roadmap
+## Roadmap
 
-| Phase | Theme | Direction |
-|-------|--------|-----------|
-| **Phase 1 wrap-up** | Product & UI | Activity timeline, richer cross-account Sessions filters, settings, TODO-504 acceptance. |
-| **Phase 1.2** | Quota | Stable app-server rate limits; cache/refresh (partially shipped). |
-| **Phase 1.5** | Provider | Provider center & attach (mostly shipped; tests/docs alignment). |
-| **Handoff UX** | Relay | One guided “quota low → relay → sync → resume” flow; cross-profile session list. |
-| **Phase 2** | Multi-agent | `AgentAdapter`; Claude Code / OpenCode without weakening Codex safety model. |
-| **Longer term** | Platform | Optional Linux/Windows builds; stay local-first. |
+### Shipped (Phase 1 core + 1.2 quota + 1.5 provider basics)
+
+| Area | Delivered |
+|------|-----------|
+| **Accounts & relay** | Scan `~/.codex*`; create managed accounts; **relay workspaces**; safe `sessions/` sync (dry-run → execute). |
+| **Quota** | Codex app-server **5h / weekly** in Overview; **menu bar tray popover**; disk cache; **per-account parallel refresh**; N/A when unavailable. |
+| **Handoff** | `codex resume` commands; **`relay_resume_session`** (copy/merge session → target profile) from Overview **Relay/Continue** and tray **Relay/Resume**; diverged-session strategies in Settings. |
+| **Provider** | Provider Center CRUD, env/Keychain secret refs, attach to profile, mismatch warnings. |
+| **Desktop** | Tauri v2 app; tray-first launch (main window via **Open**); click-outside to dismiss popover. |
+
+### Next (Phase 1 wrap-up — macOS only)
+
+**Platform scope:** **macOS only** for now. No Linux/Windows port planned; focus on polishing tray, popover, Terminal integration, and Phase 1 acceptance on Mac.
+
+| Theme | Direction |
+|-------|-----------|
+| **Product & UI** | Activity timeline; **unified cross-profile Sessions** list; settings polish; [`docs/PHASE1-ACCEPTANCE.md`](docs/PHASE1-ACCEPTANCE.md) sign-off. |
+| **Handoff UX** | **Guided wizard** when quota is low (single flow: relay → sync → login → resume), not only separate buttons. |
+| **Quota & relay tuning** | Edge cases, staleness UX, docs/tests alignment for provider + quota paths. |
+| **macOS polish** | Menu bar tray UX, popover focus/dismiss, app-server quota reliability, signed bundle readiness. |
+
+### Later
+
+| Phase | Direction |
+|-------|-----------|
+| **Phase 2** | `AgentAdapter`; Claude Code / OpenCode without weakening Codex safety defaults. |
 
 Details: [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md), [`docs/TODO.md`](docs/TODO.md).
 
@@ -138,7 +159,7 @@ Details: [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md), [`docs/TODO.md`](docs/T
 
 - **Node.js** + **npm**
 - **Rust** + **Cargo**
-- **macOS** recommended for daily dev; full Xcode only for signed bundles
+- **macOS** — supported target platform (tray, Terminal integration); Linux/Windows not planned yet. Full Xcode only for signed bundles
 - Optional: **Codex CLI** logged in (real quota/sessions); repo **`.fake-home`** for offline tests
 
 ---
@@ -156,7 +177,7 @@ Fixture home (does not touch real `~/.codex*`):
 LAM_HOME="$(pwd)/.fake-home" make start
 ```
 
-- `make start` opens the **Tauri native window**. The Vite URL in the terminal is only the embedded dev server, not a browser-only product.
+- `make start` launches the **Tauri app** (menu bar tray on macOS). The **main window starts hidden**; open it from the tray (**Open** in the popover or right-click → Open LocalAgentManager). The Vite URL in the terminal is only the embedded dev server, not a browser-only product.
 - By default Lam scans your real home. Set `LAM_HOME` explicitly to use fixtures.
 
 ---
@@ -230,4 +251,6 @@ Makefile                   # Dev entrypoint
 
 ## License
 
-Add a license before public release if needed; not fixed in this initial commit.
+[MIT License](LICENSE) — free to use, modify, merge, publish, distribute, sublicense, and sell copies.
+
+Redistributions should include the copyright notice and MIT license text from [`LICENSE`](LICENSE). **Attribution in README or About** (e.g. “Based on LocalAgentManager”) is appreciated but not required by the license.

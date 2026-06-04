@@ -311,7 +311,7 @@ export function Relay({ accounts, openRelay, openSync }: { accounts: CodexAccoun
     <section className="panel pagePanel">
       <div className="panelHead">
         <h3 className="sectionTitle">Relay</h3>
-        <UIButton variant="primary" onClick={openRelay}>+ Create Relay</UIButton>
+        <UIButton variant="primary" onClick={openRelay}>+ New Relay</UIButton>
       </div>
       {relays.length ? (
         relays.map((relay) => (
