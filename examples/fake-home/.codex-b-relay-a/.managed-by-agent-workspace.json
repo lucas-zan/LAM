@@ -1,0 +1,8 @@
+{
+  "managedBy": "LocalAgentManager",
+  "accountName": "b-relay-a",
+  "kind": "relay",
+  "runtimeProfileId": "b",
+  "sourceProfileId": "a",
+  "providerPolicy": "inherit_runtime"
+}

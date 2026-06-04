@@ -1,0 +1,1 @@
+Component files will be split from `App.tsx` as the UI grows. The current Phase 1 implementation keeps components colocated while preserving the intended component boundaries: Sidebar, Inspector, Modal, route panels, and table/card views.

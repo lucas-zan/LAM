@@ -1,0 +1,99 @@
+# =============================================================================
+# LocalAgentManager (LAM) — root .gitignore
+# =============================================================================
+
+# --- OS & filesystem junk ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --- Secrets & local env (never commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials.json
+secrets.json
+
+# Real Codex credentials anywhere in the tree
+**/auth.json
+# Allow only checked-in fake tokens under test fixtures
+!.fake-home/**/auth.json
+
+# --- Node / frontend (apps/desktop) ---
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# --- Rust / Tauri ---
+**/target/
+**/*.rs.bk
+
+# Tauri codegen & local bundle output
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/WixTools/
+apps/desktop/src-tauri/bundle/
+
+# --- Codex / agent home runtime (machine-local, not source) ---
+**/.codex/cache/
+**/.codex/tmp/
+**/.codex/logs/
+**/.codex/logs_*/
+**/.codex/state*.sqlite
+**/.codex/*.sqlite
+**/.codex/installation_id
+**/.codex-*/cache/
+**/.codex-*/tmp/
+**/.codex-*/logs/
+**/.codex-*/logs_*/
+**/.codex-*/state*.sqlite
+**/.codex-*/*.sqlite
+**/.codex-*/installation_id
+
+# --- .fake-home: keep static fixtures; ignore volatile state ---
+.fake-home/**/cache/
+.fake-home/**/tmp/
+.fake-home/**/logs/
+.fake-home/**/logs_*/
+.fake-home/**/*.sqlite
+.fake-home/**/installation_id
+
+# --- Test & coverage artifacts ---
+coverage/
+.nyc_output/
+*.lcov
+
+# --- IDE / editors ---
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# --- Cursor / local agent tooling (optional local only) ---
+.cursor/
+
+# --- Misc build / logs ---
+*.log
+logs/
+tmp/
+temp/
