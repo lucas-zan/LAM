@@ -75,7 +75,9 @@ function TrayQuotaMeter(props: { label: string; used?: number | null; resetAt?: 
       <div className="trayQuotaTrack">
         <i style={{ width: `${width}%` }} />
       </div>
-      <span className="trayResetLine">{formatResetCountdown(props.resetAt)}</span>
+      <span className="trayResetLine">
+        {formatResetCountdown(props.resetAt, props.label === "weekly" ? "weekly" : "session")}
+      </span>
     </div>
   );
 }

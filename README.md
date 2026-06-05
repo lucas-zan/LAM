@@ -189,7 +189,8 @@ LAM_HOME="$(pwd)/.fake-home" make start
 | `make start` | Tauri dev (foreground; Ctrl+C to stop) |
 | `make stop` | Stop Tauri/Vite started from this repo |
 | `make check` | Frontend build + UI smoke + `cargo fmt --check` + `cargo test` |
-| `make build` | Production frontend + Tauri bundle |
+| `make build` | Production frontend + Tauri bundle (local `.dmg` under `src-tauri/target/release/bundle/dmg/`) |
+| Git tag `v*` | Push e.g. `v0.1.0` → [`.github/workflows/release.yml`](.github/workflows/release.yml) builds macOS `.dmg` on GitHub Releases |
 | `make status` | Node / Rust / Tauri info |
 | `make accounts` | CLI scan (`lam-core`) |
 | `make help` | All Make targets |

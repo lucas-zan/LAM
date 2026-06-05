@@ -1,3 +1,7 @@
+export type ResetWindowKind = "session" | "weekly";
+
+const RESET_LOCALE = "en-US";
+
 export function parseResetAt(resetAt?: string | null): Date | null {
   if (!resetAt) return null;
   const trimmed = resetAt.trim();
@@ -12,16 +16,47 @@ export function parseResetAt(resetAt?: string | null): Date | null {
   return Number.isNaN(asDate.getTime()) ? null : asDate;
 }
 
-export function formatResetCountdown(resetAt?: string | null): string {
+function isSameLocalCalendarDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+/** Absolute reset time, e.g. "Resets 2:08 PM" or "Resets Jun 11, 2026 11:07 AM". */
+export function formatResetAt(
+  resetAt?: string | null,
+  kind: ResetWindowKind = "session",
+): string {
   const date = parseResetAt(resetAt);
   if (!date) return "Resets: unknown";
-  const diffMs = date.getTime() - Date.now();
-  if (diffMs <= 0) return "Resets now";
-  const totalMinutes = Math.floor(diffMs / 60000);
-  const days = Math.floor(totalMinutes / (24 * 60));
-  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
-  const mins = totalMinutes % 60;
-  if (days > 0) return `Resets in ${days}d ${hours}h`;
-  if (hours > 0) return `Resets in ${hours}h ${mins}m`;
-  return `Resets in ${mins}m`;
+  if (date.getTime() <= Date.now()) return "Resets now";
+
+  const timeOnly: Intl.DateTimeFormatOptions = {
+    hour: "numeric",
+    minute: "2-digit",
+  };
+  const dateTime: Intl.DateTimeFormatOptions = {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  };
+
+  const useDateTime =
+    kind === "weekly" || !isSameLocalCalendarDay(date, new Date());
+  const formatted = date.toLocaleString(
+    RESET_LOCALE,
+    useDateTime ? dateTime : timeOnly,
+  );
+  return `${formatted}`;
+}
+
+export function formatResetCountdown(
+  resetAt?: string | null,
+  kind: ResetWindowKind = "session",
+): string {
+  return formatResetAt(resetAt, kind);
 }

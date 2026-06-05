@@ -183,7 +183,8 @@ LAM_HOME="$(pwd)/.fake-home" make start
 | `make start` | 启动 Tauri 开发模式 |
 | `make stop` | 停止本仓库拉起的进程 |
 | `make check` | 前端 build + UI smoke + Rust 测试 |
-| `make build` | 构建 bundle |
+| `make build` | 本地构建 bundle（`.dmg` 在 `src-tauri/target/release/bundle/dmg/`） |
+| Git 标签 `v*` | 推送如 `v0.1.0` → [`.github/workflows/release.yml`](.github/workflows/release.yml) 在 GitHub Releases 构建 macOS `.dmg` |
 | `make status` | 环境信息 |
 | `make accounts` | CLI 扫描（`lam-core`） |
 | `make help` | 所有 Make 目标 |
