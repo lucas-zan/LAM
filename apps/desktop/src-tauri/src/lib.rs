@@ -1,3 +1,3 @@
 pub mod services;
 
-pub use services::core::*;
+pub use services::*;

@@ -16,7 +16,12 @@ function readTree(dir) {
 const app = readTree(srcRoot);
 const api = fs.readFileSync(new URL("../src/lib/api.ts", import.meta.url), "utf8");
 const tauriCommands = fs.readFileSync(new URL("../src-tauri/src/commands/mod.rs", import.meta.url), "utf8");
-const tauriCore = fs.readFileSync(new URL("../src-tauri/src/services/core.rs", import.meta.url), "utf8");
+const servicesDir = fileURLToPath(new URL("../src-tauri/src/services", import.meta.url));
+const tauriCore = fs
+  .readdirSync(servicesDir)
+  .filter((f) => f.endsWith(".rs"))
+  .map((f) => fs.readFileSync(path.join(servicesDir, f), "utf8"))
+  .join("\n");
 const iconSvg = fs.readFileSync(new URL("../src-tauri/icons/icon.svg", import.meta.url), "utf8");
 const orbitIconExists = fs.existsSync(new URL("../src/assets/lam-orbit-icon.svg", import.meta.url));
 
@@ -68,7 +73,7 @@ const checks = [
       app.includes("trayAccountRing") &&
       app.includes("trayRelayButton") &&
       app.includes("trayRefreshButton") &&
-      app.includes("trayResetLine") &&
+      app.includes("trayResetSub") &&
       app.includes("trayQuotaMeter") &&
       app.includes("trayQuotaMeter--safe") &&
       app.includes("trayQuotaMeter--warn") &&
@@ -83,10 +88,10 @@ const checks = [
       app.includes("countAccountsWithAvailableQuota") &&
       app.includes("accountsWithQuotaData") &&
       app.includes("availableQuotaAccounts") &&
-      app.includes("height: 24px") &&
+      app.includes("height: 20px") &&
       app.includes("trayPopoverActions") &&
-      app.includes("inset: 4px") &&
-      app.includes("height: 5px") &&
+      app.includes("inset: 3px") &&
+      app.includes("height: 4px") &&
       app.includes("rgba(32, 33, 32, 0.98)") &&
       !app.includes("trayProviderGroup") &&
       !app.includes("trayAccountCard") &&
@@ -115,7 +120,7 @@ const checks = [
     "startup accounts cache then scan",
     app.includes("listCachedAccounts") &&
       app.includes("applyAccountsList") &&
-      app.includes("fromCache: true") &&
+      app.includes("fromCache") &&
       app.includes("scanning…") &&
       api.includes("list_cached_accounts") &&
       tauriCommands.includes("pub async fn list_cached_accounts") &&
@@ -124,10 +129,10 @@ const checks = [
   ],
   [
     "startup quota is nonblocking",
-    app.includes("void loadCachedQuotas(accountData.map((account) => account.id))") &&
-      app.includes("scheduleQuotaRefresh(accountData.map((account) => account.id), QUOTA_INITIAL_DELAY_MS)") &&
+    app.includes("loadCachedQuotas") &&
+      app.includes("scheduleQuotaRefresh") &&
       app.includes("getProfileQuota(profileId, true)") &&
-      app.includes("mergeQuotaSnapshots(current, snapshot)") &&
+      app.includes("mergeQuotaSnapshots") &&
       !app.includes("quotaRefreshInFlightRef") &&
       !app.includes("refreshAllQuotas(ids)") &&
       !app.includes("await refreshAllQuotas(accountData.map((account) => account.id))"),

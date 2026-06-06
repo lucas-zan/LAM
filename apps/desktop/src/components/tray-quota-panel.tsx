@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
@@ -25,6 +25,7 @@ import {
   quotaRemainingPercent,
 } from "../lib/quota";
 import { formatResetCountdown } from "../lib/reset";
+import { scheduleTrayPopoverWindowSize } from "../lib/tray-popover-size";
 import type { ThemeMode } from "../lib/theme";
 import { TRAY_POPOVER_OPACITY_PERCENT } from "../lib/tray-popover-prefs";
 import type { CodexAccount, CodexSession, DivergedSessionStrategy, UsageQuotaSnapshot } from "../lib/types";
@@ -69,15 +70,17 @@ function TrayQuotaMeter(props: { label: string; used?: number | null; resetAt?: 
   return (
     <div className={`trayQuotaMeter trayQuotaMeter--${state}`}>
       <div className="trayQuotaMeterHead">
-        <span>{props.label}</span>
+        <div className="trayQuotaLabel">
+          <span>{props.label}</span>
+          <span className="trayResetSub">
+            {formatResetCountdown(props.resetAt, props.label === "weekly" ? "weekly" : "session")}
+          </span>
+        </div>
         <strong>{remaining === null ? "N/A" : `${remaining}%`}</strong>
       </div>
       <div className="trayQuotaTrack">
         <i style={{ width: `${width}%` }} />
       </div>
-      <span className="trayResetLine">
-        {formatResetCountdown(props.resetAt, props.label === "weekly" ? "weekly" : "session")}
-      </span>
     </div>
   );
 }
@@ -136,6 +139,7 @@ export function TrayQuotaPanel() {
   const [relayingAccountId, setRelayingAccountId] = useState<string>("");
   const [activeProviderId, setActiveProviderId] = useState("codex");
   const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => readResolvedTheme());
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const applyTheme = useCallback(() => {
     const resolved = readResolvedTheme();
@@ -143,6 +147,7 @@ export function TrayQuotaPanel() {
     document.documentElement.dataset.theme = resolved;
   }, []);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- syncing with external media query */
   useEffect(() => {
     document.documentElement.dataset.trayPopover = "1";
     applyTheme();
@@ -159,6 +164,7 @@ export function TrayQuotaPanel() {
       window.removeEventListener("storage", onStorage);
     };
   }, [applyTheme]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (inTauri()) {
@@ -223,9 +229,11 @@ export function TrayQuotaPanel() {
       setStatus(formatError(err));
     } finally {
       setRefreshing(false);
+      scheduleTrayPopoverWindowSize(panelRef.current);
     }
   }, [loadActiveSession]);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- async data fetch on mount + interval */
   useEffect(() => {
     void load(false);
     const timer = window.setInterval(() => {
@@ -239,6 +247,7 @@ export function TrayQuotaPanel() {
       void unlisten.then((fn) => fn());
     };
   }, [load]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   async function closePopover() {
     if (inTauri()) {
@@ -313,72 +322,97 @@ export function TrayQuotaPanel() {
   const activeGroup =
     providerGroups.find((group) => group.id === activeProviderId) ?? providerGroups[0];
 
+  /* eslint-disable react-hooks/set-state-in-effect -- derived state fallback */
   useEffect(() => {
     if (!providerGroups.some((group) => group.id === activeProviderId)) {
       setActiveProviderId(providerGroups[0]?.id ?? "codex");
     }
   }, [activeProviderId, providerGroups]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    if (!inTauri()) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const sync = () => scheduleTrayPopoverWindowSize(panel);
+    sync();
+
+    const observer = new ResizeObserver(sync);
+    observer.observe(panel);
+
+    const unlistenRefresh = listen("quota-popover-refresh", sync);
+    const unlistenShow = getCurrentWebviewWindow().listen("tauri://focus", sync);
+
+    return () => {
+      observer.disconnect();
+      void unlistenRefresh.then((fn) => fn());
+      void unlistenShow.then((fn) => fn());
+    };
+  }, [accounts.length, providerGroups.length, activeSession?.id, status]);
 
   return (
-    <div className="trayPopoverPanel" data-theme={resolvedTheme}>
-      <header className="trayPopoverHead">
-        <div className="trayBrand">
-          <span className="trayBrandMark" aria-hidden>
-            <IconLogo size={30} />
-          </span>
-          <div>
-            <h2>LAM quota</h2>
-            <p>
-              <IconClock size={12} /> {status}
-            </p>
+    <div ref={panelRef} className="trayPopoverPanel" data-theme={resolvedTheme}>
+      <section className="trayPopoverFixedHead" aria-label="Quota header">
+        <header className="trayPopoverHead">
+          <div className="trayBrand">
+            <span className="trayBrandMark" aria-hidden>
+              <IconLogo size={24} />
+            </span>
+            <div>
+              <h2>LAM quota</h2>
+              <p>
+                <IconClock size={12} /> {status}
+              </p>
+            </div>
           </div>
-        </div>
-        <div className="trayPopoverHeadActions">
-          <button
-            type="button"
-            className={`trayPopoverIconBtn trayRefreshButton ${refreshing ? "isRefreshing" : ""}`}
-            aria-label={refreshing ? "Refreshing quotas" : "Refresh quotas"}
-            aria-busy={refreshing}
-            disabled={refreshing}
-            onClick={() => void load(true)}
-          >
-            <IconRefresh size={14} />
-          </button>
-          <button
-            type="button"
-            className="trayPopoverIconBtn trayDismissButton"
-            aria-label="Close panel"
-            onPointerDown={onClosePointerDown}
-          >
-            <IconClose size={14} />
-          </button>
-        </div>
-      </header>
+          <div className="trayPopoverHeadActions">
+            <button
+              type="button"
+              className={`trayPopoverIconBtn trayRefreshButton ${refreshing ? "isRefreshing" : ""}`}
+              aria-label={refreshing ? "Refreshing quotas" : "Refresh quotas"}
+              aria-busy={refreshing}
+              disabled={refreshing}
+              onClick={() => void load(true)}
+            >
+              <IconRefresh size={14} />
+            </button>
+            <button
+              type="button"
+              className="trayPopoverIconBtn trayDismissButton"
+              aria-label="Close panel"
+              onPointerDown={onClosePointerDown}
+            >
+              <IconClose size={14} />
+            </button>
+          </div>
+        </header>
 
-      <section className="trayStats" aria-label="Quota summary">
-        <div>
-          <span>Accounts</span>
-          <strong>
-            {accountsWithQuotaData}/{accounts.length || 0}
-          </strong>
-        </div>
-        <div>
-          <span>5h avg</span>
-          <strong>{avg5hRemaining === null ? "N/A" : `${avg5hRemaining}%`}</strong>
-        </div>
-        <div>
-          <span>Usable</span>
-          <strong>{availableQuotaAccounts}</strong>
-        </div>
+        <section className="trayStats" aria-label="Quota summary">
+          <div>
+            <span>Accounts</span>
+            <strong>
+              {accountsWithQuotaData}/{accounts.length || 0}
+            </strong>
+          </div>
+          <div>
+            <span>5h avg</span>
+            <strong>{avg5hRemaining === null ? "N/A" : `${avg5hRemaining}%`}</strong>
+          </div>
+          <div>
+            <span>Usable</span>
+            <strong>{availableQuotaAccounts}</strong>
+          </div>
+        </section>
+
+        <section className="trayActiveSource" aria-label="Active source session">
+          <span>Active</span>
+          <strong>{activeAccount?.displayName ?? activeSession?.accountId ?? "No session"}</strong>
+          <em className="mono">{activeSession?.id ?? "No active session"}</em>
+        </section>
       </section>
 
-      <section className="trayActiveSource" aria-label="Active source session">
-        <span>Active</span>
-        <strong>{activeAccount?.displayName ?? activeSession?.accountId ?? "No session"}</strong>
-        <em className="mono">{activeSession?.id ?? "No active session"}</em>
-      </section>
-
-      <div className="trayPopoverList">
+      <section className="trayAccountList" aria-label="Accounts">
         {!activeGroup ? (
           <p className="trayPopoverEmpty">No Codex profiles found.</p>
         ) : (
@@ -459,7 +493,7 @@ export function TrayQuotaPanel() {
             </div>
           </>
         )}
-      </div>
+      </section>
 
       <footer className="trayPopoverFoot">
         <div className="trayPopoverActions">

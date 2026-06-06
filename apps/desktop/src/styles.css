@@ -1,3 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface2: var(--surface2);
+  --color-line: var(--line);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-green: var(--green);
+  --color-green-soft: var(--green-soft);
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-red: var(--red);
+  --color-purple: var(--purple);
+  --color-purple-soft: var(--purple-soft);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 :root {
   --bg: #eef0f4;
   --surface: #ffffff;
@@ -433,20 +457,25 @@ h1, h2, h3, p { margin: 0; }
 html[data-tray-popover="1"] {
   background: transparent !important;
 }
+html[data-tray-popover="1"] {
+  height: auto;
+  background: transparent !important;
+}
 html[data-tray-popover="1"] body,
 html[data-tray-popover="1"] #root {
   margin: 0;
-  min-height: 100%;
-  height: 100%;
+  min-height: 0;
+  height: auto;
+  width: 100%;
   padding: 0;
   background: transparent !important;
   overflow: hidden;
 }
 .trayPopoverPanel {
-  height: 100vh;
-  width: 100vw;
-  display: grid;
-  grid-template-rows: auto auto auto 1fr auto;
+  height: auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 14px;
@@ -462,42 +491,45 @@ html[data-tray-popover="1"] #root {
 html[data-theme="dark"] .trayPopoverPanel {
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
 }
+.trayPopoverFixedHead {
+  flex: 0 0 auto;
+}
 .trayPopoverHead {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
-  padding: 14px 14px 12px;
+  gap: 8px;
+  padding: 10px 12px 9px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 .trayBrand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 9px;
   min-width: 0;
 }
 .trayBrandMark {
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  border-radius: 10px;
+  border-radius: 8px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.08);
 }
 .trayPopoverHead h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 800;
   letter-spacing: 0;
 }
 .trayPopoverHead p {
-  margin: 2px 0 0;
+  margin: 1px 0 0;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12px;
+  gap: 4px;
+  font-size: 11px;
   color: rgba(244, 244, 242, 0.58);
   max-width: 200px;
   overflow: hidden;
@@ -515,8 +547,8 @@ html[data-theme="dark"] .trayPopoverPanel {
   background: rgba(255, 64, 85, 0.14);
 }
 .trayPopoverIconBtn {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   flex-shrink: 0;
   position: relative;
   z-index: 2;
@@ -560,8 +592,8 @@ html[data-theme="dark"] .trayPopoverPanel {
   position: relative;
   display: grid;
   justify-items: center;
-  gap: 2px;
-  padding: 11px 6px 10px;
+  gap: 1px;
+  padding: 7px 6px 6px;
 }
 .trayStats div:not(:first-child)::before {
   content: "";
@@ -570,7 +602,7 @@ html[data-theme="dark"] .trayPopoverPanel {
   top: 50%;
   transform: translateY(-50%);
   width: 1px;
-  height: 24px;
+  height: 20px;
   background: rgba(255, 255, 255, 0.12);
   pointer-events: none;
 }
@@ -581,16 +613,16 @@ html[data-theme="dark"] .trayPopoverPanel {
 }
 .trayStats strong {
   color: #fafaf9;
-  font-size: 20px;
+  font-size: 16px;
   line-height: 1;
   font-weight: 900;
 }
 .trayActiveSource {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr);
-  gap: 6px;
+  gap: 5px;
   align-items: center;
-  padding: 7px 12px;
+  padding: 5px 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.09);
   background: rgba(255, 255, 255, 0.02);
   min-width: 0;
@@ -612,12 +644,14 @@ html[data-theme="dark"] .trayPopoverPanel {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.trayPopoverList {
-  overflow-y: auto;
-  padding: 8px 10px 8px;
+.trayAccountList {
+  flex: 0 0 auto;
+  padding: 6px 8px;
   display: grid;
-  gap: 7px;
-  min-height: 0;
+  gap: 5px;
+  align-content: start;
+  align-items: start;
+  overflow: visible;
 }
 .trayProviderTabs {
   display: flex;
@@ -668,6 +702,8 @@ html[data-theme="dark"] .trayPopoverPanel {
   display: grid;
   gap: 6px;
   min-width: 0;
+  width: 100%;
+  align-content: start;
 }
 .trayProviderPanelMeta {
   display: flex;
@@ -683,15 +719,18 @@ html[data-theme="dark"] .trayPopoverPanel {
 .trayProviderRows {
   display: grid;
   gap: 6px;
+  align-content: start;
 }
 .trayAccountRow {
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  border-radius: 9px;
   background: rgba(255, 255, 255, 0.04);
   display: grid;
-  gap: 8px;
-  padding: 9px 10px 10px;
+  gap: 3px;
+  padding: 5px 8px 6px;
   min-width: 0;
+  width: 100%;
+  align-self: start;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 .trayAccountRowTop {
@@ -704,14 +743,14 @@ html[data-theme="dark"] .trayPopoverPanel {
 .trayAccountMain {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 .trayAccountRing {
   --ring-color: rgba(245, 245, 244, 0.28);
   --ring-value: 0%;
-  width: 34px;
-  height: 34px;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
   border-radius: 999px;
   background: conic-gradient(var(--ring-color) var(--ring-value), rgba(255, 255, 255, 0.09) 0);
@@ -721,13 +760,14 @@ html[data-theme="dark"] .trayPopoverPanel {
 .trayAccountRing::after {
   content: "";
   position: absolute;
-  inset: 4px;
+  inset: 3px;
   border-radius: inherit;
   background: #1f201f;
 }
 .trayAccountNameWrap {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
   min-width: 0;
 }
 .trayAccountNameWrap > strong {
@@ -737,7 +777,7 @@ html[data-theme="dark"] .trayPopoverPanel {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #f7f7f5;
-  font-size: 13px;
+  font-size: 12px;
 }
 .accountActiveBadge {
   color: #2fd071;
@@ -762,11 +802,11 @@ html[data-theme="dark"] .trayPopoverPanel {
 .trayAccountMeters {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
 }
 .trayAccountRemaining {
-  font-size: 17px;
+  font-size: 12px;
   font-weight: 900;
   line-height: 1;
   white-space: nowrap;
@@ -782,8 +822,8 @@ html[data-theme="dark"] .trayPopoverPanel {
   background: rgba(124, 92, 255, 0.2);
   color: #b5a8ff;
   border-radius: 999px;
-  min-height: 26px;
-  padding: 0 10px;
+  min-height: 20px;
+  padding: 0 8px;
   font-size: 10px;
   font-weight: 850;
   white-space: nowrap;
@@ -804,21 +844,36 @@ html[data-theme="dark"] .trayPopoverPanel {
 .trayAccountRing--na { --ring-color: rgba(245, 245, 244, 0.26); }
 .trayQuotaMeter {
   display: grid;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
 }
 .trayQuotaMeterHead {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
-.trayQuotaMeterHead span {
+.trayQuotaLabel {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+.trayQuotaLabel > span:first-child {
   color: rgba(245, 245, 244, 0.46);
   font-size: 10px;
   font-weight: 750;
   white-space: nowrap;
+}
+.trayResetSub {
+  color: rgba(245, 245, 244, 0.28);
+  font-size: 9px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .trayQuotaMeterHead strong {
   font-size: 11px;
@@ -827,7 +882,7 @@ html[data-theme="dark"] .trayPopoverPanel {
   white-space: nowrap;
 }
 .trayQuotaTrack {
-  height: 5px;
+  height: 4px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.12);
   overflow: hidden;
@@ -840,17 +895,6 @@ html[data-theme="dark"] .trayPopoverPanel {
   background: rgba(245, 245, 244, 0.42);
   transition: width 0.25s ease;
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.06);
-}
-.trayResetLine {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: rgba(245, 245, 244, 0.32);
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1.15;
 }
 .trayQuotaMeter--safe .trayQuotaMeterHead strong,
 .trayQuotaMeter--safe .trayQuotaTrack i {
@@ -872,7 +916,7 @@ html[data-theme="dark"] .trayPopoverPanel {
 .trayQuotaMeter--na .trayQuotaTrack i { width: 0 !important; }
 .trayPopoverEmpty { margin: 16px 18px; color: var(--muted); font-size: 12px; }
 .trayPopoverFoot {
-  padding: 8px 10px 10px;
+  padding: 6px 10px 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.025);
 }

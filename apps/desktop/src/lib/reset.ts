@@ -30,8 +30,8 @@ export function formatResetAt(
   kind: ResetWindowKind = "session",
 ): string {
   const date = parseResetAt(resetAt);
-  if (!date) return "Resets: unknown";
-  if (date.getTime() <= Date.now()) return "Resets now";
+  if (!date) return "unknown";
+  if (date.getTime() <= Date.now()) return "now";
 
   const timeOnly: Intl.DateTimeFormatOptions = {
     hour: "numeric",

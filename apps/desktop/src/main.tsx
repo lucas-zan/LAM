@@ -17,6 +17,10 @@ const isTrayPopover = isTrayPopoverWindow();
 
 if (isTrayPopover) {
   document.documentElement.dataset.trayPopover = "1";
+  document.documentElement.style.background = "transparent";
+  document.documentElement.style.height = "auto";
+  document.body.style.background = "transparent";
+  document.body.style.height = "auto";
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

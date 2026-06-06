@@ -67,6 +67,7 @@ check test: install node-check cargo-check
 	cd $(APP_DIR) && $(NPM) run build
 	cd $(APP_DIR) && $(NPM) run test:ui
 	cd $(TAURI_DIR) && cargo fmt -- --check
+	cd $(TAURI_DIR) && cargo clippy -- -D warnings
 	cd $(TAURI_DIR) && cargo test
 
 tauri-info: status
