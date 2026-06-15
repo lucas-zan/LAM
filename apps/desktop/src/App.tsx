@@ -17,6 +17,7 @@ import type {
   CreateProviderRequest,
   CreateRelayRequest,
   OperationPlan,
+  RenameAccountRequest,
   SyncPlan,
   SyncRequest,
   SyncResult,
@@ -26,6 +27,11 @@ import * as Views from "./routes/views";
 const emptyAccountReq: CreateAccountRequest = {
   name: "luna",
   copyConfigFrom: null,
+  overwriteWrapper: false,
+};
+const emptyRenameReq: RenameAccountRequest = {
+  fromProfileId: "",
+  toName: "",
   overwriteWrapper: false,
 };
 const emptyProviderReq: CreateProviderRequest = {
@@ -58,6 +64,7 @@ export function App() {
 
   // Modal form state (local — only needed while modal is open)
   const [accountReq, setAccountReq] = useState(emptyAccountReq);
+  const [renameReq, setRenameReq] = useState(emptyRenameReq);
   const [relayReq, setRelayReq] = useState<CreateRelayRequest>({
     runtimeProfileId: "", sourceProfileId: "", name: null, providerPolicy: "inherit_runtime", overwriteWrapper: false,
   });
@@ -134,6 +141,27 @@ export function App() {
     openModal("attachProvider");
   }
 
+  function openRenameAccountModal(account: typeof accounts[number]) {
+    setRenameReq({
+      fromProfileId: account.id,
+      toName: account.id,
+      overwriteWrapper: false,
+    });
+    setPlan(null);
+    openModal("renameAccount");
+  }
+
+  async function renameAccount() {
+    if (!plan) return;
+    const result = await api.executeRenameAccount(renameReq);
+    closeModal();
+    setPlan(null);
+    useAppStore.getState().setStatus(`Renamed ${result.previousProfileId} to ${result.profileId}`);
+    await refresh();
+    setSelectedAccountId(result.profileId);
+    await useSessionStore.getState().loadSessions(result.profileId);
+  }
+
   return (
     <main className="app-shell">
       <header className="titlebar">
@@ -164,7 +192,7 @@ export function App() {
         ) : null}
         {appReady && route === "overview" ? (
           <Views.Overview accounts={accounts} quotas={quotas} providers={providers} select={setSelectedAccountId}
-            openSync={openSyncModal} login={login} relayResume={relayResumeTo} currentSession={activeSession}
+            openSync={openSyncModal} rename={openRenameAccountModal} login={login} relayResume={relayResumeTo} currentSession={activeSession}
             refreshAccountQuota={refreshAccountQuota} refreshingQuotaIds={refreshingQuotaIds} />
         ) : null}
         {appReady && route === "sessions" ? (
@@ -217,6 +245,30 @@ export function App() {
             <div className="modalFootPrimary">
               <UIButton type="button" onClick={async () => setPlan(await api.planCreateAccount(accountReq))}>Dry Run</UIButton>
               <UIButton type="button" variant="primary" disabled={!plan} onClick={async () => { await api.executeCreateAccount(accountReq); closeModal(); setPlan(null); await refresh(); }}>Create</UIButton>
+            </div>
+          </div>
+        </Shell.Modal>
+      ) : null}
+
+      {modal === "renameAccount" ? (
+        <Shell.Modal title="Rename Account" close={closeModal}>
+          <div className="formGrid">
+            <label>Current account<select value={renameReq.fromProfileId} onChange={(e) => { setRenameReq({ ...renameReq, fromProfileId: e.target.value }); setPlan(null); }}>{accounts.filter((a) => a.id !== "main").map((a) => <option key={a.id} value={a.id}>{a.displayName}</option>)}</select></label>
+            <label>New account name<input value={renameReq.toName} onChange={(e) => { setRenameReq({ ...renameReq, toName: e.target.value }); setPlan(null); }} /></label>
+          </div>
+          <div className="previewBox">
+            <div className="previewLine"><span>From</span><strong>~/.codex-{renameReq.fromProfileId || "source"}</strong></div>
+            <div className="previewLine"><span>To</span><strong>~/.codex-{renameReq.toName || "name"}</strong></div>
+            <div className="previewLine"><span>Wrapper</span><strong>~/bin/codex-{renameReq.toName || "name"}</strong></div>
+          </div>
+          <label className="syncOption"><input type="checkbox" checked={renameReq.overwriteWrapper} onChange={(e) => { setRenameReq({ ...renameReq, overwriteWrapper: e.target.checked }); setPlan(null); }} /><span><strong>Overwrite target wrapper if it exists</strong><span>Profile directory conflicts are always blocked.</span></span></label>
+          <div className="notice">Close any running Codex process that uses this profile before renaming. auth.json is kept inside the moved CODEX_HOME and is not copied.</div>
+          <Views.PlanView plan={plan} />
+          <div className="modalFoot">
+            <UIButton type="button" variant="ghost" onClick={closeModal}>Cancel</UIButton>
+            <div className="modalFootPrimary">
+              <UIButton type="button" onClick={async () => setPlan(await api.planRenameAccount(renameReq))}>Dry Run</UIButton>
+              <UIButton type="button" variant="primary" disabled={!plan} onClick={renameAccount}>Rename</UIButton>
             </div>
           </div>
         </Shell.Modal>

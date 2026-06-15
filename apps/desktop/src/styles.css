@@ -458,7 +458,7 @@ html[data-tray-popover="1"] {
   background: transparent !important;
 }
 html[data-tray-popover="1"] {
-  height: auto;
+  min-height: 0;
   background: transparent !important;
 }
 html[data-tray-popover="1"] body,
@@ -472,25 +472,99 @@ html[data-tray-popover="1"] #root {
   overflow: hidden;
 }
 .trayPopoverPanel {
-  height: auto;
+  height: 100vh;
+  max-height: 100vh;
   width: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 14px;
-  background:
-    linear-gradient(180deg, rgba(32, 33, 32, 0.98), rgba(22, 23, 22, 0.99)),
-    #171817;
-  color: #f4f4f2;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
   font-variant-numeric: tabular-nums;
   backdrop-filter: blur(20px) saturate(1.1);
   -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
 }
-html[data-theme="dark"] .trayPopoverPanel {
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+
+.trayPopoverPanel[data-theme="light"] {
+  --head-border: rgba(15, 23, 42, 0.08);
+  --head-bg: rgba(15, 23, 42, 0.01);
+  --stats-border: rgba(15, 23, 42, 0.08);
+  --stats-bg: rgba(15, 23, 42, 0.025);
+  --stats-divider: rgba(15, 23, 42, 0.08);
+  --stats-label: #64748b;
+  --stats-val: #2563eb;
+  --stats-avg-val: #7c3aed;
+  --stats-usable-val: #059669;
+  --active-border: rgba(15, 23, 42, 0.05);
+  --active-bg: rgba(15, 23, 42, 0.01);
+  --active-label: #64748b;
+  --active-val: #0f172a;
+  --active-em: #475569;
+  --card-bg: #ffffff;
+  --card-border: rgba(15, 23, 42, 0.06);
+  --card-shadow: 0 4px 12px rgba(15, 23, 42, 0.02);
+  --foot-border: rgba(15, 23, 42, 0.08);
+  --foot-bg: rgba(15, 23, 42, 0.02);
+  --text-primary: #0f172a;
+  --text-muted: #64748b;
+  --text-faint: #94a3b8;
+  --circle-track: #edf2f7;
+  --tab-bg: rgba(15, 23, 42, 0.03);
+  --tab-border: rgba(15, 23, 42, 0.06);
+  --tab-text: #64748b;
+  --tab-active-bg: #ffffff;
+  --tab-active-text: #0f172a;
+  --btn-icon-bg: rgba(15, 23, 42, 0.05);
+  --btn-icon-text: #475569;
+  --btn-icon-hover-bg: rgba(15, 23, 42, 0.1);
+  --btn-icon-hover-text: #0f172a;
+  
+  background: linear-gradient(180deg, #fbfbfb 0%, #f1f3f6 100%), #f5f6f8;
+  color: #1e293b;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
 }
+
+.trayPopoverPanel[data-theme="dark"] {
+  --head-border: rgba(255, 255, 255, 0.08);
+  --head-bg: rgba(255, 255, 255, 0.015);
+  --stats-border: rgba(255, 255, 255, 0.08);
+  --stats-bg: rgba(255, 255, 255, 0.025);
+  --stats-divider: rgba(255, 255, 255, 0.1);
+  --stats-label: #94a3b8;
+  --stats-val: #38bdf8;
+  --stats-avg-val: #a78bfa;
+  --stats-usable-val: #34d399;
+  --active-border: rgba(255, 255, 255, 0.06);
+  --active-bg: rgba(255, 255, 255, 0.015);
+  --active-label: #94a3b8;
+  --active-val: #f1f5f9;
+  --active-em: #cbd5e1;
+  --card-bg: #111318;
+  --card-border: rgba(255, 255, 255, 0.06);
+  --card-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+  --foot-border: rgba(255, 255, 255, 0.08);
+  --foot-bg: rgba(255, 255, 255, 0.02);
+  --text-primary: #f1f5f9;
+  --text-muted: #94a3b8;
+  --text-faint: #64748b;
+  --circle-track: rgba(255, 255, 255, 0.08);
+  --tab-bg: rgba(255, 255, 255, 0.04);
+  --tab-border: rgba(255, 255, 255, 0.08);
+  --tab-text: rgba(245, 245, 244, 0.62);
+  --tab-active-bg: rgba(255, 255, 255, 0.1);
+  --tab-active-text: #f5f5f4;
+  --btn-icon-bg: rgba(255, 255, 255, 0.08);
+  --btn-icon-text: rgba(244, 244, 242, 0.78);
+  --btn-icon-hover-bg: rgba(255, 255, 255, 0.13);
+  --btn-icon-hover-text: #ffffff;
+
+  background: linear-gradient(180deg, #15181f 0%, #0d0f12 100%), #0d0f12;
+  color: #eef2ff;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+}
+
 .trayPopoverFixedHead {
   flex: 0 0 auto;
 }
@@ -500,7 +574,8 @@ html[data-theme="dark"] .trayPopoverPanel {
   align-items: center;
   gap: 8px;
   padding: 10px 12px 9px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--head-border);
+  background: var(--head-bg);
 }
 .trayBrand {
   display: flex;
@@ -516,7 +591,7 @@ html[data-theme="dark"] .trayPopoverPanel {
   flex-shrink: 0;
   border-radius: 8px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(128, 128, 128, 0.08);
 }
 .trayPopoverHead h2 {
   margin: 0;
@@ -530,7 +605,7 @@ html[data-theme="dark"] .trayPopoverPanel {
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  color: rgba(244, 244, 242, 0.58);
+  color: var(--text-muted);
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -555,15 +630,16 @@ html[data-theme="dark"] .trayPopoverPanel {
   border-radius: 999px;
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(244, 244, 242, 0.78);
+  background: var(--btn-icon-bg);
+  color: var(--btn-icon-text);
   padding: 0;
   cursor: pointer;
   border: 0;
+  transition: all 0.15s ease;
 }
 .trayPopoverIconBtn:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.13);
+  background: var(--btn-icon-hover-bg);
+  color: var(--btn-icon-hover-text);
 }
 .trayRefreshButton {
   transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
@@ -585,8 +661,8 @@ html[data-theme="dark"] .trayPopoverPanel {
 .trayStats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid var(--stats-border);
+  background: var(--stats-bg);
 }
 .trayStats div {
   position: relative;
@@ -603,63 +679,115 @@ html[data-theme="dark"] .trayPopoverPanel {
   transform: translateY(-50%);
   width: 1px;
   height: 20px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--stats-divider);
   pointer-events: none;
 }
 .trayStats span {
-  color: rgba(244, 244, 242, 0.48);
+  color: var(--stats-label);
   font-size: 10px;
   font-weight: 750;
 }
 .trayStats strong {
-  color: #fafaf9;
   font-size: 16px;
   line-height: 1;
   font-weight: 900;
 }
+.trayStats div:nth-child(1) strong {
+  color: var(--stats-val);
+}
+.trayStats div:nth-child(2) strong {
+  color: var(--stats-avg-val);
+}
+.trayStats div:nth-child(3) strong {
+  color: var(--stats-usable-val);
+}
+
 .trayActiveSource {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
-  gap: 5px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--active-border);
+  background: var(--active-bg);
+}
+.trayActiveSourceBar {
+  display: flex;
   align-items: center;
-  padding: 5px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.02);
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.12);
   min-width: 0;
+  width: 100%;
 }
-.trayActiveSource span,
-.trayActiveSource em {
-  color: rgba(245, 245, 244, 0.42);
+.activeDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #10b981;
+  box-shadow: 0 0 4px rgba(16, 185, 129, 0.6);
+  flex-shrink: 0;
+}
+.activeLabel {
+  color: #10b981;
   font-size: 10px;
-  font-style: normal;
-  font-weight: 800;
-}
-.trayActiveSource strong {
-  color: rgba(245, 245, 244, 0.88);
-  font-size: 11px;
   font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
-.trayActiveSource em {
+.activeAccount {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 800;
+  max-width: 90px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.activeSessionId {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.trayActiveSourceCopyBtn {
+  background: transparent;
+  color: var(--text-muted);
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.trayActiveSourceCopyBtn:hover {
+  background: rgba(128, 128, 128, 0.15);
+  color: var(--text-primary);
+}
+
 .trayAccountList {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 416px;
   padding: 6px 8px;
   display: grid;
   gap: 5px;
   align-content: start;
   align-items: start;
-  overflow: visible;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .trayProviderTabs {
   display: flex;
   gap: 6px;
   padding: 2px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--tab-bg);
+  border: 1px solid var(--tab-border);
 }
 .trayProviderTab {
   flex: 1;
@@ -672,10 +800,11 @@ html[data-theme="dark"] .trayPopoverPanel {
   gap: 6px;
   padding: 0 10px;
   cursor: pointer;
-  color: rgba(245, 245, 244, 0.62);
+  color: var(--tab-text);
   font-size: 12px;
   font-weight: 800;
   background: transparent;
+  transition: all 0.2s ease;
 }
 .trayProviderTab em {
   min-width: 18px;
@@ -687,16 +816,13 @@ html[data-theme="dark"] .trayPopoverPanel {
   font-size: 10px;
   font-style: normal;
   font-weight: 850;
-  color: rgba(245, 245, 244, 0.5);
-  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  background: rgba(128, 128, 128, 0.08);
 }
 .trayProviderTab.isActive {
-  color: #f5f5f4;
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-}
-.trayProviderTab.isActive em {
-  color: rgba(245, 245, 244, 0.78);
+  background: var(--tab-active-bg);
+  color: var(--tab-active-text);
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.08), 0 2px 6px rgba(0, 0, 0, 0.05);
 }
 .trayProviderPanel {
   display: grid;
@@ -711,7 +837,7 @@ html[data-theme="dark"] .trayPopoverPanel {
   padding: 0 2px;
 }
 .trayProviderPanelMeta span {
-  color: rgba(245, 245, 244, 0.42);
+  color: var(--text-faint);
   font-size: 10px;
   font-weight: 850;
   letter-spacing: 0.04em;
@@ -722,20 +848,22 @@ html[data-theme="dark"] .trayPopoverPanel {
   align-content: start;
 }
 .trayAccountRow {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.04);
-  display: grid;
-  gap: 3px;
-  padding: 5px 8px 6px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px;
   min-width: 0;
   width: 100%;
   align-self: start;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  transition: all 0.2s ease;
 }
 .trayAccountRowTop {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  display: flex;
+  justify-content: space-between;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -746,28 +874,22 @@ html[data-theme="dark"] .trayPopoverPanel {
   gap: 6px;
   min-width: 0;
 }
-.trayAccountRing {
-  --ring-color: rgba(245, 245, 244, 0.28);
-  --ring-value: 0%;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
+.trayAccountStatusDot {
+  width: 10px;
+  height: 10px;
   border-radius: 999px;
-  background: conic-gradient(var(--ring-color) var(--ring-value), rgba(255, 255, 255, 0.09) 0);
-  position: relative;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  background: #cbd5e1;
+  flex-shrink: 0;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.15);
 }
-.trayAccountRing::after {
-  content: "";
-  position: absolute;
-  inset: 3px;
-  border-radius: inherit;
-  background: #1f201f;
+.trayAccountStatusDot.isActive {
+  background: #2fd071;
+  box-shadow: 0 0 6px rgba(47, 208, 113, 0.6);
 }
 .trayAccountNameWrap {
   display: flex;
-  align-items: baseline;
-  gap: 5px;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
 }
 .trayAccountNameWrap > strong {
@@ -776,149 +898,155 @@ html[data-theme="dark"] .trayPopoverPanel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #f7f7f5;
-  font-size: 12px;
+  color: var(--text-primary);
+  font-size: 13px;
 }
 .accountActiveBadge {
-  color: #2fd071;
-  font-size: 10px;
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.15);
+  font-size: 9px;
   font-weight: 850;
+  padding: 1px 5px;
+  border-radius: 4px;
   letter-spacing: 0.02em;
   line-height: 1.2;
   white-space: nowrap;
 }
-.trayAccountNameWrap .accountActiveBadge {
-  font-size: 9px;
+.trayAccountRowContent {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
 }
-.cardTitleRow {
+.trayAccountRowContentLeft {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 0;
+  flex-shrink: 0;
 }
-.cardTitleRow h3 {
-  min-width: 0;
+.trayAccountRowContentLeftText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  justify-content: center;
+  width: 48px;
 }
-.trayAccountMeters {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 6px;
-  min-width: 0;
+.trayAccountRowContentLeftText strong {
+  font-size: 13px;
+  font-weight: 850;
+  color: var(--text-primary);
 }
-.trayAccountRemaining {
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1;
+.trayAccountRowContentLeftText span {
+  font-size: 10px;
+  color: var(--text-faint);
   white-space: nowrap;
-  letter-spacing: -0.02em;
 }
-.trayAccountRemaining--safe { color: #34d875; }
-.trayAccountRemaining--warn { color: #f7c948; }
-.trayAccountRemaining--danger { color: #ff4d62; }
-.trayAccountRemaining--empty,
-.trayAccountRemaining--na { color: rgba(245, 245, 244, 0.35); }
+.trayAccountRowContentRight {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+}
+.trayAccountRowContentRightLabel {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 750;
+  color: var(--text-muted);
+  white-space: nowrap;
+  gap: 4px;
+}
+.trayAccountRowContentRightLabel strong {
+  font-weight: 850;
+}
 .trayRelayButton {
   border: 0;
-  background: rgba(124, 92, 255, 0.2);
-  color: #b5a8ff;
+  background: var(--btn-bg);
+  color: var(--btn-text);
   border-radius: 999px;
   min-height: 20px;
-  padding: 0 8px;
+  padding: 0 10px;
   font-size: 10px;
   font-weight: 850;
   white-space: nowrap;
   cursor: pointer;
-  box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.22);
+  box-shadow: inset 0 0 0 1px var(--btn-border);
+  transition: all 0.15s ease;
 }
 .trayRelayButton:hover:not(:disabled) {
-  filter: brightness(1.1);
+  filter: brightness(1.15);
 }
 .trayRelayButton:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
-.trayAccountRing--safe { --ring-color: #34d875; }
-.trayAccountRing--warn { --ring-color: #f7c948; }
-.trayAccountRing--danger { --ring-color: #ff4d62; }
-.trayAccountRing--empty,
-.trayAccountRing--na { --ring-color: rgba(245, 245, 244, 0.26); }
-.trayQuotaMeter {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-.trayQuotaMeterHead {
+
+.circularProgressWrapper {
+  position: relative;
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
 }
-.trayQuotaLabel {
+.circularProgressSvg {
+  transform: rotate(-90deg);
+  display: block;
+}
+.circularProgressTrack {
+  fill: none;
+  stroke: var(--circle-track);
+}
+.circularProgressIndicator {
+  fill: none;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.35s ease;
+}
+.circularProgressText {
+  position: absolute;
   display: flex;
-  align-items: baseline;
-  gap: 4px;
-  min-width: 0;
+  align-items: center;
+  justify-content: center;
 }
-.trayQuotaLabel > span:first-child {
-  color: rgba(245, 245, 244, 0.46);
-  font-size: 10px;
-  font-weight: 750;
-  white-space: nowrap;
+.circularProgressText strong {
+  font-weight: 850;
+  font-size: 13px;
+  letter-spacing: -0.02em;
 }
-.trayResetSub {
-  color: rgba(245, 245, 244, 0.28);
-  font-size: 9px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-.trayQuotaMeterHead strong {
-  font-size: 11px;
-  font-weight: 900;
-  color: rgba(245, 245, 244, 0.82);
-  white-space: nowrap;
-}
+
 .trayQuotaTrack {
   height: 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--circle-track);
   overflow: hidden;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.22);
 }
 .trayQuotaTrack i {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: rgba(245, 245, 244, 0.42);
   transition: width 0.25s ease;
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.06);
 }
-.trayQuotaMeter--safe .trayQuotaMeterHead strong,
-.trayQuotaMeter--safe .trayQuotaTrack i {
-  background: linear-gradient(90deg, #2fd071, #34d875);
+.trayResetSub {
+  color: var(--text-faint);
+  font-size: 9px;
+  font-weight: 600;
+  white-space: nowrap;
+  display: block;
+  line-height: 1.15;
+  text-align: right;
+  margin-top: 2px;
 }
-.trayQuotaMeter--safe .trayQuotaMeterHead strong { color: #34d875; background: transparent; }
-.trayQuotaMeter--warn .trayQuotaMeterHead strong,
-.trayQuotaMeter--warn .trayQuotaTrack i {
-  background: linear-gradient(90deg, #e8b020, #f7c948);
-}
-.trayQuotaMeter--warn .trayQuotaMeterHead strong { color: #f7c948; background: transparent; }
-.trayQuotaMeter--danger .trayQuotaMeterHead strong,
-.trayQuotaMeter--danger .trayQuotaTrack i {
-  background: linear-gradient(90deg, #ff3350, #ff4d62);
-}
-.trayQuotaMeter--danger .trayQuotaMeterHead strong { color: #ff4d62; background: transparent; }
-.trayQuotaMeter--empty .trayQuotaMeterHead strong { color: rgba(245, 245, 244, 0.38); }
-.trayQuotaMeter--empty .trayQuotaTrack i,
-.trayQuotaMeter--na .trayQuotaTrack i { width: 0 !important; }
+
 .trayPopoverEmpty { margin: 16px 18px; color: var(--muted); font-size: 12px; }
 .trayPopoverFoot {
+  flex: 0 0 auto;
   padding: 6px 10px 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.025);
+  border-top: 1px solid var(--foot-border);
+  background: var(--foot-bg);
 }
 .trayPopoverActions {
   display: grid;
@@ -955,11 +1083,11 @@ html[data-theme="dark"] .trayPopoverPanel {
 .trayPopoverActions .uiBtn--ghost {
   background: transparent;
   border: 0;
-  color: rgba(244, 244, 242, 0.62);
+  color: rgba(128, 128, 128, 0.7);
 }
 .trayPopoverActions .uiBtn--ghost:hover {
   background: transparent;
-  color: rgba(244, 244, 242, 0.82);
+  color: rgba(128, 128, 128, 1.0);
 }
 
 .emptyBox, .notice { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--surface2); color: var(--muted); }

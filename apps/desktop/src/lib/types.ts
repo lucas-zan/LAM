@@ -59,6 +59,12 @@ export type CreateAccountRequest = {
   overwriteWrapper: boolean;
 };
 
+export type RenameAccountRequest = {
+  fromProfileId: string;
+  toName: string;
+  overwriteWrapper: boolean;
+};
+
 export type CreateRelayRequest = {
   runtimeProfileId: string;
   sourceProfileId: string;
@@ -71,6 +77,17 @@ export type CreateResult = {
   profileId: string;
   homePath: string;
   wrapperPath: string;
+  operations: string[];
+  warnings: string[];
+};
+
+export type RenameAccountResult = {
+  profileId: string;
+  previousProfileId: string;
+  homePath: string;
+  previousHomePath: string;
+  wrapperPath: string;
+  previousWrapperPath: string;
   operations: string[];
   warnings: string[];
 };

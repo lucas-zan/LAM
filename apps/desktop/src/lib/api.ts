@@ -14,6 +14,8 @@ import type {
   QuotaRefreshResult,
   RelayResumeRequest,
   RelayResumeResult,
+  RenameAccountRequest,
+  RenameAccountResult,
   ResumeCommand,
   ResumeCommandRequest,
   SyncPlan,
@@ -53,6 +55,14 @@ export async function planCreateAccount(req: CreateAccountRequest): Promise<Oper
 
 export async function executeCreateAccount(req: CreateAccountRequest): Promise<CreateResult> {
   return invoke<CreateResult>("execute_create_account", { req });
+}
+
+export async function planRenameAccount(req: RenameAccountRequest): Promise<OperationPlan> {
+  return invoke<OperationPlan>("plan_rename_account", { req });
+}
+
+export async function executeRenameAccount(req: RenameAccountRequest): Promise<RenameAccountResult> {
+  return invoke<RenameAccountResult>("execute_rename_account", { req });
 }
 
 export async function planCreateRelay(req: CreateRelayRequest): Promise<OperationPlan> {

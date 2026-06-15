@@ -15,6 +15,12 @@ function readTree(dir) {
 
 const app = readTree(srcRoot);
 const api = fs.readFileSync(new URL("../src/lib/api.ts", import.meta.url), "utf8");
+const quotaLib = fs.readFileSync(new URL("../src/lib/quota.ts", import.meta.url), "utf8");
+const views = fs.readFileSync(new URL("../src/routes/views.tsx", import.meta.url), "utf8");
+const trayPanel = fs.readFileSync(new URL("../src/components/tray-quota-panel.tsx", import.meta.url), "utf8");
+const traySize = fs.readFileSync(new URL("../src/lib/tray-popover-size.ts", import.meta.url), "utf8");
+const tauriConfig = fs.readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8");
+const tauriTray = fs.readFileSync(new URL("../src-tauri/src/tray.rs", import.meta.url), "utf8");
 const tauriCommands = fs.readFileSync(new URL("../src-tauri/src/commands/mod.rs", import.meta.url), "utf8");
 const servicesDir = fileURLToPath(new URL("../src-tauri/src/services", import.meta.url));
 const tauriCore = fs
@@ -99,6 +105,55 @@ const checks = [
       !app.includes("trayOpacityMini"),
   ],
   [
+    "tray popover remains scrollable with footer visible",
+    app.includes("html[data-tray-popover=\"1\"] body") &&
+      app.includes("height: auto") &&
+      app.includes(".trayPopoverPanel") &&
+      app.includes("max-height: 100vh") &&
+      app.includes(".trayAccountList") &&
+      app.includes("flex: 0 1 auto") &&
+      app.includes("max-height: 416px") &&
+      app.includes("overflow-y: auto") &&
+      app.includes("overscroll-behavior: contain") &&
+      app.includes(".trayPopoverFoot") &&
+      app.includes("flex: 0 0 auto") &&
+      trayPanel.includes("<footer className=\"trayPopoverFoot\">") &&
+      trayPanel.includes("Open") &&
+      trayPanel.includes("Close"),
+  ],
+  [
+    "desktop main window opens only through explicit open command",
+    tauriConfig.includes("\"label\": \"main\"") &&
+      tauriConfig.includes("\"visible\": false") &&
+      tauriConfig.includes("\"height\": 520") &&
+      tauriTray.includes("pub fn show_main_window") &&
+      tauriTray.includes("window.unminimize()") &&
+      !tauriTray.includes("prepare_main_window_for_tray_only(app);"),
+  ],
+  [
+    "tray close does not open main window",
+    trayPanel.includes("onCloseClick") &&
+      trayPanel.includes("onOpenClick") &&
+      trayPanel.includes("event.preventDefault();") &&
+      trayPanel.includes("event.stopPropagation();") &&
+      trayPanel.includes("await openMain();") &&
+      !trayPanel.includes("onPointerDown={onClosePointerDown}"),
+  ],
+  [
+    "tray popover height grows up to four accounts",
+    traySize.includes("TRAY_POPOVER_MAX_VISIBLE_ROWS = 4") &&
+      traySize.includes("TRAY_POPOVER_EMPTY_LIST_HEIGHT") &&
+      traySize.includes("visibleRowCount = Math.min(rows.length, TRAY_POPOVER_MAX_VISIBLE_ROWS)") &&
+      traySize.includes("rows.slice(0, visibleRowCount)") &&
+      traySize.includes("const rowGap = Math.max(0, visibleRowCount - 1)") &&
+      !traySize.includes("panel.getBoundingClientRect().height"),
+  ],
+  [
+    "tray quota reset text sits below progress bar",
+    trayPanel.indexOf("className=\"trayQuotaTrack\"") < trayPanel.indexOf("className=\"trayResetSub\"") &&
+      !trayPanel.includes("<div className=\"trayQuotaLabel\">\\n          <span>{props.label}</span>\\n          <span className=\"trayResetSub\">"),
+  ],
+  [
     "brand icon unified",
     app.includes("IconLogo") &&
       app.includes("LAMOrbitLogo") &&
@@ -136,6 +191,13 @@ const checks = [
       !app.includes("quotaRefreshInFlightRef") &&
       !app.includes("refreshAllQuotas(ids)") &&
       !app.includes("await refreshAllQuotas(accountData.map((account) => account.id))"),
+  ],
+  [
+    "stale quota snapshots filtered after account rename",
+    quotaLib.includes("filterQuotaSnapshotsForAccounts") &&
+      app.includes("filterToProfileIds(data.map((a) => a.id))") &&
+      views.includes("countAccountsWithQuotaData(accounts, quotas)") &&
+      trayPanel.includes("countAccountsWithQuotaData(accounts, quotas)"),
   ],
   [
     "cached real quota startup path",

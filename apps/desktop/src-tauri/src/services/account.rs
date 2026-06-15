@@ -62,6 +62,27 @@ pub struct CreateResult {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameAccountRequest {
+    pub from_profile_id: String,
+    pub to_name: String,
+    pub overwrite_wrapper: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameAccountResult {
+    pub profile_id: String,
+    pub previous_profile_id: String,
+    pub home_path: PathBuf,
+    pub previous_home_path: PathBuf,
+    pub wrapper_path: PathBuf,
+    pub previous_wrapper_path: PathBuf,
+    pub operations: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
 pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
     let mut accounts = Vec::new();
     if !home_root.exists() {
@@ -189,6 +210,128 @@ pub fn execute_create_account(
         profile_id: name,
         home_path: home,
         wrapper_path: wrapper,
+        operations: plan.operations,
+        warnings: plan.warnings,
+    })
+}
+
+pub fn rename_account_plan(home_root: &Path, req: &RenameAccountRequest) -> Result<OperationPlan> {
+    let from = find_account(home_root, &req.from_profile_id)?;
+    if from.id == "main" {
+        return Err(AppError::new(
+            "MAIN_ACCOUNT_RENAME_BLOCKED",
+            "The main ~/.codex profile cannot be renamed",
+        ));
+    }
+    let to_name = validate_profile_name(&req.to_name)?;
+    if to_name == from.id {
+        return Err(AppError::new(
+            "ACCOUNT_RENAME_NOOP",
+            "Target account name is the same as the current name",
+        ));
+    }
+
+    let target_home = codex_home_path(home_root, &to_name);
+    let target_wrapper = wrapper_path(home_root, &to_name);
+    let source_wrapper = from
+        .wrapper_path
+        .clone()
+        .unwrap_or_else(|| wrapper_path(home_root, &from.id));
+
+    if target_home.exists() {
+        return Err(AppError::new(
+            "TARGET_ACCOUNT_ALREADY_EXISTS",
+            target_home.display().to_string(),
+        ));
+    }
+    if target_wrapper.exists() && !req.overwrite_wrapper {
+        return Err(AppError::new(
+            "WRAPPER_ALREADY_EXISTS",
+            target_wrapper.display().to_string(),
+        ));
+    }
+
+    let mut warnings = Vec::new();
+    if target_wrapper.exists() && req.overwrite_wrapper {
+        warnings.push(format!(
+            "Target wrapper exists and will be overwritten: {}",
+            target_wrapper.display()
+        ));
+    }
+    if !from.managed {
+        warnings.push(
+            "Source profile is not managed by Lam; only directory and wrapper are renamed.".into(),
+        );
+    }
+
+    Ok(OperationPlan {
+        operations: vec![
+            format!(
+                "rename_dir {} -> {}",
+                from.codex_home.display(),
+                target_home.display()
+            ),
+            format!("write_file {}", target_home.join(NEW_MARKER).display()),
+            format!("write_file {}", target_wrapper.display()),
+            format!("remove_file_if_exists {}", source_wrapper.display()),
+        ],
+        warnings,
+        blocked: vec!["auth.json".into()],
+    })
+}
+
+pub fn execute_rename_account(
+    home_root: &Path,
+    req: &RenameAccountRequest,
+) -> Result<RenameAccountResult> {
+    let plan = rename_account_plan(home_root, req)?;
+    let from = find_account(home_root, &req.from_profile_id)?;
+    let to_name = validate_profile_name(&req.to_name)?;
+    let target_home = codex_home_path(home_root, &to_name);
+    let target_wrapper = wrapper_path(home_root, &to_name);
+    let source_wrapper = from
+        .wrapper_path
+        .clone()
+        .unwrap_or_else(|| wrapper_path(home_root, &from.id));
+
+    fs::rename(&from.codex_home, &target_home).map_err(|err| {
+        AppError::new(
+            "ACCOUNT_RENAME_FAILED",
+            format!(
+                "Failed to rename {} to {}: {err}",
+                from.codex_home.display(),
+                target_home.display()
+            ),
+        )
+    })?;
+    set_dir_private(&target_home)?;
+    fs::create_dir_all(
+        target_wrapper
+            .parent()
+            .ok_or_else(|| AppError::new("WRAPPER_PATH_INVALID", "missing wrapper parent"))?,
+    )?;
+    write_executable(&target_wrapper, &wrapper_script(&to_name))?;
+    if source_wrapper.exists() && source_wrapper != target_wrapper {
+        fs::remove_file(&source_wrapper)?;
+    }
+    write_file_private(
+        &target_home.join(NEW_MARKER),
+        &managed_account_json(&to_name, None, None, None, &target_home, &target_wrapper),
+    )?;
+    let old_marker = target_home.join(OLD_MARKER);
+    if old_marker.exists() {
+        fs::remove_file(old_marker)?;
+    }
+    let accounts = list_accounts(home_root)?;
+    write_accounts_cache(home_root, &accounts)?;
+
+    Ok(RenameAccountResult {
+        profile_id: to_name,
+        previous_profile_id: from.id,
+        home_path: target_home,
+        previous_home_path: from.codex_home,
+        wrapper_path: target_wrapper,
+        previous_wrapper_path: source_wrapper,
         operations: plan.operations,
         warnings: plan.warnings,
     })

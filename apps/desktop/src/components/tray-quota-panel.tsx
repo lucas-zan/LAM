@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent } from "react";
+import type { CSSProperties } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -21,7 +21,6 @@ import {
   countAccountsWithAvailableQuota,
   countAccountsWithQuotaData,
   mergeQuotaSnapshots,
-  quotaColorState,
   quotaRemainingPercent,
 } from "../lib/quota";
 import { formatResetCountdown } from "../lib/reset";
@@ -29,7 +28,7 @@ import { scheduleTrayPopoverWindowSize } from "../lib/tray-popover-size";
 import type { ThemeMode } from "../lib/theme";
 import { TRAY_POPOVER_OPACITY_PERCENT } from "../lib/tray-popover-prefs";
 import type { CodexAccount, CodexSession, DivergedSessionStrategy, UsageQuotaSnapshot } from "../lib/types";
-import { IconClock, IconClose, IconExternalLink, IconLogo, IconRefresh } from "./icons";
+import { IconClock, IconClose, IconCopy, IconExternalLink, IconLogo, IconRefresh, IconSun, IconMoon } from "./icons";
 import { UIButton } from "./ui-button";
 
 type ProviderGroup = {
@@ -63,41 +62,6 @@ function readDivergedStrategy(): DivergedSessionStrategy {
   return "summarize_fork_with_target_account";
 }
 
-function TrayQuotaMeter(props: { label: string; used?: number | null; resetAt?: string | null }) {
-  const remaining = quotaRemainingPercent(props.used);
-  const state = quotaColorState(props.used);
-  const width = remaining === null || state === "empty" ? 0 : Math.max(3, remaining);
-  return (
-    <div className={`trayQuotaMeter trayQuotaMeter--${state}`}>
-      <div className="trayQuotaMeterHead">
-        <div className="trayQuotaLabel">
-          <span>{props.label}</span>
-          <span className="trayResetSub">
-            {formatResetCountdown(props.resetAt, props.label === "weekly" ? "weekly" : "session")}
-          </span>
-        </div>
-        <strong>{remaining === null ? "N/A" : `${remaining}%`}</strong>
-      </div>
-      <div className="trayQuotaTrack">
-        <i style={{ width: `${width}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function accountRemaining(quota?: UsageQuotaSnapshot): number | null {
-  if (!quota) return null;
-  const values = [quotaRemainingPercent(quota.primaryUsedPercent), quotaRemainingPercent(quota.secondaryUsedPercent)].filter(
-    (value): value is number => value !== null,
-  );
-  if (!values.length) return null;
-  return Math.min(...values);
-}
-
-function quotaStateFromRemaining(remaining: number | null) {
-  return remaining === null ? "na" : quotaColorState(100 - remaining);
-}
-
 function sortByLatestActivity(accounts: CodexAccount[]) {
   return [...accounts].sort((a, b) => {
     const aLatest = a.latestSessionModifiedAt ?? 0;
@@ -110,24 +74,432 @@ function sortByLatestActivity(accounts: CodexAccount[]) {
   });
 }
 
-function TrayAccountRing(props: { remaining: number | null; title: string }) {
-  const state = quotaStateFromRemaining(props.remaining);
-  const value = props.remaining === null ? 0 : props.remaining;
-  return (
-    <span
-      className={`trayAccountRing trayAccountRing--${state}`}
-      aria-label={`${props.title} remaining ${props.remaining === null ? "N/A" : `${props.remaining}%`}`}
-      style={{ "--ring-value": `${value}%` } as CSSProperties}
-    />
-  );
-}
-
 function readResolvedTheme(): "light" | "dark" {
   const mode = resolveThemeMode();
   if (mode === "system") {
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
   return mode;
+}
+
+const ACCOUNT_THEMES = [
+  {
+    // Orange/Amber
+    light: { color: "#d97706", glow: "rgba(217, 119, 6, 0.3)" },
+    dark: { color: "#fbbf24", glow: "rgba(251, 191, 36, 0.4)" },
+  },
+  {
+    // Blue
+    light: { color: "#0284c7", glow: "rgba(2, 132, 199, 0.3)" },
+    dark: { color: "#38bdf8", glow: "rgba(56, 189, 248, 0.4)" },
+  },
+  {
+    // Pink/Rose
+    light: { color: "#db2777", glow: "rgba(219, 39, 119, 0.3)" },
+    dark: { color: "#f472b6", glow: "rgba(244, 114, 182, 0.4)" },
+  },
+  {
+    // Purple/Violet
+    light: { color: "#7c3aed", glow: "rgba(124, 58, 237, 0.3)" },
+    dark: { color: "#a78bfa", glow: "rgba(167, 139, 250, 0.4)" },
+  },
+  {
+    // Green/Emerald
+    light: { color: "#059669", glow: "rgba(5, 150, 105, 0.3)" },
+    dark: { color: "#34d399", glow: "rgba(52, 211, 153, 0.4)" },
+  },
+];
+
+function getAccountTheme(accountName: string, index: number, isDark: boolean) {
+  let themeIndex = index;
+  if (accountName) {
+    let hash = 0;
+    for (let i = 0; i < accountName.length; i++) {
+      hash = accountName.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    themeIndex = Math.abs(hash);
+  }
+  const theme = ACCOUNT_THEMES[themeIndex % ACCOUNT_THEMES.length];
+  return isDark ? theme.dark : theme.light;
+}
+
+interface CircularProgressRingProps {
+  percent: number | null;
+  size?: number;
+  strokeWidth?: number;
+  themeColor: string;
+  themeGlow: string;
+}
+
+function CircularProgressRing({
+  percent,
+  size = 50,
+  strokeWidth = 4.5,
+  themeColor,
+  themeGlow,
+}: CircularProgressRingProps) {
+  const val = percent === null ? 0 : percent;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const strokeDashoffset = circumference - (val / 100) * circumference;
+
+  return (
+    <div className="circularProgressWrapper" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="circularProgressSvg">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          className="circularProgressTrack"
+          strokeWidth={strokeWidth}
+        />
+        {percent !== null && (
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            className="circularProgressIndicator"
+            strokeWidth={strokeWidth}
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            stroke={themeColor}
+            style={{
+              filter: `drop-shadow(0 0 2.5px ${themeGlow})`,
+            }}
+          />
+        )}
+      </svg>
+      <div className="circularProgressText" style={{ color: themeColor }}>
+        <strong>{percent === null ? "N/A" : `${percent}%`}</strong>
+      </div>
+    </div>
+  );
+}
+
+interface TrayPopoverHeaderProps {
+  status: string;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onClose: () => void;
+  accountsWithQuotaData: number;
+  totalAccounts: number;
+  avg5hRemaining: number | null;
+  availableQuotaAccounts: number;
+  activeAccountDisplayName?: string;
+  activeSessionId?: string;
+  resolvedTheme: "light" | "dark";
+  onToggleTheme: () => void;
+}
+
+function TrayPopoverHeader({
+  status,
+  refreshing,
+  onRefresh,
+  onClose,
+  accountsWithQuotaData,
+  totalAccounts,
+  avg5hRemaining,
+  availableQuotaAccounts,
+  activeAccountDisplayName,
+  activeSessionId,
+  resolvedTheme,
+  onToggleTheme,
+}: TrayPopoverHeaderProps) {
+  const handleCopy = () => {
+    if (activeSessionId) {
+      void navigator.clipboard.writeText(activeSessionId);
+    }
+  };
+
+  return (
+    <section className="trayPopoverFixedHead" aria-label="Quota header">
+      <header className="trayPopoverHead">
+        <div className="trayBrand">
+          <span className="trayBrandMark" aria-hidden>
+            <IconLogo size={24} />
+          </span>
+          <div>
+            <h2>LAM Quota</h2>
+            <p>
+              <IconClock size={12} /> {status}
+            </p>
+          </div>
+        </div>
+        <div className="trayPopoverHeadActions">
+          <button
+            type="button"
+            className="trayPopoverIconBtn trayThemeToggleButton"
+            aria-label={resolvedTheme === "light" ? "Switch to dark theme" : "Switch to light theme"}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onToggleTheme();
+            }}
+          >
+            {resolvedTheme === "light" ? <IconMoon size={14} /> : <IconSun size={14} />}
+          </button>
+          <button
+            type="button"
+            className={`trayPopoverIconBtn trayRefreshButton ${refreshing ? "isRefreshing" : ""}`}
+            aria-label={refreshing ? "Refreshing quotas" : "Refresh quotas"}
+            aria-busy={refreshing}
+            disabled={refreshing}
+            onClick={onRefresh}
+          >
+            <IconRefresh size={14} />
+          </button>
+          <button
+            type="button"
+            className="trayPopoverIconBtn trayDismissButton"
+            aria-label="Close panel"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            }}
+          >
+            <IconClose size={14} />
+          </button>
+        </div>
+      </header>
+
+      <section className="trayStats" aria-label="Quota summary">
+        <div>
+          <span>Accounts</span>
+          <strong>
+            {accountsWithQuotaData}/{totalAccounts}
+          </strong>
+        </div>
+        <div>
+          <span>5h avg</span>
+          <strong>{avg5hRemaining === null ? "N/A" : `${avg5hRemaining}%`}</strong>
+        </div>
+        <div>
+          <span>Usable</span>
+          <strong>{availableQuotaAccounts}</strong>
+        </div>
+      </section>
+
+      <section className="trayActiveSource" aria-label="Active source session">
+        <div className="trayActiveSourceBar">
+          <span className="activeDot" />
+          <span className="activeLabel">Active</span>
+          <strong className="activeAccount" title={activeAccountDisplayName}>
+            {activeAccountDisplayName ?? "No session"}
+          </strong>
+          <span className="activeSessionId">{activeSessionId ?? "No active session"}</span>
+          {activeSessionId && (
+            <button
+              type="button"
+              className="trayActiveSourceCopyBtn"
+              title="Copy session ID"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleCopy();
+              }}
+            >
+              <IconCopy size={12} />
+            </button>
+          )}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+interface TrayPopoverFooterProps {
+  onClose: () => void;
+  onOpen: () => void;
+}
+
+function TrayPopoverFooter({ onClose, onOpen }: TrayPopoverFooterProps) {
+  return (
+    <footer className="trayPopoverFoot">
+      <div className="trayPopoverActions">
+        <UIButton
+          size="sm"
+          variant="ghost"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onClose();
+          }}
+        >
+          <IconClose size={13} />
+          Close
+        </UIButton>
+        <span />
+        <UIButton
+          size="sm"
+          variant="primary"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onOpen();
+          }}
+        >
+          <IconExternalLink size={13} />
+          Open
+        </UIButton>
+      </div>
+    </footer>
+  );
+}
+
+interface TrayAccountListProps {
+  providerGroups: ProviderGroup[];
+  activeProviderId: string;
+  setActiveProviderId: (id: string) => void;
+  quotas: UsageQuotaSnapshot[];
+  activeSession?: CodexSession;
+  relayingAccountId: string;
+  onRelayTo: (account: CodexAccount) => void;
+  isDark: boolean;
+}
+
+function TrayAccountList({
+  providerGroups,
+  activeProviderId,
+  setActiveProviderId,
+  quotas,
+  activeSession,
+  relayingAccountId,
+  onRelayTo,
+  isDark,
+}: TrayAccountListProps) {
+  const activeGroup =
+    providerGroups.find((group) => group.id === activeProviderId) ?? providerGroups[0];
+  const showProviderTabs = providerGroups.length > 1;
+
+  if (!activeGroup) {
+    return (
+      <section className="trayAccountList" aria-label="Accounts">
+        <p className="trayPopoverEmpty">No Codex profiles found.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="trayAccountList" aria-label="Accounts">
+      {showProviderTabs ? (
+        <div className="trayProviderTabs" role="tablist" aria-label="Provider groups">
+          {providerGroups.map((group) => (
+            <button
+              key={group.id}
+              type="button"
+              role="tab"
+              id={`tray-tab-${group.id}`}
+              aria-selected={group.id === activeGroup.id}
+              aria-controls={`tray-panel-${group.id}`}
+              className={`trayProviderTab ${group.id === activeGroup.id ? "isActive" : ""}`}
+              onClick={() => setActiveProviderId(group.id)}
+            >
+              {group.title}
+              <em>{group.accounts.length}</em>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <div
+        className="trayProviderPanel"
+        role="tabpanel"
+        id={`tray-panel-${activeGroup.id}`}
+        aria-labelledby={showProviderTabs ? `tray-tab-${activeGroup.id}` : undefined}
+      >
+        {showProviderTabs ? (
+          <div className="trayProviderPanelMeta">
+            <span>{activeGroup.meta}</span>
+          </div>
+        ) : null}
+
+        <div className="trayProviderRows">
+          {activeGroup.accounts.map((account, index) => {
+            const quota = quotas.find((q) => q.profileId === account.id);
+            const title = account.displayName.trim() || account.id;
+            const isActiveAccount = activeSession?.accountId === account.id;
+
+            const accountTheme = getAccountTheme(account.id, index, isDark);
+            const primaryRemaining = quotaRemainingPercent(quota?.primaryUsedPercent);
+            const secondaryRemaining = quotaRemainingPercent(quota?.secondaryUsedPercent);
+
+            const cardStyle = {
+              borderColor: accountTheme.color + "22",
+            } as CSSProperties;
+
+            const btnStyle = {
+              "--btn-bg": accountTheme.color + "14",
+              "--btn-text": accountTheme.color,
+              "--btn-border": accountTheme.color + "22",
+            } as CSSProperties;
+
+            return (
+              <div className="trayAccountRow" key={account.id} style={cardStyle}>
+                <div className="trayAccountRowTop">
+                  <div className="trayAccountMain">
+                    <span className={`trayAccountStatusDot ${isActiveAccount ? "isActive" : ""}`} />
+                    <div className="trayAccountNameWrap">
+                      <strong title={title}>{title}</strong>
+                      {isActiveAccount && (
+                        <span className="accountActiveBadge" aria-label="Active session account">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="trayRelayButton"
+                    style={btnStyle}
+                    disabled={!activeSession || relayingAccountId === account.id}
+                    onClick={() => onRelayTo(account)}
+                  >
+                    {activeSession?.accountId === account.id ? "Resume" : "Relay"}
+                  </button>
+                </div>
+
+                <div className="trayAccountRowContent">
+                  <div className="trayAccountRowContentLeft">
+                    <div className="trayAccountRowContentLeftText">
+                      <strong>5h</strong>
+                      <span>{formatResetCountdown(quota?.resetAt, "session")}</span>
+                    </div>
+                    <CircularProgressRing
+                      percent={primaryRemaining}
+                      themeColor={accountTheme.color}
+                      themeGlow={accountTheme.glow}
+                    />
+                  </div>
+
+                  <div className="trayAccountRowContentRight">
+                    <div className="trayAccountRowContentRightLabel">
+                      <strong style={{ color: accountTheme.color }}>
+                        {secondaryRemaining === null ? "N/A" : `${secondaryRemaining}%`}
+                      </strong>
+                      <span>weekly</span>
+                    </div>
+                    <div className="trayQuotaTrack">
+                      <i
+                        style={{
+                          width: `${secondaryRemaining ?? 0}%`,
+                          background: accountTheme.color,
+                          boxShadow: `0 0 4px ${accountTheme.glow}`,
+                        }}
+                      />
+                    </div>
+                    <span className="trayResetSub" style={{ textAlign: "right" }}>
+                      {formatResetCountdown(quota?.secondaryResetAt, "weekly")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 export function TrayQuotaPanel() {
@@ -146,6 +518,19 @@ export function TrayQuotaPanel() {
     setResolvedTheme(resolved);
     document.documentElement.dataset.theme = resolved;
   }, []);
+
+  const handleToggleTheme = useCallback(() => {
+    const nextTheme = resolvedTheme === "light" ? "dark" : "light";
+    localStorage.setItem("lam-theme", nextTheme);
+    setResolvedTheme(nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "lam-theme",
+        newValue: nextTheme,
+      })
+    );
+  }, [resolvedTheme]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- syncing with external media query */
   useEffect(() => {
@@ -257,12 +642,6 @@ export function TrayQuotaPanel() {
     await getCurrentWebviewWindow().hide();
   }
 
-  function onClosePointerDown(event: PointerEvent<HTMLButtonElement>) {
-    event.preventDefault();
-    event.stopPropagation();
-    void closePopover();
-  }
-
   async function openMain() {
     await invoke("show_main_window");
     await closePopover();
@@ -300,7 +679,7 @@ export function TrayQuotaPanel() {
     }
   }
 
-  const accountsWithQuotaData = countAccountsWithQuotaData(quotas);
+  const accountsWithQuotaData = countAccountsWithQuotaData(accounts, quotas);
   const availableQuotaAccounts = countAccountsWithAvailableQuota(accounts, quotas);
   const avg5hRemaining = averagePrimaryRemainingPercent(quotas);
   const activeAccount = activeSession ? accounts.find((account) => account.id === activeSession.accountId) : undefined;
@@ -318,7 +697,6 @@ export function TrayQuotaPanel() {
     ];
   }, [accounts.length, orderedAccounts]);
 
-  const showProviderTabs = providerGroups.length > 1;
   const activeGroup =
     providerGroups.find((group) => group.id === activeProviderId) ?? providerGroups[0];
 
@@ -351,167 +729,42 @@ export function TrayQuotaPanel() {
     };
   }, [accounts.length, providerGroups.length, activeSession?.id, status]);
 
+  useEffect(() => {
+    scheduleTrayPopoverWindowSize(panelRef.current);
+  }, [accounts.length, quotas.length, activeGroup?.accounts.length]);
+
   return (
     <div ref={panelRef} className="trayPopoverPanel" data-theme={resolvedTheme}>
-      <section className="trayPopoverFixedHead" aria-label="Quota header">
-        <header className="trayPopoverHead">
-          <div className="trayBrand">
-            <span className="trayBrandMark" aria-hidden>
-              <IconLogo size={24} />
-            </span>
-            <div>
-              <h2>LAM quota</h2>
-              <p>
-                <IconClock size={12} /> {status}
-              </p>
-            </div>
-          </div>
-          <div className="trayPopoverHeadActions">
-            <button
-              type="button"
-              className={`trayPopoverIconBtn trayRefreshButton ${refreshing ? "isRefreshing" : ""}`}
-              aria-label={refreshing ? "Refreshing quotas" : "Refresh quotas"}
-              aria-busy={refreshing}
-              disabled={refreshing}
-              onClick={() => void load(true)}
-            >
-              <IconRefresh size={14} />
-            </button>
-            <button
-              type="button"
-              className="trayPopoverIconBtn trayDismissButton"
-              aria-label="Close panel"
-              onPointerDown={onClosePointerDown}
-            >
-              <IconClose size={14} />
-            </button>
-          </div>
-        </header>
+      <TrayPopoverHeader
+        status={status}
+        refreshing={refreshing}
+        onRefresh={() => void load(true)}
+        onClose={() => void closePopover()}
+        accountsWithQuotaData={accountsWithQuotaData}
+        totalAccounts={accounts.length || 0}
+        avg5hRemaining={avg5hRemaining}
+        availableQuotaAccounts={availableQuotaAccounts}
+        activeAccountDisplayName={activeAccount?.displayName ?? activeSession?.accountId}
+        activeSessionId={activeSession?.id}
+        resolvedTheme={resolvedTheme}
+        onToggleTheme={handleToggleTheme}
+      />
 
-        <section className="trayStats" aria-label="Quota summary">
-          <div>
-            <span>Accounts</span>
-            <strong>
-              {accountsWithQuotaData}/{accounts.length || 0}
-            </strong>
-          </div>
-          <div>
-            <span>5h avg</span>
-            <strong>{avg5hRemaining === null ? "N/A" : `${avg5hRemaining}%`}</strong>
-          </div>
-          <div>
-            <span>Usable</span>
-            <strong>{availableQuotaAccounts}</strong>
-          </div>
-        </section>
+      <TrayAccountList
+        providerGroups={providerGroups}
+        activeProviderId={activeProviderId}
+        setActiveProviderId={setActiveProviderId}
+        quotas={quotas}
+        activeSession={activeSession}
+        relayingAccountId={relayingAccountId}
+        onRelayTo={(account) => void relayTo(account)}
+        isDark={resolvedTheme === "dark"}
+      />
 
-        <section className="trayActiveSource" aria-label="Active source session">
-          <span>Active</span>
-          <strong>{activeAccount?.displayName ?? activeSession?.accountId ?? "No session"}</strong>
-          <em className="mono">{activeSession?.id ?? "No active session"}</em>
-        </section>
-      </section>
-
-      <section className="trayAccountList" aria-label="Accounts">
-        {!activeGroup ? (
-          <p className="trayPopoverEmpty">No Codex profiles found.</p>
-        ) : (
-          <>
-            {showProviderTabs ? (
-              <div className="trayProviderTabs" role="tablist" aria-label="Provider groups">
-                {providerGroups.map((group) => (
-                  <button
-                    key={group.id}
-                    type="button"
-                    role="tab"
-                    id={`tray-tab-${group.id}`}
-                    aria-selected={group.id === activeGroup.id}
-                    aria-controls={`tray-panel-${group.id}`}
-                    className={`trayProviderTab ${group.id === activeGroup.id ? "isActive" : ""}`}
-                    onClick={() => setActiveProviderId(group.id)}
-                  >
-                    {group.title}
-                    <em>{group.accounts.length}</em>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            <div
-              className="trayProviderPanel"
-              role="tabpanel"
-              id={`tray-panel-${activeGroup.id}`}
-              aria-labelledby={showProviderTabs ? `tray-tab-${activeGroup.id}` : undefined}
-            >
-              {showProviderTabs ? (
-                <div className="trayProviderPanelMeta">
-                  <span>{activeGroup.meta}</span>
-                </div>
-              ) : null}
-
-              <div className="trayProviderRows">
-                {activeGroup.accounts.map((account) => {
-                  const quota = quotas.find((q) => q.profileId === account.id);
-                  const title = account.displayName.trim() || account.id;
-                  const remaining = accountRemaining(quota);
-                  const state = quotaStateFromRemaining(remaining);
-                  const isActiveAccount = activeSession?.accountId === account.id;
-                  return (
-                    <div className="trayAccountRow" key={account.id}>
-                      <div className="trayAccountRowTop">
-                        <div className="trayAccountMain">
-                          <TrayAccountRing remaining={remaining} title={title} />
-                          <div className="trayAccountNameWrap">
-                            <strong title={title}>{title}</strong>
-                            {isActiveAccount ? (
-                              <span className="accountActiveBadge" aria-label="Active session account">
-                                Active
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
-                        <strong className={`trayAccountRemaining trayAccountRemaining--${state}`}>
-                          {remaining === null ? "N/A" : `${remaining}%`}
-                        </strong>
-                        <button
-                          type="button"
-                          className="trayRelayButton"
-                          disabled={!activeSession || relayingAccountId === account.id}
-                          onClick={() => void relayTo(account)}
-                        >
-                          {activeSession?.accountId === account.id ? "Resume" : "Relay"}
-                        </button>
-                      </div>
-                      <div className="trayAccountMeters">
-                        <TrayQuotaMeter label="5h" used={quota?.primaryUsedPercent} resetAt={quota?.resetAt} />
-                        <TrayQuotaMeter label="weekly" used={quota?.secondaryUsedPercent} resetAt={quota?.secondaryResetAt} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </>
-        )}
-      </section>
-
-      <footer className="trayPopoverFoot">
-        <div className="trayPopoverActions">
-          <UIButton
-            size="sm"
-            variant="ghost"
-            onPointerDown={onClosePointerDown}
-          >
-            <IconClose size={13} />
-            Close
-          </UIButton>
-          <span />
-          <UIButton size="sm" variant="primary" onClick={() => void openMain()}>
-            <IconExternalLink size={13} />
-            Open
-          </UIButton>
-        </div>
-      </footer>
+      <TrayPopoverFooter
+        onClose={() => void closePopover()}
+        onOpen={() => void openMain()}
+      />
     </div>
   );
 }

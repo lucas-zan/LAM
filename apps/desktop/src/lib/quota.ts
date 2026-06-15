@@ -15,8 +15,27 @@ export function accountHasAvailableQuota(quota?: UsageQuotaSnapshot): boolean {
   return hasQuotaRemaining(quota.primaryUsedPercent) && hasQuotaRemaining(quota.secondaryUsedPercent);
 }
 
-export function countAccountsWithQuotaData(quotas: UsageQuotaSnapshot[]): number {
-  return quotas.filter(
+export function filterQuotaSnapshotsForAccounts(
+  accounts: CodexAccount[],
+  quotas: UsageQuotaSnapshot[],
+): UsageQuotaSnapshot[] {
+  const accountIds = new Set(accounts.map((account) => account.id));
+  return quotas.filter((quota) => accountIds.has(quota.profileId));
+}
+
+export function filterQuotaSnapshotsForProfileIds(
+  profileIds: string[],
+  quotas: UsageQuotaSnapshot[],
+): UsageQuotaSnapshot[] {
+  const accountIds = new Set(profileIds);
+  return quotas.filter((quota) => accountIds.has(quota.profileId));
+}
+
+export function countAccountsWithQuotaData(
+  accounts: CodexAccount[],
+  quotas: UsageQuotaSnapshot[],
+): number {
+  return filterQuotaSnapshotsForAccounts(accounts, quotas).filter(
     (quota) => quota.primaryUsedPercent !== null && quota.primaryUsedPercent !== undefined,
   ).length;
 }

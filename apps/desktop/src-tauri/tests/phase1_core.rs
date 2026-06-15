@@ -1,11 +1,11 @@
 use localagentmanager_core::{
     attach_provider_to_profile, build_resume_command, create_account_plan, create_provider,
     create_relay_plan, delete_provider, execute_attach_provider_to_profile, execute_create_account,
-    execute_create_relay, execute_sync, get_profile_quota, list_accounts, list_cached_accounts,
-    list_cached_quotas,
-    list_providers, list_sessions, plan_attach_provider_to_profile, refresh_all_quotas,
-    relay_resume_session, sync_plan, terminal_applescript, AttachProviderRequest,
-    CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, RelayResumeRequest,
+    execute_create_relay, execute_rename_account, execute_sync, get_profile_quota, list_accounts,
+    list_cached_accounts, list_cached_quotas, list_providers, list_sessions,
+    plan_attach_provider_to_profile, refresh_all_quotas, relay_resume_session, rename_account_plan,
+    sync_plan, terminal_applescript, AttachProviderRequest, CreateAccountRequest,
+    CreateProviderRequest, CreateRelayRequest, RelayResumeRequest, RenameAccountRequest,
     ResumeCommandRequest, SecretInput, SyncRequest,
 };
 use std::fs;
@@ -220,6 +220,142 @@ fn creates_managed_account_with_plan_and_safe_wrapper() {
     let wrapper = fs::read_to_string(result.wrapper_path).unwrap();
     assert!(wrapper.contains("export CODEX_HOME=\"$HOME/.codex-luna\""));
     assert!(wrapper.contains("exec \"$CODEX_BIN\" \"$@\""));
+}
+
+#[test]
+fn renames_managed_account_home_wrapper_and_metadata() {
+    let home = temp_home("rename-account");
+    execute_create_account(
+        &home,
+        &CreateAccountRequest {
+            name: "b".into(),
+            copy_config_from: None,
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap();
+    write(&home.join(".codex-b/auth.json"), r#"{"token":"secret"}"#);
+
+    let rename = RenameAccountRequest {
+        from_profile_id: "b".into(),
+        to_name: "liming".into(),
+        overwrite_wrapper: false,
+    };
+    let plan = rename_account_plan(&home, &rename).unwrap();
+    assert!(plan
+        .operations
+        .iter()
+        .any(|op| op.contains(".codex-b") && op.contains(".codex-liming")));
+    assert!(plan
+        .operations
+        .iter()
+        .any(|op| op.contains("codex-b") && op.contains("codex-liming")));
+    assert!(plan.blocked.iter().any(|item| item == "auth.json"));
+
+    let result = execute_rename_account(&home, &rename).unwrap();
+    assert_eq!(result.profile_id, "liming");
+    assert!(!home.join(".codex-b").exists());
+    assert!(home.join(".codex-liming").exists());
+    assert!(home.join(".codex-liming/auth.json").exists());
+    assert!(!home.join("bin/codex-b").exists());
+    assert!(home.join("bin/codex-liming").exists());
+
+    let wrapper = fs::read_to_string(result.wrapper_path).unwrap();
+    assert!(wrapper.contains("export CODEX_HOME=\"$HOME/.codex-liming\""));
+    assert!(!wrapper.contains(".codex-b"));
+
+    let marker =
+        fs::read_to_string(home.join(".codex-liming/.managed-by-agent-workspace.json")).unwrap();
+    assert!(marker.contains("\"accountName\": \"liming\""));
+    assert!(marker.contains(".codex-liming"));
+    assert!(marker.contains("codex-liming"));
+
+    let accounts = list_accounts(&home).unwrap();
+    assert!(!accounts.iter().any(|account| account.id == "b"));
+    assert!(accounts
+        .iter()
+        .any(|account| account.id == "liming" && account.managed));
+}
+
+#[test]
+fn rename_account_blocks_unsafe_targets() {
+    let home = temp_home("rename-blocks");
+    execute_create_account(
+        &home,
+        &CreateAccountRequest {
+            name: "b".into(),
+            copy_config_from: None,
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap();
+    seed_codex_home(&home, "liming");
+    seed_codex_home(&home, "main");
+
+    let existing_home = rename_account_plan(
+        &home,
+        &RenameAccountRequest {
+            from_profile_id: "b".into(),
+            to_name: "liming".into(),
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(existing_home.code, "TARGET_ACCOUNT_ALREADY_EXISTS");
+
+    let main_blocked = rename_account_plan(
+        &home,
+        &RenameAccountRequest {
+            from_profile_id: "main".into(),
+            to_name: "primary".into(),
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(main_blocked.code, "MAIN_ACCOUNT_RENAME_BLOCKED");
+}
+
+#[test]
+fn rename_account_blocks_wrapper_conflict_without_overwrite() {
+    let home = temp_home("rename-wrapper-conflict");
+    execute_create_account(
+        &home,
+        &CreateAccountRequest {
+            name: "b".into(),
+            copy_config_from: None,
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap();
+    write_executable(
+        &home.join("bin/codex-liming"),
+        "#!/usr/bin/env bash\nexit 0\n",
+    );
+
+    let err = rename_account_plan(
+        &home,
+        &RenameAccountRequest {
+            from_profile_id: "b".into(),
+            to_name: "liming".into(),
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err.code, "WRAPPER_ALREADY_EXISTS");
+
+    let plan = rename_account_plan(
+        &home,
+        &RenameAccountRequest {
+            from_profile_id: "b".into(),
+            to_name: "liming".into(),
+            overwrite_wrapper: true,
+        },
+    )
+    .unwrap();
+    assert!(plan
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("wrapper")));
 }
 
 #[test]

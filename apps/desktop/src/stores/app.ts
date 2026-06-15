@@ -4,7 +4,7 @@ import type { ThemeMode } from "../lib/theme";
 import type { HealthCheck } from "../lib/types";
 import type { Route } from "../routes/types";
 
-type Modal = "account" | "relay" | "sync" | "provider" | "attachProvider" | "sessionDetail" | null;
+type Modal = "account" | "renameAccount" | "relay" | "sync" | "provider" | "attachProvider" | "sessionDetail" | null;
 
 interface AppState {
   route: Route;

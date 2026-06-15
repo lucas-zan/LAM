@@ -17,7 +17,6 @@ pub const TRAY_ID: &str = "lam-quota-tray";
 pub const POPOVER_LABEL: &str = "quota-popover";
 const REFRESH_MENU_ID: &str = "tray-refresh";
 const SHOW_MENU_ID: &str = "tray-show";
-const MAIN_LABEL: &str = "main";
 
 static TRAY_BUSY: Mutex<bool> = Mutex::new(false);
 static POPOVER_OPACITY_PERCENT: AtomicU8 = AtomicU8::new(100);
@@ -266,14 +265,7 @@ pub fn refresh_tray_menu_background<R: Runtime>(app: AppHandle<R>, force_fetch: 
     });
 }
 
-pub fn prepare_main_window_for_tray_only<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(main) = app.get_webview_window(MAIN_LABEL) {
-        let _ = main.hide();
-    }
-}
-
 pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), AppError> {
-    prepare_main_window_for_tray_only(app);
     let icon = load_tray_icon();
     let menu = build_tray_menu(app)?;
     let app_click = app.clone();

@@ -25,7 +25,7 @@
         "title": "LAM Quota",
         "url": "index.html",
         "width": 328,
-        "height": 248,
+        "height": 520,
         "visible": false,
         "decorations": false,
         "transparent": true,
@@ -33,7 +33,7 @@
         "shadow": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "resizable": false,
+        "resizable": true,
         "focus": true
       }
     ]

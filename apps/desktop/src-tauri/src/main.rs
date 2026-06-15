@@ -26,6 +26,8 @@ fn main() {
             commands::list_sessions,
             commands::plan_create_account,
             commands::execute_create_account,
+            commands::plan_rename_account,
+            commands::execute_rename_account,
             commands::plan_create_relay,
             commands::execute_create_relay,
             commands::build_sync_plan,

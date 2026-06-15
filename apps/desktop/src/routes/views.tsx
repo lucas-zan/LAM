@@ -10,6 +10,7 @@ export function Overview({
   providers,
   select,
   openSync,
+  rename,
   login,
   relayResume,
   currentSession,
@@ -21,13 +22,14 @@ export function Overview({
   providers: ProviderProfile[];
   select: (id: string) => void;
   openSync: (id: string) => void;
+  rename: (account: CodexAccount) => void;
   login: (account: CodexAccount) => void;
   relayResume: (account: CodexAccount) => void;
   currentSession?: CodexSession;
   refreshAccountQuota: (profileId: string) => void;
   refreshingQuotaIds: string[];
 }) {
-  const accountsWithQuotaData = countAccountsWithQuotaData(quotas);
+  const accountsWithQuotaData = countAccountsWithQuotaData(accounts, quotas);
   const availableQuotaAccounts = countAccountsWithAvailableQuota(accounts, quotas);
   const sessionTotal = accounts.reduce((sum, account) => sum + account.sessionCount, 0);
   return (
@@ -43,6 +45,7 @@ export function Overview({
         quotas={quotas}
         select={select}
         openSync={openSync}
+        rename={rename}
         login={login}
         relayResume={relayResume}
         currentSession={currentSession}
@@ -59,6 +62,7 @@ export function Accounts({
   quotas,
   select,
   openSync,
+  rename,
   login,
   relayResume,
   currentSession,
@@ -70,6 +74,7 @@ export function Accounts({
   quotas: UsageQuotaSnapshot[];
   select: (id: string) => void;
   openSync: (id: string) => void;
+  rename: (account: CodexAccount) => void;
   login: (account: CodexAccount) => void;
   relayResume: (account: CodexAccount) => void;
   currentSession?: CodexSession;
@@ -168,6 +173,17 @@ export function Accounts({
                   {currentSession?.accountId === account.id ? "Continue" : "Relay"}
                 </UIButton>
                 <UIButton size="sm" onClick={(e) => { e.stopPropagation(); openSync(account.id); }}>↑ Sync To...</UIButton>
+                <UIButton
+                  size="sm"
+                  disabled={account.id === "main"}
+                  title={account.id === "main" ? "Main profile cannot be renamed" : `Rename ${account.displayName}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    rename(account);
+                  }}
+                >
+                  Rename
+                </UIButton>
                 <UIButton size="sm" onClick={(e) => { e.stopPropagation(); login(account); }}>→ Login</UIButton>
               </div>
             </article>

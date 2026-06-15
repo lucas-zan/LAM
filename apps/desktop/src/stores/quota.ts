@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import * as api from "../lib/api";
-import { mergeQuotaSnapshots } from "../lib/quota";
+import { filterQuotaSnapshotsForProfileIds, mergeQuotaSnapshots } from "../lib/quota";
 import type { UsageQuotaSnapshot } from "../lib/types";
 import { useAppStore } from "./app";
 import { formatError } from "../lib/format";
@@ -19,6 +19,7 @@ interface QuotaState {
   scheduleQuotaRefresh: (profileIds: string[], delayMs: number) => void;
   startAutoRefresh: (profileIds: string[]) => void;
   stopAutoRefresh: () => void;
+  filterToProfileIds: (profileIds: string[]) => void;
   clearQuotas: () => void;
 }
 
@@ -72,7 +73,9 @@ export const useQuotaStore = create<QuotaState>()((set, get) => ({
       .then((cached) => {
         if (!cached.length) return;
         set((s) => {
-          const next = new Map(s.quotas.map((q) => [q.profileId, q]));
+          const ids = profileIds ?? cached.map((snap) => snap.profileId);
+          const scoped = filterQuotaSnapshotsForProfileIds(ids, s.quotas);
+          const next = new Map(scoped.map((q) => [q.profileId, q]));
           for (const snap of cached) next.set(snap.profileId, snap);
           return { quotas: Array.from(next.values()) };
         });
@@ -105,6 +108,10 @@ export const useQuotaStore = create<QuotaState>()((set, get) => ({
     if (_intervalId !== null) window.clearInterval(_intervalId);
     if (_timerId !== null) window.clearTimeout(_timerId);
     set({ _intervalId: null, _timerId: null });
+  },
+
+  filterToProfileIds: (profileIds) => {
+    set((s) => ({ quotas: filterQuotaSnapshotsForProfileIds(profileIds, s.quotas) }));
   },
 
   clearQuotas: () => set({ quotas: [] }),

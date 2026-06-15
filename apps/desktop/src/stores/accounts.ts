@@ -156,6 +156,7 @@ function applyAccountsList(
   const nextAccount = keepSelection ? get().selectedAccountId : data[0]?.id ?? "";
 
   set({ accounts: data, selectedAccountId: nextAccount });
+  useQuotaStore.getState().filterToProfileIds(data.map((a) => a.id));
   app.setAppReady();
 
   if (nextAccount) {

@@ -6,21 +6,24 @@ use localagentmanager_core::{
     create_relay_plan as core_create_relay_plan, delete_provider as core_delete_provider,
     execute_attach_provider_to_profile as core_execute_attach_provider_to_profile,
     execute_create_account as core_execute_create_account,
-    execute_create_relay as core_execute_create_relay, execute_sync as core_execute_sync,
+    execute_create_relay as core_execute_create_relay,
+    execute_rename_account as core_execute_rename_account, execute_sync as core_execute_sync,
     get_profile_quota as core_get_profile_quota, list_accounts as core_list_accounts,
-    list_cached_accounts as core_list_cached_accounts, list_cached_quotas as core_list_cached_quotas,
-    list_providers as core_list_providers,
+    list_cached_accounts as core_list_cached_accounts,
+    list_cached_quotas as core_list_cached_quotas, list_providers as core_list_providers,
     list_sessions as core_list_sessions, open_terminal_for_login as core_open_terminal_for_login,
     open_terminal_with_command as core_open_terminal_with_command,
     open_terminal_with_resume as core_open_terminal_with_resume,
     plan_attach_provider_to_profile as core_plan_attach_provider_to_profile,
     refresh_all_quotas as core_refresh_all_quotas,
-    relay_resume_session as core_relay_resume_session, sync_plan as core_sync_plan,
+    relay_resume_session as core_relay_resume_session,
+    rename_account_plan as core_rename_account_plan, sync_plan as core_sync_plan,
     test_provider as core_test_provider, update_provider as core_update_provider, AppError,
     AttachProviderRequest, AttachProviderResult, CodexAccount, CodexSession, CreateAccountRequest,
     CreateProviderRequest, CreateRelayRequest, CreateResult, OperationPlan, ProviderProfile,
-    QuotaRefreshResult, RelayResumeRequest, RelayResumeResult, ResumeCommand, ResumeCommandRequest,
-    SyncPlan, SyncRequest, SyncResult, UpdateProviderRequest, UsageQuotaSnapshot,
+    QuotaRefreshResult, RelayResumeRequest, RelayResumeResult, RenameAccountRequest,
+    RenameAccountResult, ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult,
+    UpdateProviderRequest, UsageQuotaSnapshot,
 };
 use std::path::PathBuf;
 
@@ -97,6 +100,16 @@ pub fn plan_create_account(req: CreateAccountRequest) -> Result<OperationPlan, A
 #[tauri::command]
 pub fn execute_create_account(req: CreateAccountRequest) -> Result<CreateResult, AppError> {
     core_execute_create_account(&home_root()?, &req)
+}
+
+#[tauri::command]
+pub fn plan_rename_account(req: RenameAccountRequest) -> Result<OperationPlan, AppError> {
+    core_rename_account_plan(&home_root()?, &req)
+}
+
+#[tauri::command]
+pub fn execute_rename_account(req: RenameAccountRequest) -> Result<RenameAccountResult, AppError> {
+    core_execute_rename_account(&home_root()?, &req)
 }
 
 #[tauri::command]
