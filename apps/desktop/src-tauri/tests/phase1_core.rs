@@ -14,6 +14,27 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[test]
+fn packaged_app_launch_has_visible_entrypoint() {
+    let config_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");
+    let config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(config_path).unwrap()).unwrap();
+
+    let windows = config["app"]["windows"].as_array().unwrap();
+    let main = windows
+        .iter()
+        .find(|window| window["label"] == "main")
+        .unwrap();
+    let popover = windows
+        .iter()
+        .find(|window| window["label"] == "quota-popover")
+        .unwrap();
+
+    assert_eq!(main["visible"], true);
+    assert_eq!(popover["visible"], false);
+    assert!(!config["identifier"].as_str().unwrap().ends_with(".app"));
+}
+
 fn temp_home(name: &str) -> PathBuf {
     let mut path = std::env::temp_dir();
     let suffix = SystemTime::now()
