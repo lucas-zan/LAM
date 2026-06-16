@@ -1,7 +1,7 @@
 import { countAccountsWithAvailableQuota, countAccountsWithQuotaData } from "../lib/quota";
 import type { CodexAccount, CodexSession, DivergedSessionStrategy, HealthCheck, ProviderProfile, UsageQuotaSnapshot } from "../lib/types";
 import { QuotaWindow } from "../components/quota-window";
-import { IconCopy, IconProviders, IconInfo, MetricIcon, type MetricIconName } from "../components/icons";
+import { IconCopy, IconProviders, IconInfo, MetricIcon, type MetricIconName, IconPlay, IconCloud, IconPencil, IconKey } from "../components/icons";
 import { UIButton } from "../components/ui-button";
 
 export function Overview({
@@ -170,9 +170,13 @@ export function Accounts({
                     relayResume(account);
                   }}
                 >
+                  <IconPlay size={13} />
                   {currentSession?.accountId === account.id ? "Continue" : "Relay"}
                 </UIButton>
-                <UIButton size="sm" onClick={(e) => { e.stopPropagation(); openSync(account.id); }}>↑ Sync To...</UIButton>
+                <UIButton size="sm" onClick={(e) => { e.stopPropagation(); openSync(account.id); }}>
+                  <IconCloud size={13} />
+                  Sync To...
+                </UIButton>
                 <UIButton
                   size="sm"
                   disabled={account.id === "main"}
@@ -182,9 +186,13 @@ export function Accounts({
                     rename(account);
                   }}
                 >
+                  <IconPencil size={13} />
                   Rename
                 </UIButton>
-                <UIButton size="sm" onClick={(e) => { e.stopPropagation(); login(account); }}>→ Login</UIButton>
+                <UIButton size="sm" onClick={(e) => { e.stopPropagation(); login(account); }}>
+                  <IconKey size={13} />
+                  Login
+                </UIButton>
               </div>
             </article>
           );

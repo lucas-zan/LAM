@@ -91,7 +91,7 @@ export function quotaColorState(used?: number | null): QuotaColorState {
   const remaining = quotaRemainingPercent(used);
   if (remaining === null) return "na";
   if (remaining === 0) return "empty";
-  if (remaining <= 25) return "danger";
-  if (remaining < 75) return "warn";
+  if (remaining < 25) return "danger";
+  if (remaining < 70) return "warn";
   return "safe";
 }

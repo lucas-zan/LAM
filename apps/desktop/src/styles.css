@@ -202,11 +202,16 @@ h1, h2, h3, p { margin: 0; }
 }
 
 .uiBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border-radius: 10px;
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--line);
   font-weight: 500;
+  transition: all 0.15s ease;
 }
 .uiBtn:hover { background: var(--surface2); }
 .uiBtn--sm { padding: 6px 12px; min-height: 32px; font-size: 13px; }
@@ -384,10 +389,21 @@ h1, h2, h3, p { margin: 0; }
     0 18px 44px rgba(59, 130, 246, 0.2);
 }
 .card h3 { font-size: 16px; font-weight: 700; }
-.cardHead, .cardActions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cardHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .cardHeadActions { display: flex; align-items: center; gap: 8px; }
-.cardActions { justify-content: flex-start; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
-.cardActions .uiBtn { flex: 0 0 auto; }
+.cardActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+.cardActions .uiBtn {
+  width: 100%;
+  padding: 6px 8px;
+  min-height: 30px;
+  font-size: 12px;
+  gap: 5px;
+}
 .cardPath { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cardMeta { color: var(--muted); font-size: 12px; }
 .mono { font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
@@ -426,11 +442,12 @@ h1, h2, h3, p { margin: 0; }
   box-shadow: 0 0 0 1px color-mix(in srgb, #2563eb 30%, transparent);
   transition: width 0.35s ease;
 }
-.quotaBar--weekly.quotaBar--safe i {
-  background: linear-gradient(90deg, #4338ca 0%, #4f46e5 55%, #6366f1 100%);
+.quotaBar--safe {
+  background: color-mix(in srgb, var(--green) 12%, var(--surface2));
 }
 .quotaBar--safe i {
-  background: linear-gradient(90deg, #1d4ed8 0%, #2563eb 55%, #3b82f6 100%);
+  background: linear-gradient(90deg, #15803d 0%, #16a34a 55%, #22c55e 100%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 35%, transparent);
 }
 .quotaBar--warn {
   background: color-mix(in srgb, var(--amber) 14%, var(--surface2));
@@ -1241,43 +1258,36 @@ html[data-tray-popover="1"] #root {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: 26px;
   z-index: 12;
   display: flex;
   justify-content: center;
-  padding: 0 24px 18px;
+  padding: 0 24px 10px;
   pointer-events: none;
-  background: linear-gradient(
-    180deg,
-    transparent 0%,
-    transparent 55%,
-    color-mix(in srgb, var(--bg) 25%, transparent) 100%
-  );
 }
 .bottomDockIsland {
   pointer-events: auto;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
   width: fit-content;
   max-width: min(920px, calc(100vw - 48px));
-  padding: 10px 20px 14px;
-  border-radius: 22px;
+  padding: 6px 14px;
+  border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.45);
   background: rgba(255, 255, 255, 0.38);
   backdrop-filter: blur(28px) saturate(1.25);
   -webkit-backdrop-filter: blur(28px) saturate(1.25);
   box-shadow:
-    0 10px 32px rgba(15, 23, 42, 0.12),
-    0 22px 50px rgba(15, 23, 42, 0.1);
+    0 8px 24px rgba(15, 23, 42, 0.08),
+    0 16px 36px rgba(15, 23, 42, 0.06);
 }
 :root[data-theme="dark"] .bottomDockIsland {
   border-color: rgba(255, 255, 255, 0.14);
   background: rgba(20, 24, 32, 0.48);
   box-shadow:
-    0 12px 36px rgba(0, 0, 0, 0.42),
-    0 24px 56px rgba(0, 0, 0, 0.35);
+    0 10px 28px rgba(0, 0, 0, 0.35),
+    0 18px 44px rgba(0, 0, 0, 0.3);
 }
 .bottomNav {
   display: inline-flex;
@@ -1348,24 +1358,34 @@ html[data-tray-popover="1"] #root {
 }
 .bottomDockVersion { color: var(--faint); }
 
-/* Statusbar (inside floating island) */
-.statusbar {
+/* Statusbar (Pinned to the absolute bottom) */
+.statusbarOutside {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--surface2);
+  border-top: 1px solid var(--line);
+  z-index: 15;
+  pointer-events: auto;
+  user-select: none;
+}
+.statusbarOutsideLeft {
   display: flex;
   gap: 8px;
   align-items: center;
-  width: 100%;
-  max-width: 100%;
-  padding: 0 4px 2px;
-  border: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
-  border-radius: 0;
-  background: transparent;
-  font-size: 11px;
-  color: var(--muted);
+  min-width: 0;
 }
 .statusbarClock { color: var(--faint); flex-shrink: 0; }
 .statusbarMain { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.statusHint { color: var(--amber); margin-left: auto; }
+.statusHint { color: var(--amber); margin-left: 8px; font-weight: 600; }
 
 /* Modals */
 .overlay {
@@ -1453,8 +1473,8 @@ html[data-tray-popover="1"] #root {
   .content { padding-bottom: 108px; }
   .titlebar { flex-wrap: wrap; padding: 12px 16px; }
   .titlebarActions { width: 100%; justify-content: space-between; }
-  .bottomDock { padding: 0 12px 12px; }
-  .bottomDockIsland { max-width: calc(100vw - 24px); padding: 8px 12px 12px; border-radius: 18px; }
+  .bottomDock { padding: 0 12px 8px; }
+  .bottomDockIsland { max-width: calc(100vw - 24px); padding: 6px 12px; border-radius: 14px; }
   .bottomNav { gap: 6px; max-width: 100%; overflow-x: auto; }
   .bottomNavItem { padding: 4px 5px; }
   .bottomNavIcon { width: 28px; height: 28px; border-radius: 8px; }

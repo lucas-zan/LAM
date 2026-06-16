@@ -6,7 +6,7 @@ import { useQuotaStore } from "./stores/quota";
 import { useProviderStore } from "./stores/providers";
 import * as api from "./lib/api";
 import * as Shell from "./components/shell";
-import { IconClock, IconLogo, IconRefresh } from "./components/icons";
+import { IconClock, IconLogo, IconRefresh, IconPlus } from "./components/icons";
 import { SyncModal } from "./components/sync-modal";
 import { ThemeToggle } from "./components/theme-toggle";
 import { UIButton } from "./components/ui-button";
@@ -175,9 +175,9 @@ export function App() {
         <div className="titlebarActions">
           <div className="toolbar">
             <UIButton size="sm" className="toolbarBtn" onClick={refresh}><IconRefresh size={14} /> Refresh</UIButton>
-            <UIButton size="sm" onClick={() => openModal("account")}>+ New Account</UIButton>
-            <UIButton size="sm" onClick={() => openModal("provider")}>+ New Provider</UIButton>
-            <UIButton variant="primary" size="sm" onClick={openRelayModal}>+ New Relay</UIButton>
+            <UIButton size="sm" className="toolbarBtn" onClick={() => openModal("account")}><IconPlus size={14} /> New Account</UIButton>
+            <UIButton size="sm" className="toolbarBtn" onClick={() => openModal("provider")}><IconPlus size={14} /> New Provider</UIButton>
+            <UIButton variant="primary" size="sm" className="toolbarBtn" onClick={openRelayModal}><IconPlus size={14} /> New Relay</UIButton>
           </div>
           <ThemeToggle value={themeMode} onChange={setThemeMode} />
         </div>
@@ -211,19 +211,22 @@ export function App() {
 
       <footer className="bottomDock">
         <div className="bottomDockIsland">
-          <div className="statusbar">
-            <IconClock size={14} className="statusbarClock" />
-            <span className="statusbarMain">{footerStatus}</span>
-            {selectedSession?.providerMismatch ? <span className="statusHint">Provider mismatch</span> : null}
-            <span className="bottomDockMeta">
-              <span className={`statusDot ${health?.ok ? "ok" : ""}`} aria-hidden />
-              {health?.ok ? "Operational" : "Checking…"}
-              <span className="bottomDockVersion">{health?.version ? `v${health.version}` : "v1.0.0"}</span>
-            </span>
-          </div>
           <Shell.BottomNav route={route} setRoute={setRoute} />
         </div>
       </footer>
+
+      <div className="statusbarOutside">
+        <div className="statusbarOutsideLeft">
+          <IconClock size={12} className="statusbarClock" />
+          <span className="statusbarMain">{footerStatus}</span>
+          {selectedSession?.providerMismatch ? <span className="statusHint">Provider mismatch</span> : null}
+        </div>
+        <span className="bottomDockMeta">
+          <span className={`statusDot ${health?.ok ? "ok" : ""}`} aria-hidden />
+          {health?.ok ? "Operational" : "Checking…"}
+          <span className="bottomDockVersion">{health?.version ? `v${health.version}` : "v1.0.0"}</span>
+        </span>
+      </div>
 
       {modal === "account" ? (
         <Shell.Modal title="Add Managed Account" close={closeModal}>

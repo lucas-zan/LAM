@@ -123,6 +123,46 @@ function getAccountTheme(accountName: string, index: number, isDark: boolean) {
   return isDark ? theme.dark : theme.light;
 }
 
+const STATE_THEMES = {
+  safe: {
+    light: { color: "#16a34a", glow: "rgba(22, 163, 74, 0.3)" },
+    dark: { color: "#34d399", glow: "rgba(52, 211, 153, 0.4)" },
+  },
+  warn: {
+    light: { color: "#d97706", glow: "rgba(217, 119, 6, 0.3)" },
+    dark: { color: "#fbbf24", glow: "rgba(251, 191, 36, 0.4)" },
+  },
+  danger: {
+    light: { color: "#dc2626", glow: "rgba(220, 38, 38, 0.3)" },
+    dark: { color: "#f87171", glow: "rgba(248, 113, 113, 0.4)" },
+  },
+  empty: {
+    light: { color: "#dc2626", glow: "rgba(220, 38, 38, 0.3)" },
+    dark: { color: "#f87171", glow: "rgba(248, 113, 113, 0.4)" },
+  },
+  na: {
+    light: { color: "#94a3b8", glow: "rgba(148, 163, 184, 0.2)" },
+    dark: { color: "#64748b", glow: "rgba(100, 116, 139, 0.2)" },
+  },
+};
+
+function getQuotaStateTheme(percent: number | null, isDark: boolean) {
+  let state: keyof typeof STATE_THEMES = "na";
+  if (percent !== null) {
+    if (percent === 0) {
+      state = "empty";
+    } else if (percent < 25) {
+      state = "danger";
+    } else if (percent < 70) {
+      state = "warn";
+    } else {
+      state = "safe";
+    }
+  }
+  const theme = STATE_THEMES[state];
+  return isDark ? theme.dark : theme.light;
+}
+
 interface CircularProgressRingProps {
   percent: number | null;
   size?: number;
@@ -424,6 +464,9 @@ function TrayAccountList({
             const primaryRemaining = quotaRemainingPercent(quota?.primaryUsedPercent);
             const secondaryRemaining = quotaRemainingPercent(quota?.secondaryUsedPercent);
 
+            const primaryStateTheme = getQuotaStateTheme(primaryRemaining, isDark);
+            const secondaryStateTheme = getQuotaStateTheme(secondaryRemaining, isDark);
+
             const cardStyle = {
               borderColor: accountTheme.color + "22",
             } as CSSProperties;
@@ -467,14 +510,14 @@ function TrayAccountList({
                     </div>
                     <CircularProgressRing
                       percent={primaryRemaining}
-                      themeColor={accountTheme.color}
-                      themeGlow={accountTheme.glow}
+                      themeColor={primaryStateTheme.color}
+                      themeGlow={primaryStateTheme.glow}
                     />
                   </div>
 
                   <div className="trayAccountRowContentRight">
                     <div className="trayAccountRowContentRightLabel">
-                      <strong style={{ color: accountTheme.color }}>
+                      <strong style={{ color: secondaryStateTheme.color }}>
                         {secondaryRemaining === null ? "N/A" : `${secondaryRemaining}%`}
                       </strong>
                       <span>weekly</span>
@@ -483,8 +526,8 @@ function TrayAccountList({
                       <i
                         style={{
                           width: `${secondaryRemaining ?? 0}%`,
-                          background: accountTheme.color,
-                          boxShadow: `0 0 4px ${accountTheme.glow}`,
+                          background: secondaryStateTheme.color,
+                          boxShadow: `0 0 4px ${secondaryStateTheme.glow}`,
                         }}
                       />
                     </div>

@@ -46,7 +46,7 @@ export function formatResetAt(
   };
 
   const useDateTime =
-    kind === "weekly" || !isSameLocalCalendarDay(date, new Date());
+    kind === "weekly" || (kind !== "session" && !isSameLocalCalendarDay(date, new Date()));
   const formatted = date.toLocaleString(
     RESET_LOCALE,
     useDateTime ? dateTime : timeOnly,

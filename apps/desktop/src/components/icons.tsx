@@ -88,6 +88,21 @@ export function IconMoon(props: IconProps) {
     </Svg>
   );
 }
+export function IconPlus(props: IconProps) {
+  return <Svg {...props}><path d="M5 12h14M12 5v14" /></Svg>;
+}
+export function IconPlay(props: IconProps) {
+  return <Svg {...props}><path d="M6 3v18l15-9z" /></Svg>;
+}
+export function IconPencil(props: IconProps) {
+  return <Svg {...props}><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></Svg>;
+}
+export function IconKey(props: IconProps) {
+  return <Svg {...props}><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3M15.5 7.5L14 9" /></Svg>;
+}
+export function IconCloud(props: IconProps) {
+  return <Svg {...props}><path d="M17.5 19A3.5 3.5 0 0 0 21 15.5c0-2.79-2.54-4.5-5-4.5-.42-1.04-1.21-1.88-2.22-2.38A5.5 5.5 0 0 0 4 12c0 2.62 1.84 5 4.5 5M12 12v6M9 15l3-3 3 3" /></Svg>;
+}
 
 export type NavIconName = "overview" | "sessions" | "relay" | "providers" | "sync" | "settings";
 
