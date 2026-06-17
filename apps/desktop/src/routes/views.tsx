@@ -1,8 +1,25 @@
-import { countAccountsWithAvailableQuota, countAccountsWithQuotaData } from "../lib/quota";
-import type { CodexAccount, CodexSession, DivergedSessionStrategy, HealthCheck, ProviderProfile, UsageQuotaSnapshot } from "../lib/types";
-import { QuotaWindow } from "../components/quota-window";
-import { IconCopy, IconProviders, IconInfo, MetricIcon, type MetricIconName, IconPlay, IconCloud, IconPencil, IconKey } from "../components/icons";
-import { UIButton } from "../components/ui-button";
+import { countAccountsWithAvailableQuota, countAccountsWithQuotaData } from '../lib/quota';
+import type {
+  CodexAccount,
+  CodexSession,
+  DivergedSessionStrategy,
+  HealthCheck,
+  ProviderProfile,
+  UsageQuotaSnapshot,
+} from '../lib/types';
+import { QuotaWindow } from '../components/quota-window';
+import {
+  IconCopy,
+  IconProviders,
+  IconInfo,
+  MetricIcon,
+  type MetricIconName,
+  IconPlay,
+  IconCloud,
+  IconPencil,
+  IconKey,
+} from '../components/icons';
+import { UIButton } from '../components/ui-button';
 
 export function Overview({
   accounts,
@@ -12,7 +29,8 @@ export function Overview({
   openSync,
   rename,
   login,
-  relayResume,
+  openHandoff,
+  relayLatest,
   currentSession,
   refreshAccountQuota,
   refreshingQuotaIds,
@@ -24,7 +42,8 @@ export function Overview({
   openSync: (id: string) => void;
   rename: (account: CodexAccount) => void;
   login: (account: CodexAccount) => void;
-  relayResume: (account: CodexAccount) => void;
+  openHandoff: (targetAccount: CodexAccount) => void;
+  relayLatest: (targetAccount: CodexAccount) => void;
   currentSession?: CodexSession;
   refreshAccountQuota: (profileId: string) => void;
   refreshingQuotaIds: string[];
@@ -35,7 +54,11 @@ export function Overview({
   return (
     <div className="overviewPage">
       <div className="metricGrid">
-        <Metric icon="accounts" label="Accounts" value={`${accountsWithQuotaData}/${accounts.length || 0}`} />
+        <Metric
+          icon="accounts"
+          label="Accounts"
+          value={`${accountsWithQuotaData}/${accounts.length || 0}`}
+        />
         <Metric icon="sessions" label="Sessions" value={sessionTotal} />
         <Metric icon="providers" label="Providers" value={providers.length} />
         <Metric icon="quota" label="Quota usable" value={availableQuotaAccounts} />
@@ -47,7 +70,8 @@ export function Overview({
         openSync={openSync}
         rename={rename}
         login={login}
-        relayResume={relayResume}
+        openHandoff={openHandoff}
+        relayLatest={relayLatest}
         currentSession={currentSession}
         refreshAccountQuota={refreshAccountQuota}
         refreshingQuotaIds={refreshingQuotaIds}
@@ -64,11 +88,12 @@ export function Accounts({
   openSync,
   rename,
   login,
-  relayResume,
+  openHandoff,
+  relayLatest,
   currentSession,
   refreshAccountQuota,
   refreshingQuotaIds,
-  variant = "default",
+  variant = 'default',
 }: {
   accounts: CodexAccount[];
   quotas: UsageQuotaSnapshot[];
@@ -76,38 +101,47 @@ export function Accounts({
   openSync: (id: string) => void;
   rename: (account: CodexAccount) => void;
   login: (account: CodexAccount) => void;
-  relayResume: (account: CodexAccount) => void;
+  openHandoff: (targetAccount: CodexAccount) => void;
+  relayLatest: (targetAccount: CodexAccount) => void;
   currentSession?: CodexSession;
   refreshAccountQuota: (profileId: string) => void;
   refreshingQuotaIds: string[];
-  variant?: "default" | "overview";
+  variant?: 'default' | 'overview';
 }) {
   if (!accounts.length) return <div className="emptyBox">No Codex profiles found.</div>;
-  const activeAccount = currentSession ? accounts.find((account) => account.id === currentSession.accountId) : undefined;
+  const activeAccount = currentSession
+    ? accounts.find((account) => account.id === currentSession.accountId)
+    : undefined;
   const orderedAccounts = [...accounts].sort((a, b) => {
     const latestDiff = (b.latestSessionModifiedAt ?? 0) - (a.latestSessionModifiedAt ?? 0);
     if (latestDiff !== 0) return latestDiff;
     return b.sessionCount - a.sessionCount;
   });
   return (
-    <section className={variant === "overview" ? "overviewAccountsPanel" : "panel pagePanel"}>
+    <section className={variant === 'overview' ? 'overviewAccountsPanel' : 'panel pagePanel'}>
       <div className="panelHead">
         <h3 className="sectionTitle">Accounts</h3>
       </div>
       <div className="activeSessionBanner">
         <span>Active source</span>
-        <strong>{activeAccount?.displayName ?? currentSession?.accountId ?? "No active session"}</strong>
-        <em className="mono">{currentSession?.id ?? "No session found"}</em>
+        <strong>
+          {activeAccount?.displayName ?? currentSession?.accountId ?? 'No active session'}
+        </strong>
+        <em className="mono">{currentSession?.id ?? 'No session found'}</em>
       </div>
       <div className="cardGrid accountCardGrid">
         {orderedAccounts.map((account) => {
           const isRefreshing = refreshingQuotaIds.includes(account.id);
           const quota = quotas.find((item) => item.profileId === account.id);
-          const providerLabel = account.providerId ?? "unknown";
-          const modelLabel = account.model ?? "unknown";
+          const providerLabel = account.providerId ?? 'unknown';
+          const modelLabel = account.model ?? 'unknown';
           const isActiveAccount = currentSession?.accountId === account.id;
           return (
-            <article className="card accountCard" key={account.id} onClick={() => select(account.id)}>
+            <article
+              className="card accountCard"
+              key={account.id}
+              onClick={() => select(account.id)}
+            >
               <div className="cardHead">
                 <div className="cardTitleRow">
                   <h3>{account.displayName}</h3>
@@ -121,7 +155,7 @@ export function Accounts({
                   <UIButton
                     variant="icon"
                     size="sm"
-                    className={`iconCircleBtn ${isRefreshing ? "isSpinning" : ""}`}
+                    className={`iconCircleBtn ${isRefreshing ? 'isSpinning' : ''}`}
                     title={`Refresh ${account.displayName} quota`}
                     aria-label={`Refresh ${account.displayName} quota`}
                     disabled={isRefreshing}
@@ -132,12 +166,14 @@ export function Accounts({
                   >
                     ↻
                   </UIButton>
-                  <span className={account.hasAuth ? "badge badge--auth" : "badge warn"}>
-                    {account.hasAuth ? "Logged in" : "Login needed"}
+                  <span className={account.hasAuth ? 'badge badge--auth' : 'badge warn'}>
+                    {account.hasAuth ? 'Logged in' : 'Login needed'}
                   </span>
                 </div>
               </div>
-              <p className="cardPath mono" title={account.codexHome}>{account.codexHome}</p>
+              <p className="cardPath mono" title={account.codexHome}>
+                {account.codexHome}
+              </p>
               <p
                 className="cardMeta"
                 title={`${account.sessionCount} sessions · Provider: ${providerLabel} · ${modelLabel}`}
@@ -162,25 +198,56 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   variant="primary"
+                  className="accountActionBtn"
                   disabled={!currentSession}
-                  aria-label="Resume Here"
-                  title={currentSession ? `Resume Here latest active session ${currentSession.id} with ${account.displayName}` : "No active session found"}
+                  aria-label="Relay Latest"
+                  title={
+                    currentSession
+                      ? `Relay latest active session ${currentSession.id} with ${account.displayName}`
+                      : 'No active session found'
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
-                    relayResume(account);
+                    relayLatest(account);
                   }}
                 >
                   <IconPlay size={13} />
-                  {currentSession?.accountId === account.id ? "Continue" : "Relay"}
-                </UIButton>
-                <UIButton size="sm" onClick={(e) => { e.stopPropagation(); openSync(account.id); }}>
-                  <IconCloud size={13} />
-                  Sync To...
+                  Relay Latest
                 </UIButton>
                 <UIButton
                   size="sm"
-                  disabled={account.id === "main"}
-                  title={account.id === "main" ? "Main profile cannot be renamed" : `Rename ${account.displayName}`}
+                  className="accountActionBtn"
+                  disabled={accounts.length < 2}
+                  aria-label="Handoff"
+                  title={`Choose a session to continue with ${account.displayName}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openHandoff(account);
+                  }}
+                >
+                  <IconPlay size={13} />
+                  Handoff
+                </UIButton>
+                <UIButton
+                  size="sm"
+                  className="accountActionBtn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openSync(account.id);
+                  }}
+                >
+                  <IconCloud size={13} />
+                  Sync Sessions...
+                </UIButton>
+                <UIButton
+                  size="sm"
+                  className="accountActionBtn"
+                  disabled={account.id === 'main'}
+                  title={
+                    account.id === 'main'
+                      ? 'Main profile cannot be renamed'
+                      : `Rename ${account.displayName}`
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
                     rename(account);
@@ -189,7 +256,14 @@ export function Accounts({
                   <IconPencil size={13} />
                   Rename
                 </UIButton>
-                <UIButton size="sm" onClick={(e) => { e.stopPropagation(); login(account); }}>
+                <UIButton
+                  size="sm"
+                  className="accountActionBtn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    login(account);
+                  }}
+                >
                   <IconKey size={13} />
                   Login
                 </UIButton>
@@ -212,6 +286,7 @@ export function Sessions({
   copy,
   open,
   details,
+  openHandoff,
 }: {
   sessions: CodexSession[];
   accounts: CodexAccount[];
@@ -222,6 +297,7 @@ export function Sessions({
   copy: (session: CodexSession) => void;
   open: (session: CodexSession) => void;
   details: (session: CodexSession) => void;
+  openHandoff: (session: CodexSession) => void;
 }) {
   return (
     <section className="panel pagePanel">
@@ -239,7 +315,11 @@ export function Sessions({
               </option>
             ))}
           </select>
-          <input placeholder="Search cwd / summary / id" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input
+            placeholder="Search cwd / summary / id"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </div>
       </div>
 
@@ -273,17 +353,27 @@ export function Sessions({
                         <IconCopy size={14} />
                       </button>
                     </div>
-                    {session.providerMismatch ? <span className="badge warn">provider mismatch</span> : null}
+                    {session.providerMismatch ? (
+                      <span className="badge warn">provider mismatch</span>
+                    ) : null}
                   </td>
                   <td>
-                    <span className="mono cellTrunc" title={session.cwd ?? "unknown"}>{session.cwd ?? "unknown"}</span>
+                    <span className="mono cellTrunc" title={session.cwd ?? 'unknown'}>
+                      {session.cwd ?? 'unknown'}
+                    </span>
                   </td>
                   <td>
-                    <strong className="cellTrunc" title={session.currentProviderId ?? session.model ?? "unknown"}>
-                      {session.currentProviderId ?? session.model ?? "unknown"}
+                    <strong
+                      className="cellTrunc"
+                      title={session.currentProviderId ?? session.model ?? 'unknown'}
+                    >
+                      {session.currentProviderId ?? session.model ?? 'unknown'}
                     </strong>
-                    <div className="cellSub mono cellTrunc" title={session.currentModel ?? session.model ?? "unknown"}>
-                      {session.currentModel ?? session.model ?? "unknown"}
+                    <div
+                      className="cellSub mono cellTrunc"
+                      title={session.currentModel ?? session.model ?? 'unknown'}
+                    >
+                      {session.currentModel ?? session.model ?? 'unknown'}
                     </div>
                   </td>
                   <td>
@@ -310,6 +400,15 @@ export function Sessions({
                         size="sm"
                         onClick={(e) => {
                           e.stopPropagation();
+                          openHandoff(session);
+                        }}
+                      >
+                        Relay To...
+                      </UIButton>
+                      <UIButton
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
                           details(session);
                         }}
                       >
@@ -324,31 +423,6 @@ export function Sessions({
         </div>
       ) : (
         <div className="emptyBox">No sessions. Unknown cwd values will display as `unknown`.</div>
-      )}
-    </section>
-  );
-}
-
-export function Relay({ accounts, openRelay, openSync }: { accounts: CodexAccount[]; openRelay: () => void; openSync: (id?: string) => void }) {
-  const relays = accounts.filter((account) => account.isRelay);
-  return (
-    <section className="panel pagePanel">
-      <div className="panelHead">
-        <h3 className="sectionTitle">Relay</h3>
-        <UIButton variant="primary" onClick={openRelay}>+ New Relay</UIButton>
-      </div>
-      {relays.length ? (
-        relays.map((relay) => (
-          <div className="configRow" key={relay.id}>
-            <span>{relay.id}</span>
-            <strong>{relay.relayIdentity ?? "?"} relays {relay.relaySource ?? "?"}</strong>
-            <UIButton size="sm" onClick={() => openSync(relay.relaySource ?? undefined)}>Safe Sync</UIButton>
-          </div>
-        ))
-      ) : (
-        <div className="emptyState">
-          <p>No relay profiles yet.</p>
-        </div>
       )}
     </section>
   );
@@ -374,7 +448,9 @@ export function Providers({
       <section className="panel pagePanel">
         <div className="panelHead">
           <h3 className="sectionTitle">Providers</h3>
-          <UIButton variant="primary" onClick={create}>Add Provider</UIButton>
+          <UIButton variant="primary" onClick={create}>
+            Add Provider
+          </UIButton>
         </div>
         {providers.length ? (
           <div className="cardGrid">
@@ -386,14 +462,26 @@ export function Providers({
                 </div>
                 <p className="mono cardPath">{provider.baseUrl}</p>
                 <div className="kv">
-                  <span>ID</span><strong>{provider.id}</strong>
-                  <span>Model</span><strong>{provider.defaultModel}</strong>
-                  <span>Secret</span><strong>{provider.secretStorage}{provider.envKey ? ` · ${provider.envKey}` : ""}</strong>
+                  <span>ID</span>
+                  <strong>{provider.id}</strong>
+                  <span>Model</span>
+                  <strong>{provider.defaultModel}</strong>
+                  <span>Secret</span>
+                  <strong>
+                    {provider.secretStorage}
+                    {provider.envKey ? ` · ${provider.envKey}` : ''}
+                  </strong>
                 </div>
                 <div className="cardActions">
-                  <UIButton size="sm" onClick={() => test(provider.id)}>Test</UIButton>
-                  <UIButton size="sm" onClick={() => attach(provider.id)}>Attach</UIButton>
-                  <UIButton variant="danger" size="sm" onClick={() => remove(provider.id)}>Delete</UIButton>
+                  <UIButton size="sm" onClick={() => test(provider.id)}>
+                    Test
+                  </UIButton>
+                  <UIButton size="sm" onClick={() => attach(provider.id)}>
+                    Attach
+                  </UIButton>
+                  <UIButton variant="danger" size="sm" onClick={() => remove(provider.id)}>
+                    Delete
+                  </UIButton>
                 </div>
               </article>
             ))}
@@ -409,7 +497,10 @@ export function Providers({
         )}
         <div className="infoBanner">
           <IconInfo size={16} />
-          <span>API keys are never returned to the UI. Provider store contains metadata and secret references only.</span>
+          <span>
+            API keys are never returned to the UI. Provider store contains metadata and secret
+            references only.
+          </span>
         </div>
       </section>
       <section className="panel pagePanel">
@@ -420,8 +511,10 @@ export function Providers({
           {accounts.map((account) => (
             <div className="bindingRow" key={account.id}>
               <span className="bindingName">{account.id}</span>
-              <strong>{account.providerId ?? "unknown"} · {account.model ?? "unknown"}</strong>
-              <em>{account.authMode ?? "unknown"}</em>
+              <strong>
+                {account.providerId ?? 'unknown'} · {account.model ?? 'unknown'}
+              </strong>
+              <em>{account.authMode ?? 'unknown'}</em>
             </div>
           ))}
         </div>
@@ -430,17 +523,37 @@ export function Providers({
   );
 }
 
-export function SyncHome({ accounts, openSync }: { accounts: CodexAccount[]; openSync: () => void }) {
+export function SyncHome({
+  accounts,
+  openSync,
+}: {
+  accounts: CodexAccount[];
+  openSync: () => void;
+}) {
   return (
     <section className="panel pagePanel">
       <div className="panelHead">
         <h3 className="sectionTitle">Sync</h3>
-        <UIButton variant="primary" disabled={accounts.length < 2} onClick={() => openSync()}>Open Sync</UIButton>
+        <UIButton variant="primary" disabled={accounts.length < 2} onClick={() => openSync()}>
+          Open Sync
+        </UIButton>
       </div>
       <div className="rows">
-        <div><span>Default include</span><strong>sessions/</strong><em>Phase 1</em></div>
-        <div><span>Blocked</span><strong>auth.json, config.toml, sqlite, cache, tmp, logs</strong><em>Strict</em></div>
-        <div><span>History</span><strong>sidecar backup only</strong><em>No merge</em></div>
+        <div>
+          <span>Default include</span>
+          <strong>sessions/</strong>
+          <em>Phase 1</em>
+        </div>
+        <div>
+          <span>Blocked</span>
+          <strong>auth.json, config.toml, sqlite, cache, tmp, logs</strong>
+          <em>Strict</em>
+        </div>
+        <div>
+          <span>History</span>
+          <strong>sidecar backup only</strong>
+          <em>No merge</em>
+        </div>
       </div>
     </section>
   );
@@ -454,8 +567,8 @@ export function Settings({
   setDivergedStrategy,
 }: {
   health: HealthCheck | null;
-  themeMode: "system" | "light" | "dark";
-  resolvedTheme: "light" | "dark";
+  themeMode: 'system' | 'light' | 'dark';
+  resolvedTheme: 'light' | 'dark';
   divergedStrategy: DivergedSessionStrategy;
   setDivergedStrategy: (strategy: DivergedSessionStrategy) => void;
 }) {
@@ -463,16 +576,30 @@ export function Settings({
     <section className="panel pagePanel">
       <h3 className="sectionTitle">Settings</h3>
       <div className="rows">
-        <div><span>Status</span><strong>{health?.ok ? "connected" : "not connected"}</strong><em>{health?.version ?? "unknown"}</em></div>
-        <div><span>Home root</span><strong>{health?.homeRoot ?? "unknown"}</strong><em>LAM_HOME or HOME</em></div>
-        <div><span>Theme mode</span><strong>{themeMode}</strong><em>resolved: {resolvedTheme}</em></div>
+        <div>
+          <span>Status</span>
+          <strong>{health?.ok ? 'connected' : 'not connected'}</strong>
+          <em>{health?.version ?? 'unknown'}</em>
+        </div>
+        <div>
+          <span>Home root</span>
+          <strong>{health?.homeRoot ?? 'unknown'}</strong>
+          <em>LAM_HOME or HOME</em>
+        </div>
+        <div>
+          <span>Theme mode</span>
+          <strong>{themeMode}</strong>
+          <em>resolved: {resolvedTheme}</em>
+        </div>
         <label className="settingsSelectRow">
           <span>Diverged session strategy</span>
           <select
             value={divergedStrategy}
             onChange={(event) => setDivergedStrategy(event.target.value as DivergedSessionStrategy)}
           >
-            <option value="summarize_fork_with_target_account">Summarize fork with target account</option>
+            <option value="summarize_fork_with_target_account">
+              Summarize fork with target account
+            </option>
             <option value="stop_and_ask">Stop and ask</option>
             <option value="timeline_merge_to_fork">Timeline merge to fork</option>
             <option value="prefer_source">Prefer source with backup</option>
@@ -485,9 +612,17 @@ export function Settings({
   );
 }
 
-export { PlanView } from "../components/plan-view";
+export { PlanView } from '../components/plan-view';
 
-function Metric({ icon, label, value }: { icon: MetricIconName; label: string; value: number | string }) {
+function Metric({
+  icon,
+  label,
+  value,
+}: {
+  icon: MetricIconName;
+  label: string;
+  value: number | string;
+}) {
   return (
     <article className="metricCard">
       <div className={`metricIcon metricIcon--${icon}`} aria-hidden>

@@ -396,16 +396,18 @@ h1, h2, h3, p { margin: 0; }
 .cardHeadActions { display: flex; align-items: center; gap: 8px; }
 .cardActions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(132px, 1fr));
+  grid-auto-rows: minmax(34px, auto);
   gap: 8px;
   margin-top: 12px;
 }
-.cardActions .uiBtn {
+.cardActions .accountActionBtn {
   width: 100%;
-  padding: 6px 8px;
-  min-height: 30px;
+  min-height: 34px;
+  padding: 6px 10px;
   font-size: 12px;
   gap: 5px;
+  white-space: nowrap;
 }
 .cardPath { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cardMeta { color: var(--muted); font-size: 12px; }
