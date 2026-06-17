@@ -141,14 +141,8 @@ fn load_tray_icon() -> Image<'static> {
 fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, AppError> {
     let refresh = MenuItem::with_id(app, REFRESH_MENU_ID, "Refresh quotas", true, None::<&str>)
         .map_err(|err| AppError::new("TRAY_MENU_FAILED", err.to_string()))?;
-    let show = MenuItem::with_id(
-        app,
-        SHOW_MENU_ID,
-        "Open LocalAgentManager",
-        true,
-        None::<&str>,
-    )
-    .map_err(|err| AppError::new("TRAY_MENU_FAILED", err.to_string()))?;
+    let show = MenuItem::with_id(app, SHOW_MENU_ID, "Open LAM", true, None::<&str>)
+        .map_err(|err| AppError::new("TRAY_MENU_FAILED", err.to_string()))?;
 
     Menu::with_items(app, &[&refresh, &show])
         .map_err(|err| AppError::new("TRAY_MENU_FAILED", err.to_string()))

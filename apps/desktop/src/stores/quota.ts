@@ -49,6 +49,8 @@ export const useQuotaStore = create<QuotaState>()((set, get) => ({
             useAppStore
               .getState()
               .setError(`${profileId}: realtime quota unavailable; using ${snapshot.staleness} quota`);
+          } else {
+            useAppStore.getState().clearError();
           }
         } catch (err) {
           failed += 1;
@@ -66,6 +68,7 @@ export const useQuotaStore = create<QuotaState>()((set, get) => ({
         ? `Refreshed ${completed} quota snapshots; ${failed} unavailable`
         : `Refreshed ${completed} quota snapshots`,
     );
+    if (!failed) useAppStore.getState().clearError();
     if (completed) api.syncTrayQuota();
   },
 

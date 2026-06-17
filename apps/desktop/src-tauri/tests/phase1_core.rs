@@ -30,9 +30,20 @@ fn packaged_app_launch_has_visible_entrypoint() {
         .find(|window| window["label"] == "quota-popover")
         .unwrap();
 
+    assert_eq!(config["productName"], "LAM");
+    assert_eq!(main["title"], "LAM");
     assert_eq!(main["visible"], true);
     assert_eq!(popover["visible"], false);
     assert!(!config["identifier"].as_str().unwrap().ends_with(".app"));
+}
+
+#[test]
+fn desktop_html_title_uses_lam_name() {
+    let index_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../index.html");
+    let index = fs::read_to_string(index_path).unwrap();
+
+    assert!(index.contains("<title>LAM</title>"));
+    assert!(!index.contains("LocalAgentManager"));
 }
 
 #[test]
@@ -263,6 +274,10 @@ fn creates_managed_account_with_plan_and_safe_wrapper() {
         .home_path
         .join(".managed-by-agent-workspace.json")
         .exists());
+    let metadata =
+        fs::read_to_string(result.home_path.join(".managed-by-agent-workspace.json")).unwrap();
+    assert!(metadata.contains("\"managedBy\": \"LAM\""));
+    assert!(!metadata.contains("LocalAgentManager"));
     assert!(!result.home_path.join("auth.json").exists());
     let wrapper = fs::read_to_string(result.wrapper_path).unwrap();
     assert!(wrapper.contains("export CODEX_HOME=\"$HOME/.codex-luna\""));
@@ -836,7 +851,7 @@ fn quota_app_server_parses_primary_and_secondary_windows() {
 if [ "$1" = "app-server" ]; then
   read _line1 || exit 1
   read _line2 || exit 1
-  read _line3 || exit 1
+  echo "$_line2" | /usr/bin/grep '"params":null' >/dev/null || exit 2
   echo '{"jsonrpc":"2.0","id":1,"result":{"plan_type":"plus","primary":{"used_percent":42,"reset_at":"2026-06-02T10:00:00Z"},"secondary":{"used_percent":18,"reset_at":"2026-06-08T00:00:00Z"}}}'
   sleep 5
   exit 0
@@ -884,7 +899,7 @@ fn quota_app_server_finds_codex_in_user_gui_launch_paths() {
 if [ "$1" = "app-server" ]; then
   read _line1 || exit 1
   read _line2 || exit 1
-  read _line3 || exit 1
+  echo "$_line2" | /usr/bin/grep '"params":null' >/dev/null || exit 2
   echo '{"jsonrpc":"2.0","id":1,"result":{"plan_type":"plus","primary":{"used_percent":17,"reset_at":"2026-06-02T10:00:00Z"},"secondary":{"used_percent":9,"reset_at":"2026-06-08T00:00:00Z"}}}'
   /bin/sleep 5
   exit 0
@@ -925,7 +940,7 @@ fn quota_app_server_uses_login_shell_when_gui_path_has_no_codex() {
 if [ "$1" = "app-server" ]; then
   read _line1 || exit 1
   read _line2 || exit 1
-  read _line3 || exit 1
+  echo "$_line2" | /usr/bin/grep '"params":null' >/dev/null || exit 2
   echo '{"jsonrpc":"2.0","id":1,"result":{"plan_type":"plus","primary":{"used_percent":11,"reset_at":"2026-06-02T10:00:00Z"},"secondary":{"used_percent":7,"reset_at":"2026-06-08T00:00:00Z"}}}'
   /bin/sleep 5
   exit 0
@@ -965,6 +980,42 @@ exit 1
 }
 
 #[test]
+fn quota_app_server_waits_for_delayed_rate_limit_response() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-delayed-response");
+    seed_codex_home(&home, "a");
+    let bin = home.join("fake-codex.sh");
+    write_executable(
+        &bin,
+        r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  read _line1 || exit 1
+  read _line2 || exit 1
+  /bin/sleep 5
+  echo '{"id":2,"result":{"rateLimits":{"planType":"team","primary":{"usedPercent":24,"resetsAt":1781678412},"secondary":{"usedPercent":81,"resetsAt":1781794210}}}}'
+  /bin/sleep 1
+  exit 0
+fi
+exit 1
+"#,
+    );
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::set_var("LAM_CODEX_BIN", bin.to_string_lossy().to_string());
+    let snapshot = get_profile_quota(&home, "a", true).unwrap();
+    std::env::remove_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+    std::env::remove_var("LAM_CODEX_BIN");
+
+    assert_eq!(
+        snapshot.source, "app_server_rate_limits",
+        "alerts: {:?}",
+        snapshot.alerts
+    );
+    assert_eq!(snapshot.staleness, "fresh");
+    assert_eq!(snapshot.primary_used_percent, Some(24));
+    assert_eq!(snapshot.secondary_used_percent, Some(81));
+}
+
+#[test]
 fn quota_app_server_failure_returns_cached_real_quota_when_available() {
     let _guard = env_lock().lock().unwrap();
     let home = temp_home("quota-cache-fallback");
@@ -980,7 +1031,7 @@ if [ "$1" = "app-server" ]; then
   fi
   read _line1 || exit 1
   read _line2 || exit 1
-  read _line3 || exit 1
+  echo "$_line2" | /usr/bin/grep '"params":null' >/dev/null || exit 2
   echo '{"jsonrpc":"2.0","id":1,"result":{"plan_type":"plus","primary":{"used_percent":33,"reset_at":"2026-06-02T10:00:00Z"},"secondary":{"used_percent":22,"reset_at":"2026-06-08T00:00:00Z"}}}'
   sleep 5
   exit 0
@@ -1023,7 +1074,7 @@ if [ "$1" = "app-server" ]; then
   fi
   read _line1 || exit 1
   read _line2 || exit 1
-  read _line3 || exit 1
+  echo "$_line2" | /usr/bin/grep '"params":null' >/dev/null || exit 2
   echo '{"jsonrpc":"2.0","id":1,"result":{"plan_type":"plus","primary":{"used_percent":31,"reset_at":"2026-06-02T10:00:00Z"},"secondary":{"used_percent":21,"reset_at":"2026-06-08T00:00:00Z"}}}'
   sleep 5
   exit 0
@@ -1048,6 +1099,10 @@ exit 1
         .warnings
         .iter()
         .any(|warning| warning.contains("a: realtime quota unavailable")));
+    assert!(fallback
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("offline")));
 }
 
 #[test]

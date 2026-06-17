@@ -4,7 +4,7 @@ fn main() {
     let home = resolve_home_root().expect("HOME is required");
     match list_accounts(&home) {
         Ok(accounts) => {
-            println!("LocalAgentManager core");
+            println!("LAM core");
             println!("accounts={}", accounts.len());
             for account in accounts {
                 println!(

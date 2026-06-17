@@ -102,4 +102,23 @@ describe("useQuotaStore", () => {
       "a: realtime quota unavailable; using cached quota",
     );
   });
+
+  it("clears stale quota warnings after a fresh account refresh", async () => {
+    useAppStore
+      .getState()
+      .setError("c: realtime quota unavailable; using cached quota");
+    vi.mocked(api.getProfileQuota).mockResolvedValue({
+      ...snapshot,
+      profileId: "c",
+      staleness: "fresh",
+    });
+
+    await useQuotaStore.getState().refreshQuotas(["c"]);
+
+    expect(useQuotaStore.getState().quotas[0]).toMatchObject({
+      profileId: "c",
+      staleness: "fresh",
+    });
+    expect(useAppStore.getState().error).toBe("");
+  });
 });

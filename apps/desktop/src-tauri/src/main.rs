@@ -66,7 +66,7 @@ fn main() {
             commands::execute_attach_provider_to_profile,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running LocalAgentManager");
+        .expect("error while running LAM");
 }
 
 #[cfg(test)]

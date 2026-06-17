@@ -9,6 +9,8 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::SystemTime;
 
+const CODEX_APP_SERVER_QUOTA_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageQuotaSnapshot {
@@ -104,10 +106,7 @@ pub fn refresh_all_quotas(
         match get_profile_quota(home_root, &profile_id, true) {
             Ok(snapshot) => {
                 if snapshot.staleness != "fresh" {
-                    warnings.push(format!(
-                        "{profile_id}: realtime quota unavailable; using {} quota",
-                        snapshot.staleness
-                    ));
+                    warnings.push(quota_fallback_warning(&profile_id, &snapshot));
                 }
                 snapshots.push(snapshot);
             }
@@ -118,6 +117,19 @@ pub fn refresh_all_quotas(
         snapshots,
         warnings,
     })
+}
+
+fn quota_fallback_warning(profile_id: &str, snapshot: &UsageQuotaSnapshot) -> String {
+    let detail = snapshot
+        .alerts
+        .iter()
+        .find(|alert| !alert.trim().is_empty())
+        .map(|alert| format!(" ({alert})"))
+        .unwrap_or_default();
+    format!(
+        "{profile_id}: realtime quota unavailable; using {} quota{detail}",
+        snapshot.staleness
+    )
 }
 
 fn unavailable_quota_snapshot(profile_id: &str, alert: Option<String>) -> UsageQuotaSnapshot {
@@ -203,16 +215,11 @@ fn try_codex_app_server_quota(
     if let Some(stdin) = child.stdin.as_mut() {
         stdin
             .write_all(
-                b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"lam\",\"version\":\"0.1\"},\"capabilities\":{},\"protocolVersion\":\"2025-03-26\"}}\n",
+                b"{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"lam\",\"version\":\"0.1\"},\"capabilities\":{\"experimentalApi\":true}}}\n",
             )
             .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
         stdin
-            .write_all(
-                b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}\n",
-            )
-            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
-        stdin
-            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":{}}\n")
+            .write_all(b"{\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":null}\n")
             .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
         stdin
             .flush()
@@ -266,7 +273,7 @@ fn try_codex_app_server_quota(
             }
         }
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(3000);
+    let deadline = std::time::Instant::now() + CODEX_APP_SERVER_QUOTA_TIMEOUT;
     let mut parsed: Option<UsageQuotaSnapshot> = None;
     let mut last_stderr: Option<String> = None;
     loop {
@@ -334,7 +341,7 @@ fn spawn_codex_app_server(home_root: &Path, account: &CodexAccount) -> Result<Ch
         login_shell_codex_command()
     } else if let Some(codex_bin) = resolve_codex_bin(home_root) {
         let mut command = Command::new(codex_bin);
-        command.arg("app-server").arg("--stdio");
+        command.arg("app-server");
         command
     } else {
         login_shell_codex_command()
@@ -352,7 +359,7 @@ fn spawn_codex_app_server(home_root: &Path, account: &CodexAccount) -> Result<Ch
 fn login_shell_codex_command() -> Command {
     let shell = std::env::var("LAM_CODEX_LOGIN_SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let mut command = Command::new(shell);
-    command.arg("-lc").arg("exec codex app-server --stdio");
+    command.arg("-lc").arg("exec codex app-server");
     command
 }
 
