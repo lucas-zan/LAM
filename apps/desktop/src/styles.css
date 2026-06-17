@@ -179,6 +179,9 @@ h1, h2, h3, p { margin: 0; }
 .titlebarActions { display: flex; align-items: center; gap: 14px; }
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .toolbarBtn { display: inline-flex; align-items: center; gap: 6px; }
+.refreshToolbarBtn.isRefreshing svg {
+  animation: spinRefresh 0.85s linear infinite;
+}
 
 .themeToggle {
   display: inline-flex;

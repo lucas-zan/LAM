@@ -11,7 +11,7 @@ TAURI_DIR    := apps/desktop/src-tauri
 LAM_HOME     ?=
 LAM_ENV      := $(if $(LAM_HOME),LAM_HOME=$(LAM_HOME),)
 
-.PHONY: help app desktop start stop status accounts check test build install node-check cargo-check tauri-info clean
+.PHONY: help app desktop start stop status accounts check test build dmg install node-check cargo-check tauri-info clean
 
 help:
 	@echo "LocalAgentManager (Lam) — local development"
@@ -25,6 +25,7 @@ help:
 	@echo "  make check       Run frontend build, UI smoke, Rust fmt check, Rust tests"
 	@echo "  make test        Same as make check"
 	@echo "  make build       Build frontend and Tauri bundle"
+	@echo "  make dmg         Build macOS .app and .dmg installer"
 	@echo "  make install     npm install in apps/desktop"
 	@echo ""
 	@echo "Optional:"
@@ -72,7 +73,7 @@ check test: install node-check cargo-check
 
 tauri-info: status
 
-build: install node-check cargo-check
+build dmg: install node-check cargo-check
 	cd $(APP_DIR) && $(NPM) run tauri:build
 
 clean:

@@ -40,7 +40,7 @@ pub fn get_profile_quota(
 ) -> Result<UsageQuotaSnapshot> {
     let account = quota_account(home_root, profile_id)?;
     if force_refresh && app_server_quota_enabled() {
-        match try_codex_app_server_quota(&account) {
+        match try_codex_app_server_quota(home_root, &account) {
             Ok(snapshot) => {
                 write_quota_cache(home_root, &snapshot)?;
                 return Ok(snapshot);
@@ -101,7 +101,15 @@ pub fn refresh_all_quotas(
     let mut warnings = Vec::new();
     for profile_id in requested {
         match get_profile_quota(home_root, &profile_id, true) {
-            Ok(snapshot) => snapshots.push(snapshot),
+            Ok(snapshot) => {
+                if snapshot.staleness != "fresh" {
+                    warnings.push(format!(
+                        "{profile_id}: realtime quota unavailable; using {} quota",
+                        snapshot.staleness
+                    ));
+                }
+                snapshots.push(snapshot);
+            }
             Err(err) => warnings.push(format!("{profile_id}: {}", err.message)),
         }
     }
@@ -139,8 +147,43 @@ fn app_server_quota_enabled() -> bool {
     true
 }
 
-fn try_codex_app_server_quota(account: &CodexAccount) -> Result<UsageQuotaSnapshot> {
-    let codex_bin = std::env::var("LAM_CODEX_BIN").unwrap_or_else(|_| "codex".into());
+fn resolve_codex_bin(home_root: &Path) -> std::path::PathBuf {
+    if let Ok(val) = std::env::var("LAM_CODEX_BIN") {
+        if !val.is_empty() {
+            return std::path::PathBuf::from(val);
+        }
+    }
+
+    let fallbacks = [
+        home_root.join(".bun/bin/codex"),
+        home_root.join(".local/bin/codex"),
+        std::path::PathBuf::from("/opt/homebrew/bin/codex"),
+        std::path::PathBuf::from("/usr/local/bin/codex"),
+    ];
+
+    for path in &fallbacks {
+        if path.exists() {
+            return path.clone();
+        }
+    }
+
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let p = dir.join("codex");
+            if p.exists() {
+                return p;
+            }
+        }
+    }
+
+    std::path::PathBuf::from("codex")
+}
+
+fn try_codex_app_server_quota(
+    home_root: &Path,
+    account: &CodexAccount,
+) -> Result<UsageQuotaSnapshot> {
+    let codex_bin = resolve_codex_bin(home_root);
     let mut child = std::process::Command::new(codex_bin)
         .arg("app-server")
         .arg("--stdio")

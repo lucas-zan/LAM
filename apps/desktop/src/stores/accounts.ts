@@ -32,11 +32,12 @@ interface AccountState {
   selectedAccountId: string;
   activeSession: CodexSession | undefined;
   divergedStrategy: DivergedSessionStrategy;
+  refreshing: boolean;
 
   selectedAccount: () => CodexAccount | undefined;
   setSelectedAccountId: (id: string) => void;
   setDivergedStrategy: (strategy: DivergedSessionStrategy) => void;
-  refresh: () => Promise<void>;
+  refresh: (options?: { refreshQuotasNow?: boolean }) => Promise<void>;
   refreshActiveSession: (accounts?: CodexAccount[]) => Promise<void>;
   relayResumeTo: (account: CodexAccount) => Promise<void>;
   login: (account?: CodexAccount) => Promise<void>;
@@ -48,6 +49,7 @@ export const useAccountStore = create<AccountState>()(
     selectedAccountId: "",
     activeSession: undefined,
     divergedStrategy: readDivergedStrategy(),
+    refreshing: false,
 
     selectedAccount: () => {
       const { accounts, selectedAccountId } = get();
@@ -61,29 +63,35 @@ export const useAccountStore = create<AccountState>()(
       set({ divergedStrategy: strategy });
     },
 
-    refresh: async () => {
+    refresh: async (options) => {
       const app = useAppStore.getState();
       app.clearError();
-
-      if (api.inTauri()) {
-        try {
-          const cached = await api.listCachedAccounts();
-          if (cached.length) {
-            applyAccountsList(cached, set, get, true);
-          }
-        } catch {
-          /* cache miss is fine */
-        }
-      }
+      set({ refreshing: true });
 
       try {
+        if (api.inTauri()) {
+          try {
+            const cached = await api.listCachedAccounts();
+            if (cached.length) {
+              applyAccountsList(cached, set, get, true);
+            }
+          } catch {
+            /* cache miss is fine */
+          }
+        }
+
         api.healthCheck().then(app.setHealth).catch((e) => app.setError(formatError(e)));
         const accountData = await api.listAccounts();
-        applyAccountsList(accountData, set, get, false);
+        applyAccountsList(accountData, set, get, false, !options?.refreshQuotasNow);
+        if (options?.refreshQuotasNow && accountData.length) {
+          await useQuotaStore.getState().refreshQuotas(accountData.map((account) => account.id));
+        }
         api.listProviders().then((p) => useProviderStore.getState().setProviders(p)).catch((e) => app.setError(formatError(e)));
       } catch (err) {
         app.setAppReady();
         app.setError(formatError(err));
+      } finally {
+        set({ refreshing: false });
       }
     },
 
@@ -150,6 +158,7 @@ function applyAccountsList(
   set: (partial: Partial<AccountState>) => void,
   get: () => AccountState,
   fromCache: boolean,
+  scheduleQuotaRefresh = true,
 ) {
   const app = useAppStore.getState();
   const keepSelection = get().selectedAccountId && data.some((a) => a.id === get().selectedAccountId);
@@ -168,7 +177,9 @@ function applyAccountsList(
   if (data.length) {
     get().refreshActiveSession(data);
     useQuotaStore.getState().loadCachedQuotas(data.map((a) => a.id));
-    useQuotaStore.getState().scheduleQuotaRefresh(data.map((a) => a.id), 8_000);
+    if (scheduleQuotaRefresh) {
+      useQuotaStore.getState().scheduleQuotaRefresh(data.map((a) => a.id), 8_000);
+    }
   } else {
     useQuotaStore.getState().clearQuotas();
   }

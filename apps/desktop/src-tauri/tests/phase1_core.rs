@@ -886,6 +886,49 @@ exit 1
 }
 
 #[test]
+fn refresh_all_quotas_warns_when_realtime_falls_back_to_cached_quota() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-refresh-cache-warning");
+    seed_codex_home(&home, "a");
+    let bin = home.join("fake-codex.sh");
+    write_executable(
+        &bin,
+        r#"#!/usr/bin/env bash
+if [ "$1" = "app-server" ]; then
+  if [ "$LAM_FAKE_CODEX_FAIL" = "1" ]; then
+    echo 'offline' >&2
+    exit 1
+  fi
+  read _line1 || exit 1
+  read _line2 || exit 1
+  read _line3 || exit 1
+  echo '{"jsonrpc":"2.0","id":1,"result":{"plan_type":"plus","primary":{"used_percent":31,"reset_at":"2026-06-02T10:00:00Z"},"secondary":{"used_percent":21,"reset_at":"2026-06-08T00:00:00Z"}}}'
+  sleep 5
+  exit 0
+fi
+exit 1
+"#,
+    );
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::set_var("LAM_CODEX_BIN", bin.to_string_lossy().to_string());
+    let fresh = refresh_all_quotas(&home, Some(vec!["a".into()])).unwrap();
+    std::env::set_var("LAM_FAKE_CODEX_FAIL", "1");
+    let fallback = refresh_all_quotas(&home, Some(vec!["a".into()])).unwrap();
+    std::env::remove_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+    std::env::remove_var("LAM_CODEX_BIN");
+    std::env::remove_var("LAM_FAKE_CODEX_FAIL");
+
+    assert!(fresh.warnings.is_empty());
+    assert_eq!(fresh.snapshots[0].staleness, "fresh");
+    assert_eq!(fallback.snapshots[0].staleness, "cached");
+    assert_eq!(fallback.snapshots[0].primary_used_percent, Some(31));
+    assert!(fallback
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("a: realtime quota unavailable")));
+}
+
+#[test]
 fn provider_crud_never_returns_or_persists_plaintext_secret() {
     let home = temp_home("provider");
     let provider = create_provider(

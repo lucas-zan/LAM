@@ -47,7 +47,7 @@ const emptyProviderReq: CreateProviderRequest = {
 export function App() {
   const { route, setRoute, themeMode, setThemeMode, health, status, error, appReady, modal, openModal, closeModal } =
     useAppStore();
-  const { accounts, selectedAccountId, setSelectedAccountId, activeSession, divergedStrategy, setDivergedStrategy, refresh, relayResumeTo, login } =
+  const { accounts, selectedAccountId, setSelectedAccountId, activeSession, divergedStrategy, setDivergedStrategy, refreshing: refreshingAccounts, refresh, relayResumeTo, login } =
     useAccountStore();
   const { query, setQuery, resume, copyResume, openResume, openSessionDetails, filteredSessions } =
     useSessionStore();
@@ -174,7 +174,15 @@ export function App() {
         </div>
         <div className="titlebarActions">
           <div className="toolbar">
-            <UIButton size="sm" className="toolbarBtn" onClick={refresh}><IconRefresh size={14} /> Refresh</UIButton>
+            <UIButton
+              size="sm"
+              className={`toolbarBtn refreshToolbarBtn ${refreshingAccounts ? "isRefreshing" : ""}`}
+              onClick={() => void refresh({ refreshQuotasNow: true })}
+              disabled={refreshingAccounts}
+              aria-label={refreshingAccounts ? "Refreshing app data" : "Refresh app data"}
+            >
+              <IconRefresh size={14} /> Refresh
+            </UIButton>
             <UIButton size="sm" className="toolbarBtn" onClick={() => openModal("account")}><IconPlus size={14} /> New Account</UIButton>
             <UIButton size="sm" className="toolbarBtn" onClick={() => openModal("provider")}><IconPlus size={14} /> New Provider</UIButton>
             <UIButton variant="primary" size="sm" className="toolbarBtn" onClick={openRelayModal}><IconPlus size={14} /> New Relay</UIButton>

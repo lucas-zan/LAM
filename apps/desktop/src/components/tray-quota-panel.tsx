@@ -637,17 +637,23 @@ export function TrayQuotaPanel() {
       void loadActiveSession(accountData);
       const ids = accountData.map((a) => a.id);
       if (forceRefresh && ids.length) {
+        let completed = 0;
+        let unavailable = 0;
         await Promise.all(
           ids.map(async (profileId) => {
             try {
               const snapshot = await getProfileQuota(profileId, true);
               setQuotas((current) => mergeQuotaSnapshots(current, snapshot));
+              completed += 1;
+              if (snapshot.staleness !== "fresh") unavailable += 1;
             } catch (err) {
-              setStatus(formatError(err));
+              unavailable += 1;
+              setStatus(`${profileId}: ${formatError(err)}`);
             }
           }),
         );
-        setStatus(`Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+        const suffix = unavailable ? ` · ${unavailable} unavailable` : "";
+        setStatus(`Updated ${completed}/${ids.length}${suffix} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       } else {
         const cached = await listCachedQuotas(ids.length ? ids : undefined);
         setQuotas(cached);

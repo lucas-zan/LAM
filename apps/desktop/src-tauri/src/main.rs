@@ -3,9 +3,20 @@ mod tray;
 
 use tauri::{Manager, WindowEvent};
 
+fn should_hide_instead_of_close(label: &str) -> bool {
+    label == "main"
+}
+
 fn main() {
     tauri::Builder::default()
         .on_window_event(|window, event| {
+            if should_hide_instead_of_close(window.label()) {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                return;
+            }
             if window.label() != tray::POPOVER_LABEL {
                 return;
             }
@@ -56,4 +67,15 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running LocalAgentManager");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_hide_instead_of_close;
+
+    #[test]
+    fn main_window_close_hides_instead_of_destroying_window() {
+        assert!(should_hide_instead_of_close("main"));
+        assert!(!should_hide_instead_of_close(crate::tray::POPOVER_LABEL));
+    }
 }
