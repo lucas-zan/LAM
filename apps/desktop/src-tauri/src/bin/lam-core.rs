@@ -1,11 +1,7 @@
-use localagentmanager_core::list_accounts;
-use std::path::PathBuf;
+use localagentmanager_core::{list_accounts, resolve_home_root};
 
 fn main() {
-    let home = std::env::var("LAM_HOME")
-        .map(PathBuf::from)
-        .or_else(|_| std::env::var("HOME").map(PathBuf::from))
-        .expect("HOME is required");
+    let home = resolve_home_root().expect("HOME is required");
     match list_accounts(&home) {
         Ok(accounts) => {
             println!("LocalAgentManager core");

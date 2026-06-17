@@ -1,5 +1,4 @@
-use localagentmanager_core::{list_accounts, refresh_all_quotas, AppError};
-use std::path::PathBuf;
+use localagentmanager_core::{list_accounts, refresh_all_quotas, resolve_home_root, AppError};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -131,22 +130,8 @@ pub fn hide_quota_popover<R: Runtime>(app: &AppHandle<R>) -> Result<(), AppError
         .map_err(|err| AppError::new("POPOVER_HIDE_FAILED", err.to_string()))
 }
 
-fn home_root() -> Result<PathBuf, AppError> {
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .map_err(|err| AppError::new("HOME_NOT_FOUND", err.to_string()))?;
-    let lam_home = std::env::var("LAM_HOME").ok().map(PathBuf::from);
-    if let Some(candidate) = lam_home {
-        let allow_fake_home = std::env::var("LAM_ALLOW_FAKE_HOME")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        let looks_like_fake = candidate.to_string_lossy().contains(".fake-home");
-        if !looks_like_fake || allow_fake_home {
-            return Ok(candidate);
-        }
-    }
-    Ok(home)
+fn home_root() -> Result<std::path::PathBuf, AppError> {
+    resolve_home_root()
 }
 
 fn load_tray_icon() -> Image<'static> {

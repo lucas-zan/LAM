@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::process::{Child, Command, Stdio};
 use std::time::SystemTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -147,23 +148,16 @@ fn app_server_quota_enabled() -> bool {
     true
 }
 
-fn resolve_codex_bin(home_root: &Path) -> std::path::PathBuf {
+fn resolve_codex_bin(home_root: &Path) -> Option<std::path::PathBuf> {
     if let Ok(val) = std::env::var("LAM_CODEX_BIN") {
         if !val.is_empty() {
-            return std::path::PathBuf::from(val);
+            return Some(std::path::PathBuf::from(val));
         }
     }
 
-    let fallbacks = [
-        home_root.join(".bun/bin/codex"),
-        home_root.join(".local/bin/codex"),
-        std::path::PathBuf::from("/opt/homebrew/bin/codex"),
-        std::path::PathBuf::from("/usr/local/bin/codex"),
-    ];
-
-    for path in &fallbacks {
+    for path in codex_bin_candidates(home_root) {
         if path.exists() {
-            return path.clone();
+            return Some(path);
         }
     }
 
@@ -171,28 +165,41 @@ fn resolve_codex_bin(home_root: &Path) -> std::path::PathBuf {
         for dir in std::env::split_paths(&path_var) {
             let p = dir.join("codex");
             if p.exists() {
-                return p;
+                return Some(p);
             }
         }
     }
 
-    std::path::PathBuf::from("codex")
+    None
+}
+
+fn codex_bin_candidates(home_root: &Path) -> Vec<std::path::PathBuf> {
+    let user_bin_dirs = [
+        ".bun/bin",
+        ".local/bin",
+        ".npm-global/bin",
+        ".npm/bin",
+        ".yarn/bin",
+        ".volta/bin",
+        ".asdf/shims",
+        ".mise/shims",
+    ];
+    let mut candidates = user_bin_dirs
+        .iter()
+        .map(|dir| home_root.join(dir).join("codex"))
+        .collect::<Vec<_>>();
+    candidates.extend([
+        std::path::PathBuf::from("/opt/homebrew/bin/codex"),
+        std::path::PathBuf::from("/usr/local/bin/codex"),
+    ]);
+    candidates
 }
 
 fn try_codex_app_server_quota(
     home_root: &Path,
     account: &CodexAccount,
 ) -> Result<UsageQuotaSnapshot> {
-    let codex_bin = resolve_codex_bin(home_root);
-    let mut child = std::process::Command::new(codex_bin)
-        .arg("app-server")
-        .arg("--stdio")
-        .env("CODEX_HOME", &account.codex_home)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|err| AppError::new("CODEX_APP_SERVER_UNAVAILABLE", err.to_string()))?;
+    let mut child = spawn_codex_app_server(home_root, account)?;
     if let Some(stdin) = child.stdin.as_mut() {
         stdin
             .write_all(
@@ -319,6 +326,41 @@ fn try_codex_app_server_quota(
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
+}
+
+fn spawn_codex_app_server(home_root: &Path, account: &CodexAccount) -> Result<Child> {
+    let force_shell = env_truthy("LAM_CODEX_FORCE_LOGIN_SHELL");
+    let mut command = if force_shell {
+        login_shell_codex_command()
+    } else if let Some(codex_bin) = resolve_codex_bin(home_root) {
+        let mut command = Command::new(codex_bin);
+        command.arg("app-server").arg("--stdio");
+        command
+    } else {
+        login_shell_codex_command()
+    };
+
+    command
+        .env("CODEX_HOME", &account.codex_home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| AppError::new("CODEX_APP_SERVER_UNAVAILABLE", err.to_string()))
+}
+
+fn login_shell_codex_command() -> Command {
+    let shell = std::env::var("LAM_CODEX_LOGIN_SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let mut command = Command::new(shell);
+    command.arg("-lc").arg("exec codex app-server --stdio");
+    command
+}
+
+fn env_truthy(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 fn parse_rate_limit_snapshot_line(line: &str, profile_id: &str) -> Option<UsageQuotaSnapshot> {

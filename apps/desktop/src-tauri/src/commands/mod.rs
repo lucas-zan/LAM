@@ -17,15 +17,15 @@ use localagentmanager_core::{
     plan_attach_provider_to_profile as core_plan_attach_provider_to_profile,
     refresh_all_quotas as core_refresh_all_quotas,
     relay_resume_session as core_relay_resume_session,
-    rename_account_plan as core_rename_account_plan, sync_plan as core_sync_plan,
-    test_provider as core_test_provider, update_provider as core_update_provider, AppError,
-    AttachProviderRequest, AttachProviderResult, CodexAccount, CodexSession, CreateAccountRequest,
-    CreateProviderRequest, CreateRelayRequest, CreateResult, OperationPlan, ProviderProfile,
-    QuotaRefreshResult, RelayResumeRequest, RelayResumeResult, RenameAccountRequest,
-    RenameAccountResult, ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult,
-    UpdateProviderRequest, UsageQuotaSnapshot,
+    rename_account_plan as core_rename_account_plan, resolve_home_root,
+    sync_plan as core_sync_plan, test_provider as core_test_provider,
+    update_provider as core_update_provider, AppError, AttachProviderRequest, AttachProviderResult,
+    CodexAccount, CodexSession, CreateAccountRequest, CreateProviderRequest, CreateRelayRequest,
+    CreateResult, OperationPlan, ProviderProfile, QuotaRefreshResult, RelayResumeRequest,
+    RelayResumeResult, RenameAccountRequest, RenameAccountResult, ResumeCommand,
+    ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult, UpdateProviderRequest,
+    UsageQuotaSnapshot,
 };
-use std::path::PathBuf;
 
 async fn run_blocking<T, F>(task: F) -> Result<T, AppError>
 where
@@ -37,23 +37,8 @@ where
         .map_err(|err| AppError::new("BACKGROUND_TASK_FAILED", err.to_string()))?
 }
 
-fn home_root() -> Result<PathBuf, AppError> {
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .map_err(|err| AppError::new("HOME_NOT_FOUND", err.to_string()))?;
-    let lam_home = std::env::var("LAM_HOME").ok().map(PathBuf::from);
-    if let Some(candidate) = lam_home {
-        // Avoid accidental fake-home capture in dev shells unless explicitly allowed.
-        let allow_fake_home = std::env::var("LAM_ALLOW_FAKE_HOME")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        let looks_like_fake = candidate.to_string_lossy().contains(".fake-home");
-        if !looks_like_fake || allow_fake_home {
-            return Ok(candidate);
-        }
-    }
-    Ok(home)
+fn home_root() -> Result<std::path::PathBuf, AppError> {
+    resolve_home_root()
 }
 
 #[derive(serde::Serialize)]

@@ -4,9 +4,9 @@ use localagentmanager_core::{
     execute_create_relay, execute_rename_account, execute_sync, get_profile_quota, list_accounts,
     list_cached_accounts, list_cached_quotas, list_providers, list_sessions,
     plan_attach_provider_to_profile, refresh_all_quotas, relay_resume_session, rename_account_plan,
-    sync_plan, terminal_applescript, AttachProviderRequest, CreateAccountRequest,
-    CreateProviderRequest, CreateRelayRequest, RelayResumeRequest, RenameAccountRequest,
-    ResumeCommandRequest, SecretInput, SyncRequest,
+    resolve_home_root, sync_plan, terminal_applescript, AttachProviderRequest,
+    CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, RelayResumeRequest,
+    RenameAccountRequest, ResumeCommandRequest, SecretInput, SyncRequest,
 };
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -33,6 +33,24 @@ fn packaged_app_launch_has_visible_entrypoint() {
     assert_eq!(main["visible"], true);
     assert_eq!(popover["visible"], false);
     assert!(!config["identifier"].as_str().unwrap().ends_with(".app"));
+}
+
+#[test]
+fn runtime_home_root_uses_explicit_lam_home_for_all_launch_modes() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("runtime-home");
+    let lam_home = home.join(".fake-home");
+    let original_home = std::env::var_os("HOME");
+    let original_lam_home = std::env::var_os("LAM_HOME");
+    std::env::set_var("HOME", &home);
+    std::env::set_var("LAM_HOME", &lam_home);
+
+    let resolved = resolve_home_root().unwrap();
+
+    restore_env_var("LAM_HOME", original_lam_home);
+    restore_env_var("HOME", original_home);
+
+    assert_eq!(resolved, lam_home);
 }
 
 fn temp_home(name: &str) -> PathBuf {
@@ -63,6 +81,14 @@ fn write_executable(path: &Path, body: &str) {
 fn env_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn restore_env_var(name: &str, value: Option<std::ffi::OsString>) {
+    if let Some(value) = value {
+        std::env::set_var(name, value);
+    } else {
+        std::env::remove_var(name);
+    }
 }
 
 fn seed_codex_home(home: &Path, name: &str) -> PathBuf {
@@ -806,7 +832,7 @@ fn quota_app_server_parses_primary_and_secondary_windows() {
     let bin = home.join("fake-codex.sh");
     write_executable(
         &bin,
-        r#"#!/usr/bin/env bash
+        r#"#!/bin/sh
 if [ "$1" = "app-server" ]; then
   read _line1 || exit 1
   read _line2 || exit 1
@@ -824,7 +850,11 @@ exit 1
     std::env::remove_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
     std::env::remove_var("LAM_CODEX_BIN");
 
-    assert_eq!(snapshot.source, "app_server_rate_limits");
+    assert_eq!(
+        snapshot.source, "app_server_rate_limits",
+        "alerts: {:?}",
+        snapshot.alerts
+    );
     assert_eq!(snapshot.plan_type.as_deref(), Some("plus"));
     assert_eq!(snapshot.primary_used_percent, Some(42));
     assert_eq!(snapshot.secondary_used_percent, Some(18));
@@ -840,6 +870,98 @@ exit 1
     assert_eq!(cached[0].source, "app_server_rate_limits");
     assert_eq!(cached[0].staleness, "cached");
     assert_eq!(cached[0].primary_used_percent, Some(42));
+}
+
+#[test]
+fn quota_app_server_finds_codex_in_user_gui_launch_paths() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-user-bin");
+    seed_codex_home(&home, "a");
+    let bin = home.join(".npm-global/bin/codex");
+    write_executable(
+        &bin,
+        r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  read _line1 || exit 1
+  read _line2 || exit 1
+  read _line3 || exit 1
+  echo '{"jsonrpc":"2.0","id":1,"result":{"plan_type":"plus","primary":{"used_percent":17,"reset_at":"2026-06-02T10:00:00Z"},"secondary":{"used_percent":9,"reset_at":"2026-06-08T00:00:00Z"}}}'
+  /bin/sleep 5
+  exit 0
+fi
+exit 1
+"#,
+    );
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::remove_var("LAM_CODEX_BIN");
+    let original_path = std::env::var_os("PATH");
+    std::env::set_var("PATH", "");
+    let snapshot = get_profile_quota(&home, "a", true).unwrap();
+    if let Some(path) = original_path {
+        std::env::set_var("PATH", path);
+    } else {
+        std::env::remove_var("PATH");
+    }
+    std::env::remove_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+
+    assert_eq!(
+        snapshot.source, "app_server_rate_limits",
+        "alerts: {:?}",
+        snapshot.alerts
+    );
+    assert_eq!(snapshot.primary_used_percent, Some(17));
+    assert_eq!(snapshot.staleness, "fresh");
+}
+
+#[test]
+fn quota_app_server_uses_login_shell_when_gui_path_has_no_codex() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-login-shell");
+    seed_codex_home(&home, "main");
+    let codex = home.join(".shell-bin/codex");
+    write_executable(
+        &codex,
+        r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  read _line1 || exit 1
+  read _line2 || exit 1
+  read _line3 || exit 1
+  echo '{"jsonrpc":"2.0","id":1,"result":{"plan_type":"plus","primary":{"used_percent":11,"reset_at":"2026-06-02T10:00:00Z"},"secondary":{"used_percent":7,"reset_at":"2026-06-08T00:00:00Z"}}}'
+  /bin/sleep 5
+  exit 0
+fi
+exit 1
+"#,
+    );
+    let shell = home.join("login-shell");
+    let shell_body = format!(
+        "#!/bin/sh\nPATH=\"{}:$PATH\"\nexport PATH\nexec /bin/sh -c \"$2\"\n",
+        codex.parent().unwrap().display()
+    );
+    write_executable(&shell, &shell_body);
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::set_var("LAM_CODEX_LOGIN_SHELL", &shell);
+    std::env::set_var("LAM_CODEX_FORCE_LOGIN_SHELL", "1");
+    std::env::remove_var("LAM_CODEX_BIN");
+    let original_path = std::env::var_os("PATH");
+    std::env::set_var("PATH", "");
+    let snapshot = get_profile_quota(&home, "main", true).unwrap();
+    if let Some(path) = original_path {
+        std::env::set_var("PATH", path);
+    } else {
+        std::env::remove_var("PATH");
+    }
+    std::env::remove_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+    std::env::remove_var("LAM_CODEX_LOGIN_SHELL");
+    std::env::remove_var("LAM_CODEX_FORCE_LOGIN_SHELL");
+
+    assert_eq!(
+        snapshot.source, "app_server_rate_limits",
+        "alerts: {:?}",
+        snapshot.alerts
+    );
+    assert_eq!(snapshot.primary_used_percent, Some(11));
+    assert_eq!(snapshot.staleness, "fresh");
 }
 
 #[test]
