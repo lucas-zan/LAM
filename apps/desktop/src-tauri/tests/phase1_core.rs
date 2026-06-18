@@ -956,7 +956,6 @@ exit 1
     write_executable(&shell, &shell_body);
     std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
     std::env::set_var("LAM_CODEX_LOGIN_SHELL", &shell);
-    std::env::set_var("LAM_CODEX_FORCE_LOGIN_SHELL", "1");
     std::env::remove_var("LAM_CODEX_BIN");
     let original_path = std::env::var_os("PATH");
     std::env::set_var("PATH", "");
@@ -968,7 +967,6 @@ exit 1
     }
     std::env::remove_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
     std::env::remove_var("LAM_CODEX_LOGIN_SHELL");
-    std::env::remove_var("LAM_CODEX_FORCE_LOGIN_SHELL");
 
     assert_eq!(
         snapshot.source, "app_server_rate_limits",

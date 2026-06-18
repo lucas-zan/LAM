@@ -157,23 +157,38 @@ export function App() {
 
   useEffect(() => {
     if (modal !== 'handoff' || !handoffSourceId) return;
-    setHandoffLoading(true);
+    let active = true;
     api
       .listSessions(handoffSourceId)
       .then((items) => {
+        if (!active) return;
         setHandoffSessions(items);
         setHandoffSessionId((current) =>
           items.some((item) => item.id === current) ? current : (items[0]?.id ?? ''),
         );
       })
-      .catch((err) => useAppStore.getState().setError(String(err)))
-      .finally(() => setHandoffLoading(false));
+      .catch((err) => {
+        if (!active) return;
+        useAppStore.getState().setError(String(err));
+      })
+      .finally(() => {
+        if (!active) return;
+        setHandoffLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
   }, [modal, handoffSourceId]);
 
-  useEffect(() => {
-    if (modal !== 'handoff' || handoffSourceId !== handoffTargetId) return;
-    setHandoffTargetId(accounts.find((account) => account.id !== handoffSourceId)?.id ?? '');
-  }, [accounts, handoffSourceId, handoffTargetId, modal]);
+  function changeHandoffSource(newSourceId: string) {
+    setHandoffSourceId(newSourceId);
+    setHandoffLoading(true);
+    if (newSourceId === handoffTargetId) {
+      const other = accounts.find((a) => a.id !== newSourceId)?.id ?? '';
+      setHandoffTargetId(other);
+    }
+  }
 
   // Modal helpers
   function openHandoffModal(opts?: { session?: CodexSession; targetAccountId?: string }) {
@@ -189,6 +204,7 @@ export function App() {
     setHandoffTargetId(target);
     setHandoffSessionId(opts?.session?.id ?? activeSession?.id ?? '');
     setHandoffSessions(opts?.session ? [opts.session] : []);
+    setHandoffLoading(true);
     openModal('handoff');
   }
 
@@ -524,7 +540,7 @@ export function App() {
           <div className="formGrid">
             <label>
               Source account
-              <select value={handoffSourceId} onChange={(e) => setHandoffSourceId(e.target.value)}>
+              <select value={handoffSourceId} onChange={(e) => changeHandoffSource(e.target.value)}>
                 {accounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.displayName}

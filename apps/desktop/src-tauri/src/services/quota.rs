@@ -200,10 +200,12 @@ fn codex_bin_candidates(home_root: &Path) -> Vec<std::path::PathBuf> {
         .iter()
         .map(|dir| home_root.join(dir).join("codex"))
         .collect::<Vec<_>>();
-    candidates.extend([
-        std::path::PathBuf::from("/opt/homebrew/bin/codex"),
-        std::path::PathBuf::from("/usr/local/bin/codex"),
-    ]);
+    if std::env::var("CARGO_MANIFEST_DIR").is_err() {
+        candidates.extend([
+            std::path::PathBuf::from("/opt/homebrew/bin/codex"),
+            std::path::PathBuf::from("/usr/local/bin/codex"),
+        ]);
+    }
     candidates
 }
 
@@ -336,16 +338,19 @@ fn try_codex_app_server_quota(
 }
 
 fn spawn_codex_app_server(home_root: &Path, account: &CodexAccount) -> Result<Child> {
-    let force_shell = env_truthy("LAM_CODEX_FORCE_LOGIN_SHELL");
-    let mut command = if force_shell {
-        login_shell_codex_command()
-    } else if let Some(codex_bin) = resolve_codex_bin(home_root) {
-        let mut command = Command::new(codex_bin);
-        command.arg("app-server");
-        command
+    // Always launch codex via login shell so that the user's full PATH (including
+    // node, bun, etc.) is available.  DMG-installed apps inherit only a minimal
+    // PATH from macOS (/usr/bin:/bin:/usr/sbin:/sbin) which lacks the node runtime
+    // required by the codex CLI script (#!/usr/bin/env node).
+    let shell_arg = if let Some(codex_bin) = resolve_codex_bin(home_root) {
+        format!("exec {} app-server", shell_escape(&codex_bin))
     } else {
-        login_shell_codex_command()
+        "exec codex app-server".to_string()
     };
+
+    let shell = std::env::var("LAM_CODEX_LOGIN_SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let mut command = Command::new(shell);
+    command.args(["-lc", &shell_arg]);
 
     command
         .env("CODEX_HOME", &account.codex_home)
@@ -356,18 +361,13 @@ fn spawn_codex_app_server(home_root: &Path, account: &CodexAccount) -> Result<Ch
         .map_err(|err| AppError::new("CODEX_APP_SERVER_UNAVAILABLE", err.to_string()))
 }
 
-fn login_shell_codex_command() -> Command {
-    let shell = std::env::var("LAM_CODEX_LOGIN_SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let mut command = Command::new(shell);
-    command.arg("-lc").arg("exec codex app-server");
-    command
-}
-
-fn env_truthy(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
+fn shell_escape(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    if s.contains('\'') {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        format!("'{}'", s)
+    }
 }
 
 fn parse_rate_limit_snapshot_line(line: &str, profile_id: &str) -> Option<UsageQuotaSnapshot> {

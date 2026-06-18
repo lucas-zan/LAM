@@ -111,7 +111,7 @@ export const useAccountStore = create<AccountState>()(
     },
 
     relayResumeTo: async (account) => {
-      const { activeSession, divergedStrategy, accounts } = get();
+      const { activeSession, accounts } = get();
       const app = useAppStore.getState();
       if (!activeSession) {
         app.setError('No active source session found for Resume Here.');
