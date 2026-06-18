@@ -929,6 +929,54 @@ exit 1
 }
 
 #[test]
+fn quota_app_server_adds_user_runtime_paths_for_codex_scripts() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-user-runtime-path");
+    seed_codex_home(&home, "a");
+    let codex = home.join(".npm-global/bin/codex");
+    write_executable(
+        &codex,
+        r#"#!/bin/sh
+exec node "$0-node" "$@"
+"#,
+    );
+    write_executable(
+        &home.join(".volta/bin/node"),
+        r#"#!/bin/sh
+shift
+if [ "$1" = "app-server" ]; then
+  read _line1 || exit 1
+  read _line2 || exit 1
+  echo '{"jsonrpc":"2.0","id":1,"result":{"plan_type":"plus","primary":{"used_percent":13,"reset_at":"2026-06-02T10:00:00Z"},"secondary":{"used_percent":5,"reset_at":"2026-06-08T00:00:00Z"}}}'
+  /bin/sleep 5
+  exit 0
+fi
+exit 1
+"#,
+    );
+
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::remove_var("LAM_CODEX_BIN");
+    let original_path = std::env::var_os("PATH");
+    std::env::set_var("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
+    let snapshot = get_profile_quota(&home, "a", true).unwrap();
+    if let Some(path) = original_path {
+        std::env::set_var("PATH", path);
+    } else {
+        std::env::remove_var("PATH");
+    }
+    std::env::remove_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+
+    assert_eq!(
+        snapshot.source, "app_server_rate_limits",
+        "alerts: {:?}",
+        snapshot.alerts
+    );
+    assert_eq!(snapshot.primary_used_percent, Some(13));
+    assert_eq!(snapshot.staleness, "fresh");
+}
+
+#[test]
 fn quota_app_server_uses_login_shell_when_gui_path_has_no_codex() {
     let _guard = env_lock().lock().unwrap();
     let home = temp_home("quota-login-shell");

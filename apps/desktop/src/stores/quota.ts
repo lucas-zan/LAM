@@ -1,9 +1,9 @@
-import { create } from "zustand";
-import * as api from "../lib/api";
-import { filterQuotaSnapshotsForProfileIds, mergeQuotaSnapshots } from "../lib/quota";
-import type { UsageQuotaSnapshot } from "../lib/types";
-import { useAppStore } from "./app";
-import { formatError } from "../lib/format";
+import { create } from 'zustand';
+import * as api from '../lib/api';
+import { filterQuotaSnapshotsForProfileIds, mergeQuotaSnapshots } from '../lib/quota';
+import type { UsageQuotaSnapshot } from '../lib/types';
+import { useAppStore } from './app';
+import { formatError } from '../lib/format';
 
 const QUOTA_REFRESH_INTERVAL_MS = 2 * 60_000;
 
@@ -33,7 +33,9 @@ export const useQuotaStore = create<QuotaState>()((set, get) => ({
     const targets = profileIds?.length ? profileIds : [];
     if (!targets.length) return;
     useAppStore.getState().clearError();
-    set((s) => ({ refreshingQuotaIds: Array.from(new Set([...s.refreshingQuotaIds, ...targets])) }));
+    set((s) => ({
+      refreshingQuotaIds: Array.from(new Set([...s.refreshingQuotaIds, ...targets])),
+    }));
 
     let completed = 0;
     let failed = 0;
@@ -44,11 +46,13 @@ export const useQuotaStore = create<QuotaState>()((set, get) => ({
           const snapshot = await api.getProfileQuota(profileId, true);
           set((s) => ({ quotas: mergeQuotaSnapshots(s.quotas, snapshot) }));
           completed += 1;
-          if (snapshot.staleness !== "fresh") {
+          if (snapshot.staleness !== 'fresh') {
             failed += 1;
             useAppStore
               .getState()
-              .setError(`${profileId}: realtime quota unavailable; using ${snapshot.staleness} quota`);
+              .setError(
+                `${profileId}: realtime quota unavailable; using ${snapshot.staleness} quota`,
+              );
           } else {
             useAppStore.getState().clearError();
           }
@@ -63,11 +67,13 @@ export const useQuotaStore = create<QuotaState>()((set, get) => ({
       }),
     );
 
-    useAppStore.getState().setStatus(
-      failed
-        ? `Refreshed ${completed} quota snapshots; ${failed} unavailable`
-        : `Refreshed ${completed} quota snapshots`,
-    );
+    useAppStore
+      .getState()
+      .setStatus(
+        failed
+          ? `Refreshed ${completed} quota snapshots; ${failed} unavailable`
+          : `Refreshed ${completed} quota snapshots`,
+      );
     if (!failed) useAppStore.getState().clearError();
     if (completed) api.syncTrayQuota();
   },
@@ -85,7 +91,12 @@ export const useQuotaStore = create<QuotaState>()((set, get) => ({
           const ids = profileIds ?? cached.map((snap) => snap.profileId);
           const scoped = filterQuotaSnapshotsForProfileIds(ids, s.quotas);
           const next = new Map(scoped.map((q) => [q.profileId, q]));
-          for (const snap of cached) next.set(snap.profileId, snap);
+          for (const snap of cached) {
+            const current = next.get(snap.profileId);
+            if (!current || snap.fetchedAt >= current.fetchedAt) {
+              next.set(snap.profileId, snap);
+            }
+          }
           return { quotas: Array.from(next.values()) };
         });
         useAppStore.getState().setStatus(`Loaded ${cached.length} cached quota snapshots`);

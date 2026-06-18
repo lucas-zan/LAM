@@ -3,6 +3,7 @@ use super::error::{AppError, Result};
 use super::types::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -186,19 +187,9 @@ fn resolve_codex_bin(home_root: &Path) -> Option<std::path::PathBuf> {
 }
 
 fn codex_bin_candidates(home_root: &Path) -> Vec<std::path::PathBuf> {
-    let user_bin_dirs = [
-        ".bun/bin",
-        ".local/bin",
-        ".npm-global/bin",
-        ".npm/bin",
-        ".yarn/bin",
-        ".volta/bin",
-        ".asdf/shims",
-        ".mise/shims",
-    ];
-    let mut candidates = user_bin_dirs
-        .iter()
-        .map(|dir| home_root.join(dir).join("codex"))
+    let mut candidates = user_runtime_path_dirs(home_root)
+        .into_iter()
+        .map(|dir| dir.join("codex"))
         .collect::<Vec<_>>();
     if std::env::var("CARGO_MANIFEST_DIR").is_err() {
         candidates.extend([
@@ -207,6 +198,36 @@ fn codex_bin_candidates(home_root: &Path) -> Vec<std::path::PathBuf> {
         ]);
     }
     candidates
+}
+
+fn user_runtime_path_dirs(home_root: &Path) -> Vec<std::path::PathBuf> {
+    [
+        ".bun/bin",
+        ".local/bin",
+        ".npm-global/bin",
+        ".npm/bin",
+        ".yarn/bin",
+        ".volta/bin",
+        ".asdf/shims",
+        ".mise/shims",
+    ]
+    .iter()
+    .map(|dir| home_root.join(dir))
+    .collect()
+}
+
+fn codex_app_server_path(home_root: &Path) -> Result<OsString> {
+    let mut dirs = user_runtime_path_dirs(home_root);
+    if std::env::var("CARGO_MANIFEST_DIR").is_err() {
+        dirs.extend([
+            std::path::PathBuf::from("/opt/homebrew/bin"),
+            std::path::PathBuf::from("/usr/local/bin"),
+        ]);
+    }
+    if let Some(path_var) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path_var));
+    }
+    std::env::join_paths(dirs).map_err(|err| AppError::new("PATH_ERROR", err.to_string()))
 }
 
 fn try_codex_app_server_quota(
@@ -342,10 +363,19 @@ fn spawn_codex_app_server(home_root: &Path, account: &CodexAccount) -> Result<Ch
     // node, bun, etc.) is available.  DMG-installed apps inherit only a minimal
     // PATH from macOS (/usr/bin:/bin:/usr/sbin:/sbin) which lacks the node runtime
     // required by the codex CLI script (#!/usr/bin/env node).
+    let path_env = codex_app_server_path(home_root)?;
+    let path_prefix = format!(
+        "export PATH={}:\"$PATH\"; ",
+        shell_quote(&path_env.to_string_lossy())
+    );
     let shell_arg = if let Some(codex_bin) = resolve_codex_bin(home_root) {
-        format!("exec {} app-server", shell_escape(&codex_bin))
+        format!(
+            "{}exec {} app-server",
+            path_prefix,
+            shell_quote(&codex_bin.to_string_lossy())
+        )
     } else {
-        "exec codex app-server".to_string()
+        format!("{}exec codex app-server", path_prefix)
     };
 
     let shell = std::env::var("LAM_CODEX_LOGIN_SHELL").unwrap_or_else(|_| "/bin/zsh".into());
@@ -353,6 +383,7 @@ fn spawn_codex_app_server(home_root: &Path, account: &CodexAccount) -> Result<Ch
     command.args(["-lc", &shell_arg]);
 
     command
+        .env("PATH", path_env)
         .env("CODEX_HOME", &account.codex_home)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -361,13 +392,8 @@ fn spawn_codex_app_server(home_root: &Path, account: &CodexAccount) -> Result<Ch
         .map_err(|err| AppError::new("CODEX_APP_SERVER_UNAVAILABLE", err.to_string()))
 }
 
-fn shell_escape(path: &std::path::Path) -> String {
-    let s = path.to_string_lossy();
-    if s.contains('\'') {
-        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
-    } else {
-        format!("'{}'", s)
-    }
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn parse_rate_limit_snapshot_line(line: &str, profile_id: &str) -> Option<UsageQuotaSnapshot> {

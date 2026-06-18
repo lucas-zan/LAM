@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import {
   hideQuotaPopover,
   listAccounts,
@@ -15,21 +15,35 @@ import {
   getProfileQuota,
   inTauri,
   setQuotaPopoverOpacity,
-} from "../lib/api";
+} from '../lib/api';
 import {
   averagePrimaryRemainingPercent,
   countAccountsWithAvailableQuota,
   countAccountsWithQuotaData,
   mergeQuotaSnapshots,
   quotaRemainingPercent,
-} from "../lib/quota";
-import { formatResetCountdown } from "../lib/reset";
-import { scheduleTrayPopoverWindowSize } from "../lib/tray-popover-size";
-import type { ThemeMode } from "../lib/theme";
-import { TRAY_POPOVER_OPACITY_PERCENT } from "../lib/tray-popover-prefs";
-import type { CodexAccount, CodexSession, DivergedSessionStrategy, UsageQuotaSnapshot } from "../lib/types";
-import { IconClock, IconClose, IconCopy, IconExternalLink, IconLogo, IconRefresh, IconSun, IconMoon } from "./icons";
-import { UIButton } from "./ui-button";
+} from '../lib/quota';
+import { formatResetCountdown } from '../lib/reset';
+import { scheduleTrayPopoverWindowSize } from '../lib/tray-popover-size';
+import type { ThemeMode } from '../lib/theme';
+import { TRAY_POPOVER_OPACITY_PERCENT } from '../lib/tray-popover-prefs';
+import type {
+  CodexAccount,
+  CodexSession,
+  DivergedSessionStrategy,
+  UsageQuotaSnapshot,
+} from '../lib/types';
+import {
+  IconClock,
+  IconClose,
+  IconCopy,
+  IconExternalLink,
+  IconLogo,
+  IconRefresh,
+  IconSun,
+  IconMoon,
+} from './icons';
+import { UIButton } from './ui-button';
 
 type ProviderGroup = {
   id: string;
@@ -44,22 +58,22 @@ function formatError(err: unknown): string {
 }
 
 function resolveThemeMode(): ThemeMode {
-  const saved = localStorage.getItem("lam-theme");
-  return saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
+  const saved = localStorage.getItem('lam-theme');
+  return saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system';
 }
 
 function readDivergedStrategy(): DivergedSessionStrategy {
-  const saved = localStorage.getItem("lam-diverged-session-strategy");
+  const saved = localStorage.getItem('lam-diverged-session-strategy');
   if (
-    saved === "stop_and_ask" ||
-    saved === "summarize_fork_with_target_account" ||
-    saved === "timeline_merge_to_fork" ||
-    saved === "prefer_source" ||
-    saved === "prefer_target"
+    saved === 'stop_and_ask' ||
+    saved === 'summarize_fork_with_target_account' ||
+    saved === 'timeline_merge_to_fork' ||
+    saved === 'prefer_source' ||
+    saved === 'prefer_target'
   ) {
     return saved;
   }
-  return "summarize_fork_with_target_account";
+  return 'summarize_fork_with_target_account';
 }
 
 function sortByLatestActivity(accounts: CodexAccount[]) {
@@ -74,10 +88,10 @@ function sortByLatestActivity(accounts: CodexAccount[]) {
   });
 }
 
-function readResolvedTheme(): "light" | "dark" {
+function readResolvedTheme(): 'light' | 'dark' {
   const mode = resolveThemeMode();
-  if (mode === "system") {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  if (mode === 'system') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
   return mode;
 }
@@ -85,28 +99,28 @@ function readResolvedTheme(): "light" | "dark" {
 const ACCOUNT_THEMES = [
   {
     // Orange/Amber
-    light: { color: "#d97706", glow: "rgba(217, 119, 6, 0.3)" },
-    dark: { color: "#fbbf24", glow: "rgba(251, 191, 36, 0.4)" },
+    light: { color: '#d97706', glow: 'rgba(217, 119, 6, 0.3)' },
+    dark: { color: '#fbbf24', glow: 'rgba(251, 191, 36, 0.4)' },
   },
   {
     // Blue
-    light: { color: "#0284c7", glow: "rgba(2, 132, 199, 0.3)" },
-    dark: { color: "#38bdf8", glow: "rgba(56, 189, 248, 0.4)" },
+    light: { color: '#0284c7', glow: 'rgba(2, 132, 199, 0.3)' },
+    dark: { color: '#38bdf8', glow: 'rgba(56, 189, 248, 0.4)' },
   },
   {
     // Pink/Rose
-    light: { color: "#db2777", glow: "rgba(219, 39, 119, 0.3)" },
-    dark: { color: "#f472b6", glow: "rgba(244, 114, 182, 0.4)" },
+    light: { color: '#db2777', glow: 'rgba(219, 39, 119, 0.3)' },
+    dark: { color: '#f472b6', glow: 'rgba(244, 114, 182, 0.4)' },
   },
   {
     // Purple/Violet
-    light: { color: "#7c3aed", glow: "rgba(124, 58, 237, 0.3)" },
-    dark: { color: "#a78bfa", glow: "rgba(167, 139, 250, 0.4)" },
+    light: { color: '#7c3aed', glow: 'rgba(124, 58, 237, 0.3)' },
+    dark: { color: '#a78bfa', glow: 'rgba(167, 139, 250, 0.4)' },
   },
   {
     // Green/Emerald
-    light: { color: "#059669", glow: "rgba(5, 150, 105, 0.3)" },
-    dark: { color: "#34d399", glow: "rgba(52, 211, 153, 0.4)" },
+    light: { color: '#059669', glow: 'rgba(5, 150, 105, 0.3)' },
+    dark: { color: '#34d399', glow: 'rgba(52, 211, 153, 0.4)' },
   },
 ];
 
@@ -125,38 +139,38 @@ function getAccountTheme(accountName: string, index: number, isDark: boolean) {
 
 const STATE_THEMES = {
   safe: {
-    light: { color: "#16a34a", glow: "rgba(22, 163, 74, 0.3)" },
-    dark: { color: "#34d399", glow: "rgba(52, 211, 153, 0.4)" },
+    light: { color: '#16a34a', glow: 'rgba(22, 163, 74, 0.3)' },
+    dark: { color: '#34d399', glow: 'rgba(52, 211, 153, 0.4)' },
   },
   warn: {
-    light: { color: "#d97706", glow: "rgba(217, 119, 6, 0.3)" },
-    dark: { color: "#fbbf24", glow: "rgba(251, 191, 36, 0.4)" },
+    light: { color: '#d97706', glow: 'rgba(217, 119, 6, 0.3)' },
+    dark: { color: '#fbbf24', glow: 'rgba(251, 191, 36, 0.4)' },
   },
   danger: {
-    light: { color: "#dc2626", glow: "rgba(220, 38, 38, 0.3)" },
-    dark: { color: "#f87171", glow: "rgba(248, 113, 113, 0.4)" },
+    light: { color: '#dc2626', glow: 'rgba(220, 38, 38, 0.3)' },
+    dark: { color: '#f87171', glow: 'rgba(248, 113, 113, 0.4)' },
   },
   empty: {
-    light: { color: "#dc2626", glow: "rgba(220, 38, 38, 0.3)" },
-    dark: { color: "#f87171", glow: "rgba(248, 113, 113, 0.4)" },
+    light: { color: '#dc2626', glow: 'rgba(220, 38, 38, 0.3)' },
+    dark: { color: '#f87171', glow: 'rgba(248, 113, 113, 0.4)' },
   },
   na: {
-    light: { color: "#94a3b8", glow: "rgba(148, 163, 184, 0.2)" },
-    dark: { color: "#64748b", glow: "rgba(100, 116, 139, 0.2)" },
+    light: { color: '#94a3b8', glow: 'rgba(148, 163, 184, 0.2)' },
+    dark: { color: '#64748b', glow: 'rgba(100, 116, 139, 0.2)' },
   },
 };
 
 function getQuotaStateTheme(percent: number | null, isDark: boolean) {
-  let state: keyof typeof STATE_THEMES = "na";
+  let state: keyof typeof STATE_THEMES = 'na';
   if (percent !== null) {
     if (percent === 0) {
-      state = "empty";
+      state = 'empty';
     } else if (percent < 25) {
-      state = "danger";
+      state = 'danger';
     } else if (percent < 70) {
-      state = "warn";
+      state = 'warn';
     } else {
-      state = "safe";
+      state = 'safe';
     }
   }
   const theme = STATE_THEMES[state];
@@ -185,7 +199,12 @@ function CircularProgressRing({
 
   return (
     <div className="circularProgressWrapper" style={{ width: size, height: size }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="circularProgressSvg">
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        className="circularProgressSvg"
+      >
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -210,7 +229,7 @@ function CircularProgressRing({
         )}
       </svg>
       <div className="circularProgressText" style={{ color: themeColor }}>
-        <strong>{percent === null ? "N/A" : `${percent}%`}</strong>
+        <strong>{percent === null ? 'N/A' : `${percent}%`}</strong>
       </div>
     </div>
   );
@@ -227,7 +246,7 @@ interface TrayPopoverHeaderProps {
   availableQuotaAccounts: number;
   activeAccountDisplayName?: string;
   activeSessionId?: string;
-  resolvedTheme: "light" | "dark";
+  resolvedTheme: 'light' | 'dark';
   onToggleTheme: () => void;
 }
 
@@ -269,19 +288,21 @@ function TrayPopoverHeader({
           <button
             type="button"
             className="trayPopoverIconBtn trayThemeToggleButton"
-            aria-label={resolvedTheme === "light" ? "Switch to dark theme" : "Switch to light theme"}
+            aria-label={
+              resolvedTheme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'
+            }
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
               onToggleTheme();
             }}
           >
-            {resolvedTheme === "light" ? <IconMoon size={14} /> : <IconSun size={14} />}
+            {resolvedTheme === 'light' ? <IconMoon size={14} /> : <IconSun size={14} />}
           </button>
           <button
             type="button"
-            className={`trayPopoverIconBtn trayRefreshButton ${refreshing ? "isRefreshing" : ""}`}
-            aria-label={refreshing ? "Refreshing quotas" : "Refresh quotas"}
+            className={`trayPopoverIconBtn trayRefreshButton ${refreshing ? 'isRefreshing' : ''}`}
+            aria-label={refreshing ? 'Refreshing quotas' : 'Refresh quotas'}
             aria-busy={refreshing}
             disabled={refreshing}
             onClick={onRefresh}
@@ -312,7 +333,7 @@ function TrayPopoverHeader({
         </div>
         <div>
           <span>5h avg</span>
-          <strong>{avg5hRemaining === null ? "N/A" : `${avg5hRemaining}%`}</strong>
+          <strong>{avg5hRemaining === null ? 'N/A' : `${avg5hRemaining}%`}</strong>
         </div>
         <div>
           <span>Usable</span>
@@ -325,9 +346,9 @@ function TrayPopoverHeader({
           <span className="activeDot" />
           <span className="activeLabel">Active</span>
           <strong className="activeAccount" title={activeAccountDisplayName}>
-            {activeAccountDisplayName ?? "No session"}
+            {activeAccountDisplayName ?? 'No session'}
           </strong>
-          <span className="activeSessionId">{activeSessionId ?? "No active session"}</span>
+          <span className="activeSessionId">{activeSessionId ?? 'No active session'}</span>
           {activeSessionId && (
             <button
               type="button"
@@ -394,6 +415,8 @@ interface TrayAccountListProps {
   quotas: UsageQuotaSnapshot[];
   activeSession?: CodexSession;
   relayingAccountId: string;
+  refreshingQuotaIds: string[];
+  onRefreshAccount: (account: CodexAccount) => void;
   onRelayTo: (account: CodexAccount) => void;
   isDark: boolean;
 }
@@ -405,6 +428,8 @@ function TrayAccountList({
   quotas,
   activeSession,
   relayingAccountId,
+  refreshingQuotaIds,
+  onRefreshAccount,
   onRelayTo,
   isDark,
 }: TrayAccountListProps) {
@@ -432,7 +457,7 @@ function TrayAccountList({
               id={`tray-tab-${group.id}`}
               aria-selected={group.id === activeGroup.id}
               aria-controls={`tray-panel-${group.id}`}
-              className={`trayProviderTab ${group.id === activeGroup.id ? "isActive" : ""}`}
+              className={`trayProviderTab ${group.id === activeGroup.id ? 'isActive' : ''}`}
               onClick={() => setActiveProviderId(group.id)}
             >
               {group.title}
@@ -459,6 +484,7 @@ function TrayAccountList({
             const quota = quotas.find((q) => q.profileId === account.id);
             const title = account.displayName.trim() || account.id;
             const isActiveAccount = activeSession?.accountId === account.id;
+            const isRefreshingQuota = refreshingQuotaIds.includes(account.id);
 
             const accountTheme = getAccountTheme(account.id, index, isDark);
             const primaryRemaining = quotaRemainingPercent(quota?.primaryUsedPercent);
@@ -468,20 +494,20 @@ function TrayAccountList({
             const secondaryStateTheme = getQuotaStateTheme(secondaryRemaining, isDark);
 
             const cardStyle = {
-              borderColor: accountTheme.color + "22",
+              borderColor: accountTheme.color + '22',
             } as CSSProperties;
 
             const btnStyle = {
-              "--btn-bg": accountTheme.color + "14",
-              "--btn-text": accountTheme.color,
-              "--btn-border": accountTheme.color + "22",
+              '--btn-bg': accountTheme.color + '14',
+              '--btn-text': accountTheme.color,
+              '--btn-border': accountTheme.color + '22',
             } as CSSProperties;
 
             return (
               <div className="trayAccountRow" key={account.id} style={cardStyle}>
                 <div className="trayAccountRowTop">
                   <div className="trayAccountMain">
-                    <span className={`trayAccountStatusDot ${isActiveAccount ? "isActive" : ""}`} />
+                    <span className={`trayAccountStatusDot ${isActiveAccount ? 'isActive' : ''}`} />
                     <div className="trayAccountNameWrap">
                       <strong title={title}>{title}</strong>
                       {isActiveAccount && (
@@ -491,22 +517,34 @@ function TrayAccountList({
                       )}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className="trayRelayButton"
-                    style={btnStyle}
-                    disabled={!activeSession || relayingAccountId === account.id}
-                    onClick={() => onRelayTo(account)}
-                  >
-                    {activeSession?.accountId === account.id ? "Resume" : "Relay"}
-                  </button>
+                  <div className="trayAccountActions">
+                    <button
+                      type="button"
+                      className={`trayAccountRefreshButton ${isRefreshingQuota ? 'isRefreshing' : ''}`}
+                      aria-label={`Refresh ${title} quota`}
+                      title={`Refresh ${title} quota`}
+                      disabled={isRefreshingQuota}
+                      onClick={() => onRefreshAccount(account)}
+                    >
+                      <IconRefresh size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      className="trayRelayButton"
+                      style={btnStyle}
+                      disabled={!activeSession || relayingAccountId === account.id}
+                      onClick={() => onRelayTo(account)}
+                    >
+                      {activeSession?.accountId === account.id ? 'Resume' : 'Relay'}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="trayAccountRowContent">
                   <div className="trayAccountRowContentLeft">
                     <div className="trayAccountRowContentLeftText">
                       <strong>5h</strong>
-                      <span>{formatResetCountdown(quota?.resetAt, "session")}</span>
+                      <span>{formatResetCountdown(quota?.resetAt, 'session')}</span>
                     </div>
                     <CircularProgressRing
                       percent={primaryRemaining}
@@ -518,7 +556,7 @@ function TrayAccountList({
                   <div className="trayAccountRowContentRight">
                     <div className="trayAccountRowContentRightLabel">
                       <strong style={{ color: secondaryStateTheme.color }}>
-                        {secondaryRemaining === null ? "N/A" : `${secondaryRemaining}%`}
+                        {secondaryRemaining === null ? 'N/A' : `${secondaryRemaining}%`}
                       </strong>
                       <span>weekly</span>
                     </div>
@@ -531,8 +569,8 @@ function TrayAccountList({
                         }}
                       />
                     </div>
-                    <span className="trayResetSub" style={{ textAlign: "right" }}>
-                      {formatResetCountdown(quota?.secondaryResetAt, "weekly")}
+                    <span className="trayResetSub" style={{ textAlign: 'right' }}>
+                      {formatResetCountdown(quota?.secondaryResetAt, 'weekly')}
                     </span>
                   </div>
                 </div>
@@ -549,11 +587,12 @@ export function TrayQuotaPanel() {
   const [accounts, setAccounts] = useState<CodexAccount[]>([]);
   const [quotas, setQuotas] = useState<UsageQuotaSnapshot[]>([]);
   const [activeSession, setActiveSession] = useState<CodexSession | undefined>(undefined);
-  const [status, setStatus] = useState("Loading…");
+  const [status, setStatus] = useState('Loading…');
   const [refreshing, setRefreshing] = useState(false);
-  const [relayingAccountId, setRelayingAccountId] = useState<string>("");
-  const [activeProviderId, setActiveProviderId] = useState("codex");
-  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => readResolvedTheme());
+  const [refreshingQuotaIds, setRefreshingQuotaIds] = useState<string[]>([]);
+  const [relayingAccountId, setRelayingAccountId] = useState<string>('');
+  const [activeProviderId, setActiveProviderId] = useState('codex');
+  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>(() => readResolvedTheme());
   const panelRef = useRef<HTMLDivElement>(null);
 
   const applyTheme = useCallback(() => {
@@ -563,33 +602,33 @@ export function TrayQuotaPanel() {
   }, []);
 
   const handleToggleTheme = useCallback(() => {
-    const nextTheme = resolvedTheme === "light" ? "dark" : "light";
-    localStorage.setItem("lam-theme", nextTheme);
+    const nextTheme = resolvedTheme === 'light' ? 'dark' : 'light';
+    localStorage.setItem('lam-theme', nextTheme);
     setResolvedTheme(nextTheme);
     document.documentElement.dataset.theme = nextTheme;
     window.dispatchEvent(
-      new StorageEvent("storage", {
-        key: "lam-theme",
+      new StorageEvent('storage', {
+        key: 'lam-theme',
         newValue: nextTheme,
-      })
+      }),
     );
   }, [resolvedTheme]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- syncing with external media query */
   useEffect(() => {
-    document.documentElement.dataset.trayPopover = "1";
+    document.documentElement.dataset.trayPopover = '1';
     applyTheme();
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
     const onChange = () => applyTheme();
-    media.addEventListener("change", onChange);
+    media.addEventListener('change', onChange);
     const onStorage = (event: StorageEvent) => {
-      if (event.key === "lam-theme") applyTheme();
+      if (event.key === 'lam-theme') applyTheme();
     };
-    window.addEventListener("storage", onStorage);
+    window.addEventListener('storage', onStorage);
     return () => {
       delete document.documentElement.dataset.trayPopover;
-      media.removeEventListener("change", onChange);
-      window.removeEventListener("storage", onStorage);
+      media.removeEventListener('change', onChange);
+      window.removeEventListener('storage', onStorage);
     };
   }, [applyTheme]);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -601,71 +640,84 @@ export function TrayQuotaPanel() {
   }, []);
 
   const loadActiveSession = useCallback(async (accountData: CodexAccount[]) => {
-    const results = await Promise.allSettled(accountData.map((account) => listSessions(account.id)));
-    const allSessions = results.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+    const results = await Promise.allSettled(
+      accountData.map((account) => listSessions(account.id)),
+    );
+    const allSessions = results.flatMap((result) =>
+      result.status === 'fulfilled' ? result.value : [],
+    );
     setActiveSession(allSessions.sort((a, b) => b.modifiedAt - a.modifiedAt)[0]);
   }, []);
 
-  const load = useCallback(async (forceRefresh = false) => {
-    if (!inTauri()) {
-      setStatus("Tray panel requires the desktop app.");
-      return;
-    }
-    if (forceRefresh) {
-      setRefreshing(true);
-      setStatus("Refreshing…");
-    }
-    try {
-      if (!forceRefresh) {
-        try {
-          const cached = await listCachedAccounts();
-          if (cached.length) {
-            setAccounts(cached);
-            void loadActiveSession(cached);
-            const cachedIds = cached.map((a) => a.id);
-            const cachedQuotas = await listCachedQuotas(cachedIds.length ? cachedIds : undefined);
-            setQuotas(cachedQuotas);
-            setStatus(`Cached · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
-          }
-        } catch {
-          /* cache miss is fine */
-        }
+  const load = useCallback(
+    async (forceRefresh = false) => {
+      if (!inTauri()) {
+        setStatus('Tray panel requires the desktop app.');
+        return;
       }
-
-      const accountData = await listAccounts();
-      setAccounts(accountData);
-      void loadActiveSession(accountData);
-      const ids = accountData.map((a) => a.id);
-      if (forceRefresh && ids.length) {
-        let completed = 0;
-        let unavailable = 0;
-        await Promise.all(
-          ids.map(async (profileId) => {
-            try {
-              const snapshot = await getProfileQuota(profileId, true);
-              setQuotas((current) => mergeQuotaSnapshots(current, snapshot));
-              completed += 1;
-              if (snapshot.staleness !== "fresh") unavailable += 1;
-            } catch (err) {
-              unavailable += 1;
-              setStatus(`${profileId}: ${formatError(err)}`);
+      if (forceRefresh) {
+        setRefreshing(true);
+        setStatus('Refreshing…');
+      }
+      try {
+        if (!forceRefresh) {
+          try {
+            const cached = await listCachedAccounts();
+            if (cached.length) {
+              setAccounts(cached);
+              void loadActiveSession(cached);
+              const cachedIds = cached.map((a) => a.id);
+              const cachedQuotas = await listCachedQuotas(cachedIds.length ? cachedIds : undefined);
+              setQuotas(cachedQuotas);
+              setStatus(
+                `Cached · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+              );
             }
-          }),
-        );
-        const suffix = unavailable ? ` · ${unavailable} unavailable` : "";
-        setStatus(`Updated ${completed}/${ids.length}${suffix} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
-      } else {
-        const cached = await listCachedQuotas(ids.length ? ids : undefined);
-        setQuotas(cached);
-        setStatus(`Cached · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+          } catch {
+            /* cache miss is fine */
+          }
+        }
+
+        const accountData = await listAccounts();
+        setAccounts(accountData);
+        void loadActiveSession(accountData);
+        const ids = accountData.map((a) => a.id);
+        if (forceRefresh && ids.length) {
+          let completed = 0;
+          let unavailable = 0;
+          await Promise.all(
+            ids.map(async (profileId) => {
+              try {
+                const snapshot = await getProfileQuota(profileId, true);
+                setQuotas((current) => mergeQuotaSnapshots(current, snapshot));
+                completed += 1;
+                if (snapshot.staleness !== 'fresh') unavailable += 1;
+              } catch (err) {
+                unavailable += 1;
+                setStatus(`${profileId}: ${formatError(err)}`);
+              }
+            }),
+          );
+          const suffix = unavailable ? ` · ${unavailable} unavailable` : '';
+          setStatus(
+            `Updated ${completed}/${ids.length}${suffix} · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+          );
+        } else {
+          const cached = await listCachedQuotas(ids.length ? ids : undefined);
+          setQuotas(cached);
+          setStatus(
+            `Cached · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+          );
+        }
+      } catch (err) {
+        setStatus(formatError(err));
+      } finally {
+        setRefreshing(false);
+        scheduleTrayPopoverWindowSize(panelRef.current);
       }
-    } catch (err) {
-      setStatus(formatError(err));
-    } finally {
-      setRefreshing(false);
-      scheduleTrayPopoverWindowSize(panelRef.current);
-    }
-  }, [loadActiveSession]);
+    },
+    [loadActiveSession],
+  );
 
   /* eslint-disable react-hooks/set-state-in-effect -- async data fetch on mount + interval */
   useEffect(() => {
@@ -673,8 +725,8 @@ export function TrayQuotaPanel() {
     const timer = window.setInterval(() => {
       void load(true);
     }, 2 * 60_000);
-    const unlisten = listen("quota-popover-refresh", () => {
-      void load(true);
+    const unlisten = listen('quota-popover-refresh', () => {
+      void load(false);
     });
     return () => {
       window.clearInterval(timer);
@@ -692,13 +744,31 @@ export function TrayQuotaPanel() {
   }
 
   async function openMain() {
-    await invoke("show_main_window");
+    await invoke('show_main_window');
     await closePopover();
+  }
+
+  async function refreshAccountQuota(account: CodexAccount) {
+    setRefreshingQuotaIds((ids) => Array.from(new Set([...ids, account.id])));
+    setStatus(`Refreshing ${account.displayName}...`);
+    try {
+      const snapshot = await getProfileQuota(account.id, true);
+      setQuotas((current) => mergeQuotaSnapshots(current, snapshot));
+      const suffix = snapshot.staleness === 'fresh' ? '' : ` · ${snapshot.staleness}`;
+      setStatus(
+        `Updated ${account.displayName}${suffix} · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+      );
+    } catch (err) {
+      setStatus(`${account.id}: ${formatError(err)}`);
+    } finally {
+      setRefreshingQuotaIds((ids) => ids.filter((id) => id !== account.id));
+      scheduleTrayPopoverWindowSize(panelRef.current);
+    }
   }
 
   async function relayTo(account: CodexAccount) {
     if (!activeSession) {
-      setStatus("No active session found.");
+      setStatus('No active session found.');
       return;
     }
     setRelayingAccountId(account.id);
@@ -724,23 +794,25 @@ export function TrayQuotaPanel() {
     } catch (err) {
       setStatus(formatError(err));
     } finally {
-      setRelayingAccountId("");
+      setRelayingAccountId('');
     }
   }
 
   const accountsWithQuotaData = countAccountsWithQuotaData(accounts, quotas);
   const availableQuotaAccounts = countAccountsWithAvailableQuota(accounts, quotas);
   const avg5hRemaining = averagePrimaryRemainingPercent(quotas);
-  const activeAccount = activeSession ? accounts.find((account) => account.id === activeSession.accountId) : undefined;
+  const activeAccount = activeSession
+    ? accounts.find((account) => account.id === activeSession.accountId)
+    : undefined;
   const orderedAccounts = sortByLatestActivity(accounts);
 
   const providerGroups = useMemo<ProviderGroup[]>(() => {
     if (!accounts.length) return [];
     return [
       {
-        id: "codex",
-        title: "Codex",
-        meta: "CLI",
+        id: 'codex',
+        title: 'Codex',
+        meta: 'CLI',
         accounts: orderedAccounts,
       },
     ];
@@ -752,7 +824,7 @@ export function TrayQuotaPanel() {
   /* eslint-disable react-hooks/set-state-in-effect -- derived state fallback */
   useEffect(() => {
     if (!providerGroups.some((group) => group.id === activeProviderId)) {
-      setActiveProviderId(providerGroups[0]?.id ?? "codex");
+      setActiveProviderId(providerGroups[0]?.id ?? 'codex');
     }
   }, [activeProviderId, providerGroups]);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -768,8 +840,8 @@ export function TrayQuotaPanel() {
     const observer = new ResizeObserver(sync);
     observer.observe(panel);
 
-    const unlistenRefresh = listen("quota-popover-refresh", sync);
-    const unlistenShow = getCurrentWebviewWindow().listen("tauri://focus", sync);
+    const unlistenRefresh = listen('quota-popover-refresh', sync);
+    const unlistenShow = getCurrentWebviewWindow().listen('tauri://focus', sync);
 
     return () => {
       observer.disconnect();
@@ -806,14 +878,13 @@ export function TrayQuotaPanel() {
         quotas={quotas}
         activeSession={activeSession}
         relayingAccountId={relayingAccountId}
+        refreshingQuotaIds={refreshingQuotaIds}
+        onRefreshAccount={(account) => void refreshAccountQuota(account)}
         onRelayTo={(account) => void relayTo(account)}
-        isDark={resolvedTheme === "dark"}
+        isDark={resolvedTheme === 'dark'}
       />
 
-      <TrayPopoverFooter
-        onClose={() => void closePopover()}
-        onOpen={() => void openMain()}
-      />
+      <TrayPopoverFooter onClose={() => void closePopover()} onOpen={() => void openMain()} />
     </div>
   );
 }

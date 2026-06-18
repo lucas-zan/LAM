@@ -158,6 +158,7 @@ export function App() {
   useEffect(() => {
     if (modal !== 'handoff' || !handoffSourceId) return;
     let active = true;
+    setHandoffLoading(true);
     api
       .listSessions(handoffSourceId)
       .then((items) => {
@@ -183,6 +184,8 @@ export function App() {
 
   function changeHandoffSource(newSourceId: string) {
     setHandoffSourceId(newSourceId);
+    setHandoffSessionId('');
+    setHandoffSessions([]);
     setHandoffLoading(true);
     if (newSourceId === handoffTargetId) {
       const other = accounts.find((a) => a.id !== newSourceId)?.id ?? '';
@@ -192,17 +195,16 @@ export function App() {
 
   // Modal helpers
   function openHandoffModal(opts?: { session?: CodexSession; targetAccountId?: string }) {
-    const source =
-      opts?.session?.accountId ??
-      activeSession?.accountId ??
-      selectedAccount?.id ??
-      accounts[0]?.id ??
-      '';
+    const requestedTarget = opts?.targetAccountId;
+    let source = opts?.session?.accountId ?? selectedAccount?.id ?? accounts[0]?.id ?? '';
+    if (requestedTarget && requestedTarget === source) {
+      source = accounts.find((a) => a.id !== requestedTarget)?.id ?? source;
+    }
     const target =
-      opts?.targetAccountId ?? accounts.find((a) => a.id !== source)?.id ?? accounts[0]?.id ?? '';
+      requestedTarget ?? accounts.find((a) => a.id !== source)?.id ?? accounts[0]?.id ?? '';
     setHandoffSourceId(source);
     setHandoffTargetId(target);
-    setHandoffSessionId(opts?.session?.id ?? activeSession?.id ?? '');
+    setHandoffSessionId(opts?.session?.id ?? '');
     setHandoffSessions(opts?.session ? [opts.session] : []);
     setHandoffLoading(true);
     openModal('handoff');
@@ -611,6 +613,7 @@ export function App() {
                   !handoffSessionId ||
                   !handoffSourceId ||
                   !handoffTargetId ||
+                  handoffLoading ||
                   handoffSourceId === handoffTargetId
                 }
                 onClick={async () => {
