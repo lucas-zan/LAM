@@ -23,7 +23,7 @@
 }
 
 :root {
-  --bg: #eef0f4;
+  --bg: radial-gradient(circle at center, #ffffff 0%, #eef0f4 100%);
   --surface: #ffffff;
   --surface2: #f5f6f8;
   --line: rgba(15, 23, 42, 0.1);
@@ -50,7 +50,7 @@
 }
 
 :root[data-theme='dark'] {
-  --bg: #0b0d12;
+  --bg: radial-gradient(circle at center, #161a24 0%, #0b0d12 100%);
   --surface: #141820;
   --surface2: #1a2030;
   --line: rgba(255, 255, 255, 0.1);
@@ -302,7 +302,7 @@ p {
 }
 
 .content {
-  padding: 20px 24px 112px;
+  padding: 20px 24px 120px;
   overflow: auto;
   min-height: 0;
 }
@@ -2119,3 +2119,91 @@ pre {
     gap: 4px;
   }
 }
+
+
+
+/* Segmented Tabs for Overview Agent Switcher */
+.overviewTabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--tab-bg, rgba(0, 0, 0, 0.05));
+  border: 1px solid var(--tab-border, rgba(0, 0, 0, 0.08));
+  width: fit-content;
+  margin-top: 16px;
+  margin-bottom: 12px;
+}
+.overviewTab {
+  min-height: 32px;
+  border: 0;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  cursor: pointer;
+  color: var(--tab-text, var(--muted));
+  font-size: 13px;
+  font-weight: 600;
+  background: transparent;
+  transition: all 0.25s ease;
+}
+.overviewTab.active {
+  background: var(--tab-active-bg, var(--surface));
+  color: var(--tab-active-text, var(--text));
+  box-shadow:
+    inset 0 0 0 1px rgba(128, 128, 128, 0.08),
+    0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+/* Splash Screen Animation Styles */
+.splash-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  background: var(--bg);
+}
+.splash-logo {
+  width: 130px;
+  height: 130px;
+  animation: splash-pulse 2.2s infinite ease-in-out;
+}
+.splash-text {
+  margin-top: 24px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  animation: splash-fade 1.6s infinite ease-in-out;
+}
+
+@keyframes splash-pulse {
+  0% {
+    transform: scale(0.95);
+    filter: drop-shadow(0 0 10px rgba(142, 200, 255, 0.2));
+  }
+  50% {
+    transform: scale(1.04);
+    filter: drop-shadow(0 0 25px rgba(201, 168, 255, 0.45));
+  }
+  100% {
+    transform: scale(0.95);
+    filter: drop-shadow(0 0 10px rgba(142, 200, 255, 0.2));
+  }
+}
+
+@keyframes splash-fade {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.95; }
+}
+

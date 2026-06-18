@@ -8,6 +8,7 @@ pub mod relay;
 pub mod runtime;
 pub mod session;
 pub mod sync;
+pub mod antigravity;
 
 pub use account::*;
 pub use error::*;
@@ -17,3 +18,5 @@ pub use relay::*;
 pub use runtime::*;
 pub use session::*;
 pub use sync::*;
+pub use antigravity::*;
+

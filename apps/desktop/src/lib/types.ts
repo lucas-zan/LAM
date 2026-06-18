@@ -225,3 +225,16 @@ export type AttachProviderResult = {
   operations: string[];
   warnings: string[];
 };
+
+export type AntigravityModelQuota = {
+  label: string;
+  remainingFraction?: number | null;
+  resetTime?: string | null;
+};
+
+export type AntigravityQuotaResponse = {
+  ok: boolean;
+  models: AntigravityModelQuota[];
+  error?: string | null;
+};
+

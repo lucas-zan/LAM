@@ -21,6 +21,7 @@ vi.mock('./lib/api', () => ({
   syncTrayQuota: vi.fn(),
   relayResumeSession: vi.fn(),
   openTerminalWithCommand: vi.fn(),
+  getAntigravityQuota: vi.fn(() => Promise.resolve({ ok: true, models: [] })),
 }));
 
 function deferred<T>() {

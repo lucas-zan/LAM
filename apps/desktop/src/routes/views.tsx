@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { countAccountsWithAvailableQuota, countAccountsWithQuotaData } from '../lib/quota';
 import type {
   CodexAccount,
@@ -6,6 +7,7 @@ import type {
   HealthCheck,
   ProviderProfile,
   UsageQuotaSnapshot,
+  AntigravityQuotaResponse,
 } from '../lib/types';
 import { QuotaWindow } from '../components/quota-window';
 import {
@@ -21,6 +23,102 @@ import {
 } from '../components/icons';
 import { UIButton } from '../components/ui-button';
 
+export function AntigravityModels({
+  quota,
+  refreshing,
+  onRefresh,
+}: {
+  quota: AntigravityQuotaResponse | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  if (!quota) {
+    return <div className="emptyBox">Loading Antigravity status...</div>;
+  }
+
+  if (!quota.ok) {
+    return (
+      <div className="panel pagePanel" style={{ padding: '40px 24px', textAlign: 'center' }}>
+        <div style={{ fontSize: '48px', marginBottom: '16px' }}>🔌</div>
+        <h3 style={{ fontSize: '18px', margin: '0 0 8px 0', fontWeight: 600 }}>Antigravity Offline</h3>
+        <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)' }}>
+          {quota.error || 'Server is not running'}
+        </p>
+        <UIButton
+          variant="primary"
+          size="sm"
+          style={{ marginTop: '16px' }}
+          onClick={onRefresh}
+          disabled={refreshing}
+        >
+          Retry Connection
+        </UIButton>
+      </div>
+    );
+  }
+
+  if (quota.models.length === 0) {
+    return <div className="emptyBox">No Antigravity models found.</div>;
+  }
+
+  return (
+    <section className="overviewAccountsPanel">
+      <div className="panelHead">
+        <h3 className="sectionTitle">Antigravity</h3>
+      </div>
+      <div className="cardGrid accountCardGrid">
+        {quota.models.map((model) => {
+          const remainingFraction = model.remainingFraction ?? null;
+          const remainingPercent = remainingFraction !== null ? Math.round(remainingFraction * 100) : null;
+          const isDepleted = remainingPercent === 0;
+
+          // For the progress bar/quota window, we map usedPercent = 100 - remainingPercent
+          const usedPercent = remainingPercent !== null ? 100 - remainingPercent : null;
+
+          return (
+            <article className="card accountCard" key={model.label}>
+              <div className="cardHead">
+                <div className="cardTitleRow">
+                  <span
+                    className="trayAccountStatusDot"
+                    style={{
+                      display: 'inline-block',
+                      width: '8px',
+                      height: '8px',
+                      borderRadius: '50%',
+                      marginRight: '8px',
+                      backgroundColor: isDepleted ? '#ef4444' : '#22c55e',
+                      boxShadow: isDepleted ? '0 0 4px rgba(239, 68, 68, 0.5)' : '0 0 4px rgba(34, 197, 94, 0.5)',
+                    }}
+                  />
+                  <h3>{model.label}</h3>
+                  {isDepleted && (
+                    <span style={{ fontSize: '12px', marginLeft: '6px' }} title="Quota depleted" role="img" aria-label="warning">⚠️</span>
+                  )}
+                </div>
+              </div>
+              <p className="cardPath mono">
+                Local language server model
+              </p>
+              <p className="cardMeta">
+                Connect API model
+              </p>
+              <div className="accountQuota">
+                <QuotaWindow
+                  label="Remaining Quota"
+                  usedPercent={usedPercent}
+                  resetAt={model.resetTime}
+                  variant="session"
+                />
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export function Overview({
   accounts,
   quotas,
@@ -34,6 +132,9 @@ export function Overview({
   currentSession,
   refreshAccountQuota,
   refreshingQuotaIds,
+  antigravityQuota,
+  refreshingAntigravity,
+  onRefreshAntigravity,
 }: {
   accounts: CodexAccount[];
   quotas: UsageQuotaSnapshot[];
@@ -47,36 +148,86 @@ export function Overview({
   currentSession?: CodexSession;
   refreshAccountQuota: (profileId: string) => void;
   refreshingQuotaIds: string[];
+  antigravityQuota: AntigravityQuotaResponse | null;
+  refreshingAntigravity: boolean;
+  onRefreshAntigravity: () => void;
 }) {
-  const accountsWithQuotaData = countAccountsWithQuotaData(accounts, quotas);
-  const availableQuotaAccounts = countAccountsWithAvailableQuota(accounts, quotas);
-  const sessionTotal = accounts.reduce((sum, account) => sum + account.sessionCount, 0);
+  const [activeTab, setActiveTab] = useState<'codex' | 'antigravity'>('codex');
+
+  const isAntigravity = activeTab === 'antigravity';
+
+  const accountsWithQuotaData = isAntigravity
+    ? (antigravityQuota?.models.filter((m) => (m.remainingFraction ?? 0) > 0).length ?? 0)
+    : countAccountsWithQuotaData(accounts, quotas);
+
+  const availableQuotaAccounts = isAntigravity
+    ? (antigravityQuota?.models.filter((m) => (m.remainingFraction ?? 0) > 0).length ?? 0)
+    : countAccountsWithAvailableQuota(accounts, quotas);
+
+  const sessionTotal = isAntigravity
+    ? 0
+    : accounts.reduce((sum, account) => sum + account.sessionCount, 0);
+
+  const totalCount = isAntigravity
+    ? (antigravityQuota?.models.length ?? 0)
+    : accounts.length;
+
+  const providersCount = isAntigravity
+    ? 1
+    : providers.length;
+
   return (
     <div className="overviewPage">
       <div className="metricGrid">
         <Metric
           icon="accounts"
-          label="Accounts"
-          value={`${accountsWithQuotaData}/${accounts.length || 0}`}
+          label={isAntigravity ? 'Models' : 'Accounts'}
+          value={`${accountsWithQuotaData}/${totalCount}`}
         />
-        <Metric icon="sessions" label="Sessions" value={sessionTotal} />
-        <Metric icon="providers" label="Providers" value={providers.length} />
-        <Metric icon="quota" label="Quota usable" value={availableQuotaAccounts} />
+        <Metric icon="sessions" label="Sessions" value={isAntigravity ? 'N/A' : sessionTotal} />
+        <Metric icon="providers" label="Providers" value={providersCount} />
+        <Metric icon="quota" label={isAntigravity ? 'Models usable' : 'Quota usable'} value={availableQuotaAccounts} />
       </div>
-      <Accounts
-        accounts={accounts}
-        quotas={quotas}
-        select={select}
-        openSync={openSync}
-        rename={rename}
-        login={login}
-        openHandoff={openHandoff}
-        relayLatest={relayLatest}
-        currentSession={currentSession}
-        refreshAccountQuota={refreshAccountQuota}
-        refreshingQuotaIds={refreshingQuotaIds}
-        variant="overview"
-      />
+
+      <div className="overviewTabs">
+        <button
+          type="button"
+          className={`overviewTab ${activeTab === 'codex' ? 'active' : ''}`}
+          onClick={() => setActiveTab('codex')}
+        >
+          Codex
+        </button>
+        <button
+          type="button"
+          className={`overviewTab ${activeTab === 'antigravity' ? 'active' : ''}`}
+          onClick={() => setActiveTab('antigravity')}
+        >
+          Antigravity
+        </button>
+      </div>
+
+      {activeTab === 'codex' ? (
+        <Accounts
+          accounts={accounts}
+          quotas={quotas}
+          select={select}
+          openSync={openSync}
+          rename={rename}
+          login={login}
+          openHandoff={openHandoff}
+          relayLatest={relayLatest}
+          currentSession={currentSession}
+          refreshAccountQuota={refreshAccountQuota}
+          refreshingQuotaIds={refreshingQuotaIds}
+          variant="overview"
+        />
+      ) : (
+        <AntigravityModels
+          quota={antigravityQuota}
+          refreshing={refreshingAntigravity}
+          onRefresh={onRefreshAntigravity}
+        />
+      )}
     </div>
   );
 }

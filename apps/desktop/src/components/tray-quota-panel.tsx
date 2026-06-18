@@ -15,6 +15,7 @@ import {
   getProfileQuota,
   inTauri,
   setQuotaPopoverOpacity,
+  getAntigravityQuota,
 } from '../lib/api';
 import {
   averagePrimaryRemainingPercent,
@@ -32,6 +33,7 @@ import type {
   CodexSession,
   DivergedSessionStrategy,
   UsageQuotaSnapshot,
+  AntigravityQuotaResponse,
 } from '../lib/types';
 import {
   IconClock,
@@ -248,6 +250,7 @@ interface TrayPopoverHeaderProps {
   activeSessionId?: string;
   resolvedTheme: 'light' | 'dark';
   onToggleTheme: () => void;
+  activeProviderId?: string;
 }
 
 function TrayPopoverHeader({
@@ -263,12 +266,15 @@ function TrayPopoverHeader({
   activeSessionId,
   resolvedTheme,
   onToggleTheme,
+  activeProviderId,
 }: TrayPopoverHeaderProps) {
   const handleCopy = () => {
     if (activeSessionId) {
       void navigator.clipboard.writeText(activeSessionId);
     }
   };
+
+  const isAntigravity = activeProviderId === 'antigravity';
 
   return (
     <section className="trayPopoverFixedHead" aria-label="Quota header">
@@ -326,13 +332,13 @@ function TrayPopoverHeader({
 
       <section className="trayStats" aria-label="Quota summary">
         <div>
-          <span>Accounts</span>
+          <span>{isAntigravity ? 'Models' : 'Accounts'}</span>
           <strong>
             {accountsWithQuotaData}/{totalAccounts}
           </strong>
         </div>
         <div>
-          <span>5h avg</span>
+          <span>{isAntigravity ? 'Avg Quota' : '5h avg'}</span>
           <strong>{avg5hRemaining === null ? 'N/A' : `${avg5hRemaining}%`}</strong>
         </div>
         <div>
@@ -408,6 +414,151 @@ function TrayPopoverFooter({ onClose, onOpen }: TrayPopoverFooterProps) {
   );
 }
 
+function formatRelativeTime(resetTimeStr: string | null | undefined): string {
+  if (!resetTimeStr) return 'unknown';
+  const date = new Date(resetTimeStr);
+  if (Number.isNaN(date.getTime())) return 'unknown';
+  const diffMs = date.getTime() - Date.now();
+  if (diffMs <= 0) return 'now';
+
+  const diffSecs = Math.floor(diffMs / 1000);
+  const hours = Math.floor(diffSecs / 3600);
+  const minutes = Math.floor((diffSecs % 3600) / 60);
+  const seconds = diffSecs % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
+interface TrayAntigravityModelListProps {
+  quota: AntigravityQuotaResponse | null;
+  isDark: boolean;
+}
+
+function TrayAntigravityModelList({
+  quota,
+  isDark,
+}: TrayAntigravityModelListProps) {
+  const [_, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTick((t) => t + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  if (!quota) {
+    return (
+      <div className="trayProviderRows">
+        <p className="trayPopoverEmpty">Loading Antigravity status...</p>
+      </div>
+    );
+  }
+
+  if (!quota.ok) {
+    return (
+      <div className="trayProviderRows">
+        <div className="trayPopoverEmpty" style={{ padding: '24px 16px', textAlign: 'center' }}>
+          <div style={{ fontSize: '24px', marginBottom: '8px' }}>🔌</div>
+          <p style={{ margin: 0, fontSize: '13px', fontWeight: 500, color: 'var(--text-muted)' }}>
+            Antigravity Offline
+          </p>
+          <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'var(--text-muted)', opacity: 0.8 }}>
+            {quota.error || 'Server is not running'}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (quota.models.length === 0) {
+    return (
+      <div className="trayProviderRows">
+        <p className="trayPopoverEmpty">No Antigravity models found.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="trayProviderRows">
+      {quota.models.map((model, index) => {
+        const remainingFraction = model.remainingFraction ?? null;
+        const remainingPercent = remainingFraction !== null ? Math.round(remainingFraction * 100) : null;
+        const isDepleted = remainingPercent === 0;
+
+        const modelTheme = getAccountTheme(model.label, index, isDark);
+        const stateTheme = getQuotaStateTheme(remainingPercent, isDark);
+
+        const cardStyle = {
+          borderColor: modelTheme.color + '22',
+        } as CSSProperties;
+
+        return (
+          <div className="trayAccountRow" key={model.label} style={cardStyle}>
+            <div className="trayAccountRowTop">
+              <div className="trayAccountMain">
+                <span
+                  className="trayAccountStatusDot"
+                  style={{
+                    backgroundColor: isDepleted ? '#ef4444' : '#22c55e',
+                    boxShadow: isDepleted ? '0 0 4px rgba(239, 68, 68, 0.5)' : '0 0 4px rgba(34, 197, 94, 0.5)',
+                  }}
+                />
+                <div className="trayAccountNameWrap" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <strong title={model.label}>{model.label}</strong>
+                  {isDepleted && (
+                    <span style={{ fontSize: '12px' }} title="Quota depleted" role="img" aria-label="warning">⚠️</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="trayAccountRowContent">
+              <div className="trayAccountRowContentLeft">
+                <div className="trayAccountRowContentLeftText">
+                  <strong>Quota</strong>
+                  <span>remaining</span>
+                </div>
+                <CircularProgressRing
+                  percent={remainingPercent}
+                  themeColor={stateTheme.color}
+                  themeGlow={stateTheme.glow}
+                />
+              </div>
+
+              <div className="trayAccountRowContentRight">
+                <div className="trayAccountRowContentRightLabel">
+                  <strong style={{ color: stateTheme.color }}>
+                    {remainingPercent === null ? 'N/A' : `${remainingPercent}%`}
+                  </strong>
+                  <span>limit</span>
+                </div>
+                <div className="trayQuotaTrack">
+                  <i
+                    style={{
+                      width: `${remainingPercent ?? 0}%`,
+                      background: stateTheme.color,
+                      boxShadow: `0 0 4px ${stateTheme.glow}`,
+                    }}
+                  />
+                </div>
+                <span className="trayResetSub" style={{ textAlign: 'right' }}>
+                  {model.resetTime ? `Resets in ${formatRelativeTime(model.resetTime)}` : 'No reset scheduled'}
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 interface TrayAccountListProps {
   providerGroups: ProviderGroup[];
   activeProviderId: string;
@@ -419,6 +570,7 @@ interface TrayAccountListProps {
   onRefreshAccount: (account: CodexAccount) => void;
   onRelayTo: (account: CodexAccount) => void;
   isDark: boolean;
+  antigravityQuota: AntigravityQuotaResponse | null;
 }
 
 function TrayAccountList({
@@ -432,6 +584,7 @@ function TrayAccountList({
   onRefreshAccount,
   onRelayTo,
   isDark,
+  antigravityQuota,
 }: TrayAccountListProps) {
   const activeGroup =
     providerGroups.find((group) => group.id === activeProviderId) ?? providerGroups[0];
@@ -440,7 +593,7 @@ function TrayAccountList({
   if (!activeGroup) {
     return (
       <section className="trayAccountList" aria-label="Accounts">
-        <p className="trayPopoverEmpty">No Codex profiles found.</p>
+        <p className="trayPopoverEmpty">No profiles found.</p>
       </section>
     );
   }
@@ -461,7 +614,8 @@ function TrayAccountList({
               onClick={() => setActiveProviderId(group.id)}
             >
               {group.title}
-              <em>{group.accounts.length}</em>
+              {group.id === 'codex' && <em>{group.accounts.length}</em>}
+              {group.id === 'antigravity' && antigravityQuota?.ok && <em>{antigravityQuota.models.length}</em>}
             </button>
           ))}
         </div>
@@ -479,7 +633,17 @@ function TrayAccountList({
           </div>
         ) : null}
 
-        <div className="trayProviderRows">
+        {activeGroup.id === 'antigravity' ? (
+          <TrayAntigravityModelList
+            quota={antigravityQuota}
+            isDark={isDark}
+          />
+        ) : activeGroup.accounts.length === 0 ? (
+          <div className="trayProviderRows">
+            <p className="trayPopoverEmpty">No Codex profiles found.</p>
+          </div>
+        ) : (
+          <div className="trayProviderRows">
           {activeGroup.accounts.map((account, index) => {
             const quota = quotas.find((q) => q.profileId === account.id);
             const title = account.displayName.trim() || account.id;
@@ -578,6 +742,7 @@ function TrayAccountList({
             );
           })}
         </div>
+        )}
       </div>
     </section>
   );
@@ -592,6 +757,8 @@ export function TrayQuotaPanel() {
   const [refreshingQuotaIds, setRefreshingQuotaIds] = useState<string[]>([]);
   const [relayingAccountId, setRelayingAccountId] = useState<string>('');
   const [activeProviderId, setActiveProviderId] = useState('codex');
+  const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
+  const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>(() => readResolvedTheme());
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -647,6 +814,21 @@ export function TrayQuotaPanel() {
       result.status === 'fulfilled' ? result.value : [],
     );
     setActiveSession(allSessions.sort((a, b) => b.modifiedAt - a.modifiedAt)[0]);
+  }, []);
+
+  const loadAntigravity = useCallback(async (forceRefresh = false) => {
+    if (!inTauri()) return;
+    if (forceRefresh) {
+      setRefreshingAntigravity(true);
+    }
+    try {
+      const res = await getAntigravityQuota();
+      setAntigravityQuota(res);
+    } catch (err) {
+      console.error('Failed to load Antigravity quota:', err);
+    } finally {
+      setRefreshingAntigravity(false);
+    }
   }, []);
 
   const load = useCallback(
@@ -719,20 +901,36 @@ export function TrayQuotaPanel() {
     [loadActiveSession],
   );
 
+  const handleRefreshAll = useCallback(async () => {
+    setRefreshing(true);
+    setStatus('Refreshing…');
+    try {
+      await Promise.all([
+        load(true),
+        loadAntigravity(true),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [load, loadAntigravity]);
+
   /* eslint-disable react-hooks/set-state-in-effect -- async data fetch on mount + interval */
   useEffect(() => {
     void load(false);
+    void loadAntigravity(false);
     const timer = window.setInterval(() => {
       void load(true);
+      void loadAntigravity(true);
     }, 2 * 60_000);
     const unlisten = listen('quota-popover-refresh', () => {
       void load(false);
+      void loadAntigravity(false);
     });
     return () => {
       window.clearInterval(timer);
       void unlisten.then((fn) => fn());
     };
-  }, [load]);
+  }, [load, loadAntigravity]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   async function closePopover() {
@@ -798,16 +996,26 @@ export function TrayQuotaPanel() {
     }
   }
 
+  const isAntigravityActive = activeProviderId === 'antigravity';
+
   const accountsWithQuotaData = countAccountsWithQuotaData(accounts, quotas);
   const availableQuotaAccounts = countAccountsWithAvailableQuota(accounts, quotas);
   const avg5hRemaining = averagePrimaryRemainingPercent(quotas);
+
+  const antigravityModelsCount = antigravityQuota?.models.length ?? 0;
+  const antigravityUsableCount = antigravityQuota?.models.filter(m => (m.remainingFraction ?? 0) > 0).length ?? 0;
+  const antigravityAvgRemaining = useMemo(() => {
+    if (!antigravityQuota?.models.length) return null;
+    const total = antigravityQuota.models.reduce((sum, m) => sum + (m.remainingFraction ?? 0), 0);
+    return Math.round((total / antigravityQuota.models.length) * 100);
+  }, [antigravityQuota]);
+
   const activeAccount = activeSession
     ? accounts.find((account) => account.id === activeSession.accountId)
     : undefined;
   const orderedAccounts = sortByLatestActivity(accounts);
 
   const providerGroups = useMemo<ProviderGroup[]>(() => {
-    if (!accounts.length) return [];
     return [
       {
         id: 'codex',
@@ -815,8 +1023,14 @@ export function TrayQuotaPanel() {
         meta: 'CLI',
         accounts: orderedAccounts,
       },
+      {
+        id: 'antigravity',
+        title: 'Antigravity',
+        meta: 'IDE',
+        accounts: [],
+      },
     ];
-  }, [accounts.length, orderedAccounts]);
+  }, [orderedAccounts]);
 
   const activeGroup =
     providerGroups.find((group) => group.id === activeProviderId) ?? providerGroups[0];
@@ -852,23 +1066,24 @@ export function TrayQuotaPanel() {
 
   useEffect(() => {
     scheduleTrayPopoverWindowSize(panelRef.current);
-  }, [accounts.length, quotas.length, activeGroup?.accounts.length]);
+  }, [accounts.length, quotas.length, activeGroup?.accounts.length, antigravityQuota?.models.length]);
 
   return (
     <div ref={panelRef} className="trayPopoverPanel" data-theme={resolvedTheme}>
       <TrayPopoverHeader
         status={status}
-        refreshing={refreshing}
-        onRefresh={() => void load(true)}
+        refreshing={refreshing || refreshingAntigravity}
+        onRefresh={() => void handleRefreshAll()}
         onClose={() => void closePopover()}
-        accountsWithQuotaData={accountsWithQuotaData}
-        totalAccounts={accounts.length || 0}
-        avg5hRemaining={avg5hRemaining}
-        availableQuotaAccounts={availableQuotaAccounts}
+        accountsWithQuotaData={isAntigravityActive ? antigravityUsableCount : accountsWithQuotaData}
+        totalAccounts={isAntigravityActive ? antigravityModelsCount : (accounts.length || 0)}
+        avg5hRemaining={isAntigravityActive ? antigravityAvgRemaining : avg5hRemaining}
+        availableQuotaAccounts={isAntigravityActive ? antigravityUsableCount : availableQuotaAccounts}
         activeAccountDisplayName={activeAccount?.displayName ?? activeSession?.accountId}
         activeSessionId={activeSession?.id}
         resolvedTheme={resolvedTheme}
         onToggleTheme={handleToggleTheme}
+        activeProviderId={activeProviderId}
       />
 
       <TrayAccountList
@@ -882,6 +1097,7 @@ export function TrayQuotaPanel() {
         onRefreshAccount={(account) => void refreshAccountQuota(account)}
         onRelayTo={(account) => void relayTo(account)}
         isDark={resolvedTheme === 'dark'}
+        antigravityQuota={antigravityQuota}
       />
 
       <TrayPopoverFooter onClose={() => void closePopover()} onOpen={() => void openMain()} />

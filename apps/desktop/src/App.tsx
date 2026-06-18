@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppStore } from './stores/app';
 import { useAccountStore } from './stores/accounts';
 import { useSessionStore } from './stores/sessions';
@@ -21,6 +21,7 @@ import type {
   SyncPlan,
   SyncRequest,
   SyncResult,
+  AntigravityQuotaResponse,
 } from './lib/types';
 import * as Views from './routes/views';
 
@@ -108,6 +109,8 @@ export function App() {
   const [handoffSessionId, setHandoffSessionId] = useState('');
   const [handoffSessions, setHandoffSessions] = useState<CodexSession[]>([]);
   const [handoffLoading, setHandoffLoading] = useState(false);
+  const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
+  const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
 
   const resolvedTheme = useMemo(() => {
     if (themeMode === 'system')
@@ -143,6 +146,39 @@ export function App() {
     return stopAutoRefresh;
   }, [accounts]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const loadAntigravity = useCallback(async (forceRefresh = false) => {
+    if (!api.inTauri()) return;
+    if (forceRefresh) {
+      setRefreshingAntigravity(true);
+    }
+    try {
+      const res = await api.getAntigravityQuota();
+      setAntigravityQuota(res);
+    } catch (err) {
+      console.error('Failed to load Antigravity quota:', err);
+    } finally {
+      setRefreshingAntigravity(false);
+    }
+  }, []);
+
+  const handleRefreshAll = useCallback(async () => {
+    await Promise.all([
+      refresh({ refreshQuotasNow: true }),
+      loadAntigravity(true)
+    ]);
+  }, [refresh, loadAntigravity]);
+
+  // Antigravity auto-refresh
+  /* eslint-disable react-hooks/set-state-in-effect -- async data fetch on mount + interval */
+  useEffect(() => {
+    void loadAntigravity(false);
+    const timer = window.setInterval(() => {
+      void loadAntigravity(true);
+    }, 2 * 60_000);
+    return () => window.clearInterval(timer);
+  }, [loadAntigravity]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   const footerStatus = useMemo(() => {
     if (!status) return api.inTauri() ? 'Ready' : 'Preview';
     if (status.startsWith('Refreshed')) {
@@ -158,6 +194,7 @@ export function App() {
   useEffect(() => {
     if (modal !== 'handoff' || !handoffSourceId) return;
     let active = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHandoffLoading(true);
     api
       .listSessions(handoffSourceId)
@@ -254,6 +291,56 @@ export function App() {
     await useSessionStore.getState().loadSessions(result.profileId);
   }
 
+  if (!appReady) {
+    return (
+      <div className="splash-container">
+        <svg xmlns="http://www.w3.org/2000/svg" className="splash-logo" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="surface" x1="150" y1="80" x2="870" y2="930" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stopColor="#ffffff"/>
+              <stop offset="1" stopColor="#f6f8ff"/>
+            </linearGradient>
+            <radialGradient id="core" cx="50%" cy="47%" r="34%">
+              <stop offset="0" stopColor="#ffffff"/>
+              <stop offset="0.42" stopColor="#efe7ff"/>
+              <stop offset="0.72" stopColor="#dff7ff"/>
+              <stop offset="1" stopColor="#ffffff"/>
+            </radialGradient>
+          </defs>
+          <g transform="translate(102.4 102.4) scale(0.8)">
+            <rect x="0" y="0" width="1024" height="1024" rx="176" fill="url(#surface)" stroke="#dfe5f2" strokeWidth="10"/>
+            <g fill="none" strokeLinecap="round">
+              <ellipse cx="512" cy="512" rx="360" ry="238" stroke="#8ec8ff" strokeWidth="5" opacity="0.56"/>
+              <ellipse cx="512" cy="512" rx="324" ry="286" stroke="#c9a8ff" strokeWidth="5" opacity="0.46" transform="rotate(-24 512 512)"/>
+              <ellipse cx="512" cy="512" rx="298" ry="210" stroke="#8ee9e0" strokeWidth="4" opacity="0.45" transform="rotate(58 512 512)"/>
+            </g>
+            <circle cx="512" cy="512" r="118" fill="url(#core)" stroke="#e8e6ff" strokeWidth="10"/>
+            <text x="512" y="608" textAnchor="middle" fontFamily="Georgia, 'Times New Roman', serif" fontSize="360" fontWeight="700" fill="#111c55">Lam</text>
+            <g fill="#ffffff" stroke="#e6eaff" strokeWidth="4">
+              <circle cx="512" cy="174" r="60"/>
+              <circle cx="204" cy="386" r="58"/>
+              <circle cx="826" cy="386" r="58"/>
+              <circle cx="300" cy="752" r="56"/>
+              <circle cx="730" cy="752" r="56"/>
+            </g>
+            <g fill="#26358c">
+              <path d="M482 138 512 121l30 17v34l-30 18-30-18v-34Zm17 11v22l13 8 13-8v-22l-13-8-13 8Z"/>
+              <path d="M174 369h55v18h-55v-18Zm24-23 38 38-38 38-13-13 25-25-25-25 13-13Z"/>
+            </g>
+            <text x="826" y="406" textAnchor="middle" fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" fontSize="72" fontWeight="700" fill="#ef4d65">AI</text>
+            <circle cx="300" cy="752" r="42" fill="#111827"/>
+            <path d="M300 717 334 737 300 757 266 737 300 717Zm-34 45 34 20 34-20v24l-34 20-34-20v-24Z" fill="#dce4ef"/>
+            <path d="M696 788c34-108 86-108 120 0h-34c-22-58-38-58-60 0h-26Z" fill="#2f73ff"/>
+            <circle cx="326" cy="228" r="14" fill="#90caff" stroke="#d8f0ff" strokeWidth="6"/>
+            <circle cx="706" cy="228" r="14" fill="#d690ff" stroke="#f3ddff" strokeWidth="6"/>
+            <circle cx="576" cy="724" r="14" fill="#74ece0" stroke="#dffffb" strokeWidth="6"/>
+          </g>
+        </svg>
+        <div className="splash-text">Loading LAM...</div>
+      </div>
+    );
+  }
+
   return (
     <main className="app-shell">
       <header className="titlebar">
@@ -270,10 +357,10 @@ export function App() {
           <div className="toolbar">
             <UIButton
               size="sm"
-              className={`toolbarBtn refreshToolbarBtn ${refreshingAccounts ? 'isRefreshing' : ''}`}
-              onClick={() => void refresh({ refreshQuotasNow: true })}
-              disabled={refreshingAccounts}
-              aria-label={refreshingAccounts ? 'Refreshing app data' : 'Refresh app data'}
+              className={`toolbarBtn refreshToolbarBtn ${refreshingAccounts || refreshingAntigravity ? 'isRefreshing' : ''}`}
+              onClick={() => void handleRefreshAll()}
+              disabled={refreshingAccounts || refreshingAntigravity}
+              aria-label={refreshingAccounts || refreshingAntigravity ? 'Refreshing app data' : 'Refresh app data'}
             >
               <IconRefresh size={14} /> Refresh
             </UIButton>
@@ -290,12 +377,6 @@ export function App() {
 
       <section className="content">
         {error ? <div className="notice danger">{error}</div> : null}
-        {!appReady ? (
-          <div className="bootState" role="status" aria-live="polite">
-            <span className="bootSpinner" aria-hidden />
-            <span>Loading accounts…</span>
-          </div>
-        ) : null}
         {appReady && route === 'overview' ? (
           <Views.Overview
             accounts={accounts}
@@ -310,6 +391,9 @@ export function App() {
             currentSession={activeSession}
             refreshAccountQuota={refreshAccountQuota}
             refreshingQuotaIds={refreshingQuotaIds}
+            antigravityQuota={antigravityQuota}
+            refreshingAntigravity={refreshingAntigravity}
+            onRefreshAntigravity={() => void loadAntigravity(true)}
           />
         ) : null}
         {appReady && route === 'sessions' ? (

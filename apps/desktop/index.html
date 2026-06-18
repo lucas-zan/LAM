@@ -12,12 +12,132 @@
           (theme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
         document.documentElement.dataset.theme = dark ? "dark" : "light";
         document.documentElement.style.colorScheme = dark ? "dark" : "light";
-        document.documentElement.style.background = dark ? "#0b0d12" : "#eef0f4";
+        var grad = dark
+          ? "radial-gradient(circle at center, #161a24 0%, #0b0d12 100%)"
+          : "radial-gradient(circle at center, #ffffff 0%, #eef0f4 100%)";
+        document.documentElement.style.background = grad;
       })();
     </script>
+    <style>
+      .splash-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        background: inherit;
+      }
+      .splash-logo {
+        width: 130px;
+        height: 130px;
+        animation: splash-pulse 2.2s infinite ease-in-out;
+      }
+      .splash-text {
+        margin-top: 24px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-color, #4b5563);
+        animation: splash-fade 1.6s infinite ease-in-out;
+      }
+      
+      /* Dark/Light mode tokens */
+      :root[data-theme="dark"] {
+        --bg-color: #0b0d12;
+        --bg-gradient: radial-gradient(circle at center, #161a24 0%, #0b0d12 100%);
+        --text-color: #8c9ba5;
+      }
+      :root[data-theme="light"] {
+        --bg-color: #eef0f4;
+        --bg-gradient: radial-gradient(circle at center, #ffffff 0%, #eef0f4 100%);
+        --text-color: #5a6b82;
+      }
+      
+      html, body {
+        background: var(--bg-gradient, var(--bg-color));
+        margin: 0;
+        padding: 0;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+      }
+      
+      @keyframes splash-pulse {
+        0% {
+          transform: scale(0.95);
+          filter: drop-shadow(0 0 10px rgba(142, 200, 255, 0.2));
+        }
+        50% {
+          transform: scale(1.04);
+          filter: drop-shadow(0 0 25px rgba(201, 168, 255, 0.45));
+        }
+        100% {
+          transform: scale(0.95);
+          filter: drop-shadow(0 0 10px rgba(142, 200, 255, 0.2));
+        }
+      }
+      
+      @keyframes splash-fade {
+        0%, 100% { opacity: 0.55; }
+        50% { opacity: 0.95; }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="splash-container">
+        <svg xmlns="http://www.w3.org/2000/svg" class="splash-logo" viewBox="0 0 1024 1024">
+          <defs>
+            <linearGradient id="surface" x1="150" y1="80" x2="870" y2="930" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#ffffff"/>
+              <stop offset="1" stop-color="#f6f8ff"/>
+            </linearGradient>
+            <radialGradient id="core" cx="50%" cy="47%" r="34%">
+              <stop offset="0" stop-color="#ffffff"/>
+              <stop offset="0.42" stop-color="#efe7ff"/>
+              <stop offset="0.72" stop-color="#dff7ff"/>
+              <stop offset="1" stop-color="#ffffff"/>
+            </radialGradient>
+          </defs>
+          <g transform="translate(102.4 102.4) scale(0.8)">
+            <rect x="0" y="0" width="1024" height="1024" rx="176" fill="url(#surface)" stroke="#dfe5f2" stroke-width="10"/>
+            <g fill="none" stroke-linecap="round">
+              <ellipse cx="512" cy="512" rx="360" ry="238" stroke="#8ec8ff" stroke-width="5" opacity="0.56"/>
+              <ellipse cx="512" cy="512" rx="324" ry="286" stroke="#c9a8ff" stroke-width="5" opacity="0.46" transform="rotate(-24 512 512)"/>
+              <ellipse cx="512" cy="512" rx="298" ry="210" stroke="#8ee9e0" stroke-width="4" opacity="0.45" transform="rotate(58 512 512)"/>
+            </g>
+            <circle cx="512" cy="512" r="118" fill="url(#core)" stroke="#e8e6ff" stroke-width="10"/>
+            <text x="512" y="608" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="360" font-weight="700" fill="#111c55">Lam</text>
+            <g fill="#ffffff" stroke="#e6eaff" stroke-width="4">
+              <circle cx="512" cy="174" r="60"/>
+              <circle cx="204" cy="386" r="58"/>
+              <circle cx="826" cy="386" r="58"/>
+              <circle cx="300" cy="752" r="56"/>
+              <circle cx="730" cy="752" r="56"/>
+            </g>
+            <g fill="#26358c">
+              <path d="M482 138 512 121l30 17v34l-30 18-30-18v-34Zm17 11v22l13 8 13-8v-22l-13-8-13 8Z"/>
+              <path d="M174 369h55v18h-55v-18Zm24-23 38 38-38 38-13-13 25-25-25-25 13-13Z"/>
+            </g>
+            <text x="826" y="406" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="72" font-weight="700" fill="#ef4d65">AI</text>
+            <circle cx="300" cy="752" r="42" fill="#111827"/>
+            <path d="M300 717 334 737 300 757 266 737 300 717Zm-34 45 34 20 34-20v24l-34 20-34-20v-24Z" fill="#dce4ef"/>
+            <path d="M696 788c34-108 86-108 120 0h-34c-22-58-38-58-60 0h-26Z" fill="#2f73ff"/>
+            <circle cx="326" cy="228" r="14" fill="#90caff" stroke="#d8f0ff" stroke-width="6"/>
+            <circle cx="706" cy="228" r="14" fill="#d690ff" stroke="#f3ddff" stroke-width="6"/>
+            <circle cx="576" cy="724" r="14" fill="#74ece0" stroke="#dffffb" stroke-width="6"/>
+          </g>
+        </svg>
+        <div class="splash-text">Loading LAM...</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -35,6 +35,7 @@ vi.mock('../lib/api', () => ({
   getProfileQuota: vi.fn(),
   inTauri: vi.fn(() => true),
   setQuotaPopoverOpacity: vi.fn(),
+  getAntigravityQuota: vi.fn(),
 }));
 
 const account = {
@@ -131,6 +132,7 @@ beforeEach(() => {
     },
   ]);
   vi.mocked(api.getProfileQuota).mockResolvedValue(freshQuota);
+  vi.mocked(api.getAntigravityQuota).mockResolvedValue({ ok: true, models: [] });
   vi.mocked(listen).mockResolvedValue(vi.fn());
 });
 

@@ -64,6 +64,7 @@ fn main() {
             commands::plan_attach_provider_to_profile,
             commands::attach_provider_to_profile,
             commands::execute_attach_provider_to_profile,
+            commands::get_antigravity_quota,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LAM");

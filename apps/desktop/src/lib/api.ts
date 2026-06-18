@@ -23,6 +23,7 @@ import type {
   SyncResult,
   UpdateProviderRequest,
   UsageQuotaSnapshot,
+  AntigravityQuotaResponse,
 } from "./types";
 
 export const inTauri = () => "__TAURI_INTERNALS__" in window;
@@ -161,3 +162,11 @@ export async function planAttachProviderToProfile(req: AttachProviderRequest): P
 export async function attachProviderToProfile(req: AttachProviderRequest): Promise<AttachProviderResult> {
   return invoke<AttachProviderResult>("attach_provider_to_profile", { req });
 }
+
+export async function getAntigravityQuota(): Promise<AntigravityQuotaResponse> {
+  if (!inTauri()) {
+    return { ok: false, models: [], error: "Not in Tauri environment" };
+  }
+  return invoke<AntigravityQuotaResponse>("get_antigravity_quota");
+}
+
