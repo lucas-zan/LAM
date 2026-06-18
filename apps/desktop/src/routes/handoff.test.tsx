@@ -59,6 +59,26 @@ const sessions: CodexSession[] = [
   },
 ];
 
+function overviewProps() {
+  return {
+    accounts,
+    quotas: [],
+    providers: [],
+    select: vi.fn(),
+    openSync: vi.fn(),
+    rename: vi.fn(),
+    login: vi.fn(),
+    openHandoff: vi.fn(),
+    relayLatest: vi.fn(),
+    currentSession: sessions[0],
+    refreshAccountQuota: vi.fn(),
+    refreshingQuotaIds: [],
+    antigravityQuota: null,
+    refreshingAntigravity: false,
+    onRefreshAntigravity: vi.fn(),
+  };
+}
+
 describe('handoff navigation and entry points', () => {
   it('does not expose Relay as a first-level route', () => {
     expect(routes.map((route) => route.id)).not.toContain('relay');
@@ -68,18 +88,7 @@ describe('handoff navigation and entry points', () => {
   it('keeps both explicit Handoff and latest-session Relay shortcuts on account cards', () => {
     render(
       <Overview
-        accounts={accounts}
-        quotas={[]}
-        providers={[]}
-        select={vi.fn()}
-        openSync={vi.fn()}
-        rename={vi.fn()}
-        login={vi.fn()}
-        openHandoff={vi.fn()}
-        relayLatest={vi.fn()}
-        currentSession={sessions[0]}
-        refreshAccountQuota={vi.fn()}
-        refreshingQuotaIds={[]}
+        {...overviewProps()}
       />,
     );
 
@@ -90,18 +99,7 @@ describe('handoff navigation and entry points', () => {
   it('uses one overview account action button size class', () => {
     render(
       <Overview
-        accounts={accounts}
-        quotas={[]}
-        providers={[]}
-        select={vi.fn()}
-        openSync={vi.fn()}
-        rename={vi.fn()}
-        login={vi.fn()}
-        openHandoff={vi.fn()}
-        relayLatest={vi.fn()}
-        currentSession={sessions[0]}
-        refreshAccountQuota={vi.fn()}
-        refreshingQuotaIds={[]}
+        {...overviewProps()}
       />,
     );
 
