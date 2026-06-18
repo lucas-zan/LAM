@@ -746,6 +746,8 @@ html[data-tray-popover='1'] #root {
   --tab-text: #64748b;
   --tab-active-bg: #ffffff;
   --tab-active-text: #0f172a;
+  --sticky-tab-bg: #fafbfc;
+  --sticky-tab-border: rgba(15, 23, 42, 0.06);
   --btn-icon-bg: rgba(15, 23, 42, 0.05);
   --btn-icon-text: #475569;
   --btn-icon-hover-bg: rgba(15, 23, 42, 0.1);
@@ -786,6 +788,8 @@ html[data-tray-popover='1'] #root {
   --tab-text: rgba(245, 245, 244, 0.62);
   --tab-active-bg: rgba(255, 255, 255, 0.1);
   --tab-active-text: #f5f5f4;
+  --sticky-tab-bg: #13151b;
+  --sticky-tab-border: rgba(255, 255, 255, 0.06);
   --btn-icon-bg: rgba(255, 255, 255, 0.08);
   --btn-icon-text: rgba(244, 244, 242, 0.78);
   --btn-icon-hover-bg: rgba(255, 255, 255, 0.13);
@@ -1018,6 +1022,15 @@ html[data-tray-popover='1'] #root {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+.trayProviderTabsStickyWrapper {
+  position: sticky;
+  top: -6px;
+  z-index: 10;
+  margin: -6px -8px 0 -8px;
+  padding: 8px 8px 6px 8px;
+  background: var(--sticky-tab-bg);
+  border-bottom: 1px solid var(--sticky-tab-border);
 }
 .trayProviderTabs {
   display: flex;

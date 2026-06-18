@@ -601,23 +601,25 @@ function TrayAccountList({
   return (
     <section className="trayAccountList" aria-label="Accounts">
       {showProviderTabs ? (
-        <div className="trayProviderTabs" role="tablist" aria-label="Provider groups">
-          {providerGroups.map((group) => (
-            <button
-              key={group.id}
-              type="button"
-              role="tab"
-              id={`tray-tab-${group.id}`}
-              aria-selected={group.id === activeGroup.id}
-              aria-controls={`tray-panel-${group.id}`}
-              className={`trayProviderTab ${group.id === activeGroup.id ? 'isActive' : ''}`}
-              onClick={() => setActiveProviderId(group.id)}
-            >
-              {group.title}
-              {group.id === 'codex' && <em>{group.accounts.length}</em>}
-              {group.id === 'antigravity' && antigravityQuota?.ok && <em>{antigravityQuota.models.length}</em>}
-            </button>
-          ))}
+        <div className="trayProviderTabsStickyWrapper">
+          <div className="trayProviderTabs" role="tablist" aria-label="Provider groups">
+            {providerGroups.map((group) => (
+              <button
+                key={group.id}
+                type="button"
+                role="tab"
+                id={`tray-tab-${group.id}`}
+                aria-selected={group.id === activeGroup.id}
+                aria-controls={`tray-panel-${group.id}`}
+                className={`trayProviderTab ${group.id === activeGroup.id ? 'isActive' : ''}`}
+                onClick={() => setActiveProviderId(group.id)}
+              >
+                {group.title}
+                {group.id === 'codex' && <em>{group.accounts.length}</em>}
+                {group.id === 'antigravity' && antigravityQuota?.ok && <em>{antigravityQuota.models.length}</em>}
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
 
