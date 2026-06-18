@@ -1,6 +1,6 @@
 use crate::AppError;
-use std::process::Command;
 use serde::{Deserialize, Serialize};
+use std::process::Command;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -47,7 +47,9 @@ fn find_antigravity_processes() -> Result<Vec<AntigravityProcess>, AppError> {
     let output = Command::new("ps")
         .args(["-ww", "-eo", "pid,args"])
         .output()
-        .map_err(|err| AppError::new("PROCESS_SCAN_FAILED", format!("Failed to run ps: {}", err)))?;
+        .map_err(|err| {
+            AppError::new("PROCESS_SCAN_FAILED", format!("Failed to run ps: {}", err))
+        })?;
 
     if !output.status.success() {
         return Err(AppError::new("PROCESS_SCAN_FAILED", "ps command failed"));
@@ -76,8 +78,8 @@ fn find_antigravity_processes() -> Result<Vec<AntigravityProcess>, AppError> {
 
         // Check if this is an Antigravity-related language server process
         let lower_cmd = cmd.to_lowercase();
-        let is_language_server = lower_cmd.contains("language_server")
-            || lower_cmd.contains("language_server_macos");
+        let is_language_server =
+            lower_cmd.contains("language_server") || lower_cmd.contains("language_server_macos");
 
         if !is_language_server {
             continue;
@@ -86,7 +88,8 @@ fn find_antigravity_processes() -> Result<Vec<AntigravityProcess>, AppError> {
         // Determine if it's the standalone app or IDE extension
         let is_standalone = cmd.contains("--standalone")
             || lower_cmd.contains("/antigravity.app/")
-            || (cmd.contains("--app_data_dir") && cmd.contains("--app_data_dir antigravity ")
+            || (cmd.contains("--app_data_dir")
+                && cmd.contains("--app_data_dir antigravity ")
                 && !cmd.contains("--app_data_dir antigravity-ide"));
 
         if !processes.iter().any(|p: &AntigravityProcess| p.pid == pid) {
@@ -144,7 +147,10 @@ fn find_listening_ports(pid: u32) -> Result<Vec<u16>, AppError> {
 
 /// Try to query the Antigravity language server for model quota info.
 /// Tries HTTPS first (with -k for self-signed certs), then falls back to HTTP.
-fn query_antigravity_quota(port: u16, csrf_token: &str) -> Result<Vec<AntigravityModelQuota>, AppError> {
+fn query_antigravity_quota(
+    port: u16,
+    csrf_token: &str,
+) -> Result<Vec<AntigravityModelQuota>, AppError> {
     // The language server uses HTTPS with a self-signed certificate.
     // We try HTTPS first; if that fails, we fall back to HTTP.
     let schemes = ["https", "http"];
@@ -161,20 +167,31 @@ fn query_antigravity_quota(port: u16, csrf_token: &str) -> Result<Vec<Antigravit
             cmd.arg("-k"); // allow self-signed certs
         }
         cmd.arg("-s")
-            .arg("--noproxy").arg("*")
-            .arg("--connect-timeout").arg("3")
-            .arg("--max-time").arg("8")
-            .arg("-X").arg("POST")
-            .arg("-H").arg("Content-Type: application/json")
-            .arg("-H").arg("Connect-Protocol-Version: 1")
-            .arg("-H").arg(format!("X-Codeium-Csrf-Token: {}", csrf_token))
-            .arg("-d").arg("{}")
+            .arg("--noproxy")
+            .arg("*")
+            .arg("--connect-timeout")
+            .arg("3")
+            .arg("--max-time")
+            .arg("8")
+            .arg("-X")
+            .arg("POST")
+            .arg("-H")
+            .arg("Content-Type: application/json")
+            .arg("-H")
+            .arg("Connect-Protocol-Version: 1")
+            .arg("-H")
+            .arg(format!("X-Codeium-Csrf-Token: {}", csrf_token))
+            .arg("-d")
+            .arg("{}")
             .arg(&url);
 
         let output = match cmd.output() {
             Ok(o) => o,
             Err(err) => {
-                last_err = Some(AppError::new("CURL_FAILED", format!("Failed to execute curl: {}", err)));
+                last_err = Some(AppError::new(
+                    "CURL_FAILED",
+                    format!("Failed to execute curl: {}", err),
+                ));
                 continue;
             }
         };
@@ -183,7 +200,12 @@ fn query_antigravity_quota(port: u16, csrf_token: &str) -> Result<Vec<Antigravit
             let stderr = String::from_utf8_lossy(&output.stderr);
             last_err = Some(AppError::new(
                 "CURL_HTTP_ERROR",
-                format!("curl {} exited with code {}. stderr: {}", scheme, output.status.code().unwrap_or(-1), stderr.trim()),
+                format!(
+                    "curl {} exited with code {}. stderr: {}",
+                    scheme,
+                    output.status.code().unwrap_or(-1),
+                    stderr.trim()
+                ),
             ));
             continue;
         }
@@ -196,7 +218,12 @@ fn query_antigravity_quota(port: u16, csrf_token: &str) -> Result<Vec<Antigravit
             Err(err) => {
                 last_err = Some(AppError::new(
                     "PARSE_JSON_FAILED",
-                    format!("Failed to parse JSON from {} response: {}. Body (first 200 chars): {}", scheme, err, &body[..body.len().min(200)]),
+                    format!(
+                        "Failed to parse JSON from {} response: {}. Body (first 200 chars): {}",
+                        scheme,
+                        err,
+                        &body[..body.len().min(200)]
+                    ),
                 ));
                 continue;
             }
@@ -205,7 +232,8 @@ fn query_antigravity_quota(port: u16, csrf_token: &str) -> Result<Vec<Antigravit
         // The response structure is:
         //   { "userStatus": { "cascadeModelConfigData": { "clientModelConfigs": [...] } } }
         // Try the nested path first, then fall back to the flat path
-        let configs = v.pointer("/userStatus/cascadeModelConfigData/clientModelConfigs")
+        let configs = v
+            .pointer("/userStatus/cascadeModelConfigData/clientModelConfigs")
             .or_else(|| v.pointer("/cascadeModelConfigData/clientModelConfigs"))
             .and_then(|v| v.as_array());
 
@@ -214,9 +242,12 @@ fn query_antigravity_quota(port: u16, csrf_token: &str) -> Result<Vec<Antigravit
             None => {
                 last_err = Some(AppError::new(
                     "NO_MODELS_FOUND",
-                    format!("No clientModelConfigs in {} response. Top-level keys: {:?}",
+                    format!(
+                        "No clientModelConfigs in {} response. Top-level keys: {:?}",
                         scheme,
-                        v.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()
+                        v.as_object()
+                            .map(|o| o.keys().collect::<Vec<_>>())
+                            .unwrap_or_default()
                     ),
                 ));
                 continue;
@@ -225,12 +256,21 @@ fn query_antigravity_quota(port: u16, csrf_token: &str) -> Result<Vec<Antigravit
 
         let mut models = Vec::new();
         for config in configs {
-            let label = config.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let label = config
+                .get("label")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if label.is_empty() {
                 continue;
             }
-            let remaining_fraction = config.pointer("/quotaInfo/remainingFraction").and_then(|v| v.as_f64());
-            let reset_time = config.pointer("/quotaInfo/resetTime").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let remaining_fraction = config
+                .pointer("/quotaInfo/remainingFraction")
+                .and_then(|v| v.as_f64());
+            let reset_time = config
+                .pointer("/quotaInfo/resetTime")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             models.push(AntigravityModelQuota {
                 label,
                 remaining_fraction,
@@ -239,14 +279,18 @@ fn query_antigravity_quota(port: u16, csrf_token: &str) -> Result<Vec<Antigravit
         }
 
         if models.is_empty() {
-            last_err = Some(AppError::new("NO_MODELS_FOUND", format!("clientModelConfigs array was empty via {}", scheme)));
+            last_err = Some(AppError::new(
+                "NO_MODELS_FOUND",
+                format!("clientModelConfigs array was empty via {}", scheme),
+            ));
             continue;
         }
 
         return Ok(models);
     }
 
-    Err(last_err.unwrap_or_else(|| AppError::new("UNKNOWN", "Failed to query quota via any scheme")))
+    Err(last_err
+        .unwrap_or_else(|| AppError::new("UNKNOWN", "Failed to query quota via any scheme")))
 }
 
 pub fn get_live_antigravity_quota() -> Result<AntigravityQuotaResponse, AppError> {
@@ -274,7 +318,10 @@ pub fn get_live_antigravity_quota() -> Result<AntigravityQuotaResponse, AppError
         if ports.is_empty() {
             last_err = Some(AppError::new(
                 "NO_PORTS_FOUND",
-                format!("Process {} (standalone={}) is not listening on any ports", proc.pid, proc.is_standalone),
+                format!(
+                    "Process {} (standalone={}) is not listening on any ports",
+                    proc.pid, proc.is_standalone
+                ),
             ));
             continue;
         }
@@ -300,7 +347,9 @@ pub fn get_live_antigravity_quota() -> Result<AntigravityQuotaResponse, AppError
         models: Vec::new(),
         error: Some(format!(
             "Failed to query all ports. Last error: {}",
-            last_err.map(|e| e.message).unwrap_or_else(|| "Unknown".to_string())
+            last_err
+                .map(|e| e.message)
+                .unwrap_or_else(|| "Unknown".to_string())
         )),
     })
 }

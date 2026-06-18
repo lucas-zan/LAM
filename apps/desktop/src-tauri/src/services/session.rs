@@ -3,6 +3,7 @@ use super::error::Result;
 use super::types::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -18,6 +19,7 @@ pub struct CodexSession {
     pub cwd: Option<String>,
     pub summary: Option<String>,
     pub first_user_message: Option<String>,
+    pub thread_name: Option<String>,
     pub model: Option<String>,
     pub original_provider_id: Option<String>,
     pub original_model: Option<String>,
@@ -28,6 +30,7 @@ pub struct CodexSession {
 
 pub fn list_sessions(home_root: &Path, profile_id: &str) -> Result<Vec<CodexSession>> {
     let account = find_account(home_root, profile_id)?;
+    let thread_names = read_session_index_thread_names(&account.codex_home)?;
     let mut sessions = Vec::new();
     for file in session_files(&account.codex_home.join("sessions"))? {
         let metadata = fs::metadata(&file)?;
@@ -56,21 +59,23 @@ pub fn list_sessions(home_root: &Path, profile_id: &str) -> Result<Vec<CodexSess
             (Some(original), Some(current)) => original != current,
             _ => false,
         };
+        let id = extract_session_meta_payload_string(&first_line, "id")
+            .or_else(|| {
+                extract_json_string(
+                    &snippet,
+                    &[
+                        "session_id",
+                        "sessionId",
+                        "conversation_id",
+                        "conversationId",
+                        "id",
+                    ],
+                )
+            })
+            .unwrap_or(fallback_id);
         sessions.push(CodexSession {
-            id: extract_session_meta_payload_string(&first_line, "id")
-                .or_else(|| {
-                    extract_json_string(
-                        &snippet,
-                        &[
-                            "session_id",
-                            "sessionId",
-                            "conversation_id",
-                            "conversationId",
-                            "id",
-                        ],
-                    )
-                })
-                .unwrap_or(fallback_id),
+            thread_name: thread_names.get(&id).cloned(),
+            id,
             account_id: account.id.clone(),
             path: file,
             modified_at: metadata.modified().ok().map(system_secs).unwrap_or(0),
@@ -103,6 +108,35 @@ pub fn list_sessions(home_root: &Path, profile_id: &str) -> Result<Vec<CodexSess
     }
     sessions.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
     Ok(sessions)
+}
+
+fn read_session_index_thread_names(codex_home: &Path) -> Result<HashMap<String, String>> {
+    let path = codex_home.join("session_index.jsonl");
+    let mut names = HashMap::new();
+    if !path.exists() {
+        return Ok(names);
+    }
+
+    let body = fs::read_to_string(path)?;
+    for line in body.lines() {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let Some(id) = value.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(thread_name) = value.get("thread_name").and_then(Value::as_str) else {
+            continue;
+        };
+        let id = id.trim();
+        let thread_name = thread_name.trim();
+        if id.is_empty() || thread_name.is_empty() {
+            continue;
+        }
+        names.insert(id.to_string(), short_text(thread_name, 240));
+    }
+    Ok(names)
 }
 
 fn extract_session_meta_payload_string(line: &str, key: &str) -> Option<String> {

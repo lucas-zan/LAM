@@ -97,6 +97,7 @@ function session(accountId: string, id: string, modifiedAt: number): CodexSessio
     modifiedAt,
     sizeBytes: 1,
     cwd: `/repo/${accountId}`,
+    threadName: `${id} thread name`,
     summary: null,
     model: 'gpt-5',
     currentProviderId: 'openai',
@@ -206,7 +207,7 @@ describe('App handoff modal', () => {
     fireEvent.change(screen.getByLabelText('Source account'), {
       target: { value: 'codex-luna002' },
     });
-    await screen.findAllByText(/luna-latest/);
+    await screen.findAllByText(/luna-latest thread name/);
 
     holdMainSessions = true;
     fireEvent.change(screen.getByLabelText('Source account'), { target: { value: 'main' } });

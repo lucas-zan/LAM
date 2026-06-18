@@ -37,6 +37,7 @@ export type CodexSession = {
   modifiedAt: number;
   sizeBytes: number;
   cwd?: string | null;
+  threadName?: string | null;
   summary?: string | null;
   firstUserMessage?: string | null;
   model?: string | null;
@@ -156,11 +157,11 @@ export type RelayResumeResult = {
 };
 
 export type DivergedSessionStrategy =
-  | "stop_and_ask"
-  | "summarize_fork_with_target_account"
-  | "timeline_merge_to_fork"
-  | "prefer_source"
-  | "prefer_target";
+  | 'stop_and_ask'
+  | 'summarize_fork_with_target_account'
+  | 'timeline_merge_to_fork'
+  | 'prefer_source'
+  | 'prefer_target';
 
 export type UsageQuotaSnapshot = {
   profileId: string;
@@ -195,9 +196,9 @@ export type ProviderProfile = {
 };
 
 export type SecretInput =
-  | { kind: "env"; envKey: string }
-  | { kind: "keychain"; secret: string }
-  | { kind: "none" };
+  | { kind: 'env'; envKey: string }
+  | { kind: 'keychain'; secret: string }
+  | { kind: 'none' };
 
 export type CreateProviderRequest = {
   id: string;
@@ -237,4 +238,3 @@ export type AntigravityQuotaResponse = {
   models: AntigravityModelQuota[];
   error?: string | null;
 };
-

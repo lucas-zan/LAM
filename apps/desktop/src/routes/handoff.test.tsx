@@ -51,6 +51,7 @@ const sessions: CodexSession[] = [
     modifiedAt: 20,
     sizeBytes: 100,
     cwd: '/repo/a',
+    threadName: 'Implement relay session picker',
     summary: 'task a',
     model: 'gpt-5',
     currentProviderId: 'openai',
@@ -86,22 +87,14 @@ describe('handoff navigation and entry points', () => {
   });
 
   it('keeps both explicit Handoff and latest-session Relay shortcuts on account cards', () => {
-    render(
-      <Overview
-        {...overviewProps()}
-      />,
-    );
+    render(<Overview {...overviewProps()} />);
 
     expect(screen.getAllByRole('button', { name: /handoff/i })).toHaveLength(accounts.length);
     expect(screen.getAllByRole('button', { name: /relay latest/i })).toHaveLength(accounts.length);
   });
 
   it('uses one overview account action button size class', () => {
-    render(
-      <Overview
-        {...overviewProps()}
-      />,
-    );
+    render(<Overview {...overviewProps()} />);
 
     for (const name of [/relay latest/i, /handoff/i, /sync sessions/i, /rename/i, /login/i]) {
       for (const button of screen.getAllByRole('button', { name })) {
@@ -127,5 +120,25 @@ describe('handoff navigation and entry points', () => {
     );
 
     expect(screen.getByRole('button', { name: /relay to/i })).toBeTruthy();
+  });
+
+  it('shows Codex thread names as primary session labels while keeping the id visible', () => {
+    render(
+      <Sessions
+        sessions={sessions}
+        accounts={accounts}
+        selectedAccountId="a"
+        setSelectedAccountId={vi.fn()}
+        query=""
+        setQuery={vi.fn()}
+        copy={vi.fn()}
+        open={vi.fn()}
+        details={vi.fn()}
+        openHandoff={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Implement relay session picker')).toBeTruthy();
+    expect(screen.getByText('sid-a')).toBeTruthy();
   });
 });

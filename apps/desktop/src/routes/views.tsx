@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { sessionDisplayName } from '../lib/format';
 import { countAccountsWithAvailableQuota, countAccountsWithQuotaData } from '../lib/quota';
 import type {
   CodexAccount,
@@ -40,7 +41,9 @@ export function AntigravityModels({
     return (
       <div className="panel pagePanel" style={{ padding: '40px 24px', textAlign: 'center' }}>
         <div style={{ fontSize: '48px', marginBottom: '16px' }}>🔌</div>
-        <h3 style={{ fontSize: '18px', margin: '0 0 8px 0', fontWeight: 600 }}>Antigravity Offline</h3>
+        <h3 style={{ fontSize: '18px', margin: '0 0 8px 0', fontWeight: 600 }}>
+          Antigravity Offline
+        </h3>
         <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)' }}>
           {quota.error || 'Server is not running'}
         </p>
@@ -69,7 +72,8 @@ export function AntigravityModels({
       <div className="cardGrid accountCardGrid">
         {quota.models.map((model) => {
           const remainingFraction = model.remainingFraction ?? null;
-          const remainingPercent = remainingFraction !== null ? Math.round(remainingFraction * 100) : null;
+          const remainingPercent =
+            remainingFraction !== null ? Math.round(remainingFraction * 100) : null;
           const isDepleted = remainingPercent === 0;
 
           // For the progress bar/quota window, we map usedPercent = 100 - remainingPercent
@@ -88,21 +92,26 @@ export function AntigravityModels({
                       borderRadius: '50%',
                       marginRight: '8px',
                       backgroundColor: isDepleted ? '#ef4444' : '#22c55e',
-                      boxShadow: isDepleted ? '0 0 4px rgba(239, 68, 68, 0.5)' : '0 0 4px rgba(34, 197, 94, 0.5)',
+                      boxShadow: isDepleted
+                        ? '0 0 4px rgba(239, 68, 68, 0.5)'
+                        : '0 0 4px rgba(34, 197, 94, 0.5)',
                     }}
                   />
                   <h3>{model.label}</h3>
                   {isDepleted && (
-                    <span style={{ fontSize: '12px', marginLeft: '6px' }} title="Quota depleted" role="img" aria-label="warning">⚠️</span>
+                    <span
+                      style={{ fontSize: '12px', marginLeft: '6px' }}
+                      title="Quota depleted"
+                      role="img"
+                      aria-label="warning"
+                    >
+                      ⚠️
+                    </span>
                   )}
                 </div>
               </div>
-              <p className="cardPath mono">
-                Local language server model
-              </p>
-              <p className="cardMeta">
-                Connect API model
-              </p>
+              <p className="cardPath mono">Local language server model</p>
+              <p className="cardMeta">Connect API model</p>
               <div className="accountQuota">
                 <QuotaWindow
                   label="Remaining Quota"
@@ -168,13 +177,9 @@ export function Overview({
     ? 0
     : accounts.reduce((sum, account) => sum + account.sessionCount, 0);
 
-  const totalCount = isAntigravity
-    ? (antigravityQuota?.models.length ?? 0)
-    : accounts.length;
+  const totalCount = isAntigravity ? (antigravityQuota?.models.length ?? 0) : accounts.length;
 
-  const providersCount = isAntigravity
-    ? 1
-    : providers.length;
+  const providersCount = isAntigravity ? 1 : providers.length;
 
   return (
     <div className="overviewPage">
@@ -186,7 +191,11 @@ export function Overview({
         />
         <Metric icon="sessions" label="Sessions" value={isAntigravity ? 'N/A' : sessionTotal} />
         <Metric icon="providers" label="Providers" value={providersCount} />
-        <Metric icon="quota" label={isAntigravity ? 'Models usable' : 'Quota usable'} value={availableQuotaAccounts} />
+        <Metric
+          icon="quota"
+          label={isAntigravity ? 'Models usable' : 'Quota usable'}
+          value={availableQuotaAccounts}
+        />
       </div>
 
       <div className="overviewTabs">
@@ -486,89 +495,99 @@ export function Sessions({
               </tr>
             </thead>
             <tbody>
-              {sessions.map((session) => (
-                <tr key={`${session.accountId}-${session.path}`} onClick={() => details(session)}>
-                  <td>
-                    <div className="sessionIdCell">
-                      <strong className="cellTrunc">{session.id}</strong>
-                      <button
-                        type="button"
-                        className="iconGhostBtn"
-                        title="Copy resume command"
-                        aria-label="Copy resume command"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          copy(session);
-                        }}
+              {sessions.map((session) => {
+                const displayName = sessionDisplayName(session);
+                return (
+                  <tr key={`${session.accountId}-${session.path}`} onClick={() => details(session)}>
+                    <td>
+                      <div className="sessionIdCell">
+                        <strong className="cellTrunc" title={displayName}>
+                          {displayName}
+                        </strong>
+                        <button
+                          type="button"
+                          className="iconGhostBtn"
+                          title="Copy resume command"
+                          aria-label="Copy resume command"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            copy(session);
+                          }}
+                        >
+                          <IconCopy size={14} />
+                        </button>
+                      </div>
+                      {displayName !== session.id ? (
+                        <div className="cellSub mono cellTrunc" title={session.id}>
+                          {session.id}
+                        </div>
+                      ) : null}
+                      {session.providerMismatch ? (
+                        <span className="badge warn">provider mismatch</span>
+                      ) : null}
+                    </td>
+                    <td>
+                      <span className="mono cellTrunc" title={session.cwd ?? 'unknown'}>
+                        {session.cwd ?? 'unknown'}
+                      </span>
+                    </td>
+                    <td>
+                      <strong
+                        className="cellTrunc"
+                        title={session.currentProviderId ?? session.model ?? 'unknown'}
                       >
-                        <IconCopy size={14} />
-                      </button>
-                    </div>
-                    {session.providerMismatch ? (
-                      <span className="badge warn">provider mismatch</span>
-                    ) : null}
-                  </td>
-                  <td>
-                    <span className="mono cellTrunc" title={session.cwd ?? 'unknown'}>
-                      {session.cwd ?? 'unknown'}
-                    </span>
-                  </td>
-                  <td>
-                    <strong
-                      className="cellTrunc"
-                      title={session.currentProviderId ?? session.model ?? 'unknown'}
-                    >
-                      {session.currentProviderId ?? session.model ?? 'unknown'}
-                    </strong>
-                    <div
-                      className="cellSub mono cellTrunc"
-                      title={session.currentModel ?? session.model ?? 'unknown'}
-                    >
-                      {session.currentModel ?? session.model ?? 'unknown'}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="rowActions">
-                      <UIButton
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          copy(session);
-                        }}
+                        {session.currentProviderId ?? session.model ?? 'unknown'}
+                      </strong>
+                      <div
+                        className="cellSub mono cellTrunc"
+                        title={session.currentModel ?? session.model ?? 'unknown'}
                       >
-                        Copy
-                      </UIButton>
-                      <UIButton
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          open(session);
-                        }}
-                      >
-                        &gt;_ Terminal
-                      </UIButton>
-                      <UIButton
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openHandoff(session);
-                        }}
-                      >
-                        Relay To...
-                      </UIButton>
-                      <UIButton
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          details(session);
-                        }}
-                      >
-                        ⓘ Details
-                      </UIButton>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        {session.currentModel ?? session.model ?? 'unknown'}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="rowActions">
+                        <UIButton
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            copy(session);
+                          }}
+                        >
+                          Copy
+                        </UIButton>
+                        <UIButton
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            open(session);
+                          }}
+                        >
+                          &gt;_ Terminal
+                        </UIButton>
+                        <UIButton
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openHandoff(session);
+                          }}
+                        >
+                          Relay To...
+                        </UIButton>
+                        <UIButton
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            details(session);
+                          }}
+                        >
+                          ⓘ Details
+                        </UIButton>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

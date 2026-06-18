@@ -256,6 +256,53 @@ fn parses_rollout_session_meta_id_from_file_head_for_resume() {
 }
 
 #[test]
+fn parses_session_thread_name_from_codex_session_index() {
+    let home = temp_home("session-thread-name");
+    let profile = seed_codex_home(&home, "a");
+    let indexed_id = "019ed9fd-9212-71c3-9a6a-b8e273a8c68b";
+    let unindexed_id = "019ed9fd-0000-7000-9000-000000000000";
+    write(
+        &profile.join("session_index.jsonl"),
+        &format!(
+            "{{\"id\":\"{indexed_id}\",\"thread_name\":\"Implement relay session picker\",\"updated_at\":\"2026-06-18T09:08:54Z\"}}\n{{\"id\":\"ignored\",\"thread_name\":\"\",\"updated_at\":\"2026-06-18T09:08:55Z\"}}\n{{not-json}}\n"
+        ),
+    );
+    let indexed_path = profile.join(format!(
+        "sessions/2026/06/18/rollout-2026-06-18T17-08-54-{indexed_id}.jsonl"
+    ));
+    write(
+        &indexed_path,
+        &format!(
+            "{{\"timestamp\":\"2026-06-18T09:08:54Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{indexed_id}\",\"cwd\":\"/tmp/project\"}}}}\n"
+        ),
+    );
+    let unindexed_path = profile.join(format!(
+        "sessions/2026/06/18/rollout-2026-06-18T17-09-54-{unindexed_id}.jsonl"
+    ));
+    write(
+        &unindexed_path,
+        &format!(
+            "{{\"timestamp\":\"2026-06-18T09:09:54Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{unindexed_id}\",\"cwd\":\"/tmp/project\"}}}}\n"
+        ),
+    );
+
+    let sessions = list_sessions(&home, "a").unwrap();
+    let indexed = sessions
+        .iter()
+        .find(|session| session.id == indexed_id)
+        .unwrap();
+    assert_eq!(
+        indexed.thread_name.as_deref(),
+        Some("Implement relay session picker")
+    );
+    let unindexed = sessions
+        .iter()
+        .find(|session| session.id == unindexed_id)
+        .unwrap();
+    assert_eq!(unindexed.thread_name, None);
+}
+
+#[test]
 fn creates_managed_account_with_plan_and_safe_wrapper() {
     let home = temp_home("create-account");
     let req = CreateAccountRequest {

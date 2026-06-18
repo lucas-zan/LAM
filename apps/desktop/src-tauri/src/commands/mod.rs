@@ -243,7 +243,7 @@ pub fn execute_attach_provider_to_profile(
 }
 
 #[tauri::command]
-pub async fn get_antigravity_quota() -> Result<localagentmanager_core::AntigravityQuotaResponse, AppError> {
+pub async fn get_antigravity_quota(
+) -> Result<localagentmanager_core::AntigravityQuotaResponse, AppError> {
     run_blocking(move || localagentmanager_core::get_live_antigravity_quota()).await
 }
-
