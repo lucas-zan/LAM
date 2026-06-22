@@ -1,6 +1,7 @@
 use super::error::{AppError, Result};
 use super::types::*;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -24,6 +25,8 @@ pub struct CodexAccount {
     pub provider_id: Option<String>,
     pub model: Option<String>,
     pub auth_mode: Option<String>,
+    pub renewal_date: Option<String>,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,11 +86,20 @@ pub struct RenameAccountResult {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountNoteUpdate {
+    pub profile_id: String,
+    pub renewal_date: Option<String>,
+    pub note: Option<String>,
+}
+
 pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
     let mut accounts = Vec::new();
     if !home_root.exists() {
         return Ok(accounts);
     }
+    let notes = read_account_notes(home_root)?;
 
     for entry in fs::read_dir(home_root)? {
         let entry = entry?;
@@ -109,6 +121,7 @@ pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
         let managed = home.join(NEW_MARKER).exists() || home.join(OLD_MARKER).exists();
         let (is_relay, relay_identity, relay_source) = relay_parts(&id);
         let config = parse_codex_config(&home.join("config.toml"))?;
+        let note = notes.accounts.get(&id);
         accounts.push(CodexAccount {
             id: id.clone(),
             display_name: if id == "main" {
@@ -134,6 +147,8 @@ pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
             provider_id: config.provider_id,
             model: config.model,
             auth_mode: config.auth_mode,
+            renewal_date: note.and_then(|metadata| metadata.renewal_date.clone()),
+            note: note.and_then(|metadata| metadata.note.clone()),
         });
     }
     accounts.sort_by(|a, b| a.id.cmp(&b.id));
@@ -143,6 +158,27 @@ pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
 
 pub fn list_cached_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
     Ok(read_accounts_cache(home_root)?.unwrap_or_default())
+}
+
+pub fn update_account_note(home_root: &Path, req: &AccountNoteUpdate) -> Result<CodexAccount> {
+    let profile_id = validate_existing_profile_id(home_root, &req.profile_id)?;
+    let renewal_date = normalize_renewal_date(req.renewal_date.as_deref())?;
+    let note = normalize_note(req.note.as_deref())?;
+    let mut notes = read_account_notes(home_root)?;
+
+    if renewal_date.is_none() && note.is_none() {
+        notes.accounts.remove(&profile_id);
+    } else {
+        notes
+            .accounts
+            .insert(profile_id.clone(), AccountNote { renewal_date, note });
+    }
+    write_account_notes(home_root, &notes)?;
+
+    list_accounts(home_root)?
+        .into_iter()
+        .find(|account| account.id == profile_id)
+        .ok_or_else(|| AppError::new("ACCOUNT_NOT_FOUND", profile_id))
 }
 
 pub fn create_account_plan(home_root: &Path, req: &CreateAccountRequest) -> Result<OperationPlan> {
@@ -440,6 +476,8 @@ pub(crate) fn quota_account(home_root: &Path, profile_id: &str) -> Result<CodexA
         provider_id: None,
         model: None,
         auth_mode: None,
+        renewal_date: None,
+        note: None,
     })
 }
 
@@ -531,8 +569,25 @@ struct AccountsCacheFile {
     accounts: Vec<CodexAccount>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct AccountNotesFile {
+    accounts: BTreeMap<String, AccountNote>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct AccountNote {
+    renewal_date: Option<String>,
+    note: Option<String>,
+}
+
 fn accounts_cache_path(home_root: &Path) -> PathBuf {
     config_root(home_root).join("accounts-cache.json")
+}
+
+fn account_notes_path(home_root: &Path) -> PathBuf {
+    config_root(home_root).join("account-notes.json")
 }
 
 fn write_accounts_cache(home_root: &Path, accounts: &[CodexAccount]) -> Result<()> {
@@ -561,4 +616,59 @@ fn read_accounts_cache(home_root: &Path) -> Result<Option<Vec<CodexAccount>>> {
         return Ok(None);
     }
     Ok(Some(payload.accounts))
+}
+
+fn read_account_notes(home_root: &Path) -> Result<AccountNotesFile> {
+    let path = account_notes_path(home_root);
+    if !path.exists() {
+        return Ok(AccountNotesFile::default());
+    }
+    let body = fs::read_to_string(path)?;
+    serde_json::from_str(&body)
+        .map_err(|err| AppError::new("ACCOUNT_NOTES_INVALID", err.to_string()))
+}
+
+fn write_account_notes(home_root: &Path, notes: &AccountNotesFile) -> Result<()> {
+    let body = serde_json::to_string_pretty(notes)
+        .map_err(|err| AppError::new("ACCOUNT_NOTES_INVALID", err.to_string()))?;
+    write_file_private(&account_notes_path(home_root), &format!("{body}\n"))
+}
+
+fn validate_existing_profile_id(home_root: &Path, profile_id: &str) -> Result<String> {
+    let trimmed = profile_id.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::new("ACCOUNT_NOT_FOUND", profile_id));
+    }
+    let home = codex_home_path(home_root, trimmed);
+    if !home.exists() || !has_codex_signal(&home) {
+        return Err(AppError::new("ACCOUNT_NOT_FOUND", trimmed));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn normalize_renewal_date(value: Option<&str>) -> Result<Option<String>> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
+        .map_err(|_| AppError::new("ACCOUNT_RENEWAL_DATE_INVALID", trimmed))?;
+    Ok(Some(trimmed.to_string()))
+}
+
+fn normalize_note(value: Option<&str>) -> Result<Option<String>> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.chars().count() > 500 {
+        return Err(AppError::new("ACCOUNT_NOTE_TOO_LONG", "max 500 characters"));
+    }
+    Ok(Some(trimmed.to_string()))
 }

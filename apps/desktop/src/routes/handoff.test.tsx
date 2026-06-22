@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { routes } from './types';
 import { Overview, Sessions } from './views';
@@ -22,6 +22,8 @@ const accounts: CodexAccount[] = [
     providerId: 'openai',
     model: 'gpt-5',
     authMode: 'config',
+    renewalDate: '2026-07-15',
+    note: 'Team Plus renewal',
   },
   {
     id: 'b',
@@ -40,6 +42,8 @@ const accounts: CodexAccount[] = [
     providerId: 'openai',
     model: 'gpt-5',
     authMode: 'config',
+    renewalDate: null,
+    note: null,
   },
 ];
 
@@ -77,6 +81,7 @@ function overviewProps() {
     antigravityQuota: null,
     refreshingAntigravity: false,
     onRefreshAntigravity: vi.fn(),
+    onSaveAccountNote: vi.fn(),
   };
 }
 
@@ -101,6 +106,31 @@ describe('handoff navigation and entry points', () => {
         expect(button.className).toContain('accountActionBtn');
       }
     }
+  });
+
+  it('shows and edits account renewal notes from account cards', async () => {
+    const props = overviewProps();
+    render(<Overview {...props} />);
+
+    expect(screen.getByText('Renews 2026-07-15')).toBeTruthy();
+    expect(screen.getByText('Team Plus renewal')).toBeTruthy();
+
+    fireEvent.click(screen.getAllByRole('button', { name: /edit note/i })[0]);
+    fireEvent.change(screen.getByLabelText('Renewal date'), {
+      target: { value: '2026-08-01' },
+    });
+    fireEvent.change(screen.getByLabelText('Account note'), {
+      target: { value: 'Annual invoice paid by ops' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(props.onSaveAccountNote).toHaveBeenCalledWith({
+        profileId: 'a',
+        renewalDate: '2026-08-01',
+        note: 'Annual invoice paid by ops',
+      }),
+    );
   });
 
   it('offers Relay To from a concrete session row', () => {

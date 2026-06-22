@@ -563,6 +563,65 @@ p {
   color: var(--muted);
   font-size: 12px;
 }
+.accountNoteSummary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line));
+  border-radius: 8px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--surface) 86%, var(--accent-soft));
+}
+.accountNoteSummary div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.accountNoteSummary strong,
+.accountNoteSummary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.accountNoteSummary strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.accountNoteSummary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.accountNoteEditBtn {
+  white-space: nowrap;
+}
+.accountNoteForm {
+  display: grid;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  border-radius: 8px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--surface) 90%, var(--accent-soft));
+}
+.accountNoteForm label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.accountNoteForm input,
+.accountNoteForm textarea {
+  width: 100%;
+  min-width: 0;
+}
+.accountNoteForm textarea {
+  resize: vertical;
+}
+.accountNoteActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
 .mono {
   font:
     11px/1.35 ui-monospace,
@@ -2219,4 +2278,3 @@ pre {
   0%, 100% { opacity: 0.55; }
   50% { opacity: 0.95; }
 }
-

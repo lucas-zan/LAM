@@ -1,7 +1,12 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import * as api from '../lib/api';
-import type { CodexAccount, CodexSession, DivergedSessionStrategy } from '../lib/types';
+import type {
+  AccountNoteUpdate,
+  CodexAccount,
+  CodexSession,
+  DivergedSessionStrategy,
+} from '../lib/types';
 import { useAppStore } from './app';
 import { useSessionStore } from './sessions';
 import { useQuotaStore } from './quota';
@@ -38,6 +43,7 @@ interface AccountState {
   relayResumeTo: (account: CodexAccount) => Promise<void>;
   relaySessionTo: (session: CodexSession, account: CodexAccount) => Promise<void>;
   login: (account?: CodexAccount) => Promise<void>;
+  saveAccountNote: (req: AccountNoteUpdate) => Promise<void>;
 }
 
 export const useAccountStore = create<AccountState>()(
@@ -159,6 +165,21 @@ export const useAccountStore = create<AccountState>()(
         useAppStore
           .getState()
           .setError(`${formatError(err)}. Copy login command fallback is available.`);
+      }
+    },
+
+    saveAccountNote: async (req) => {
+      const app = useAppStore.getState();
+      try {
+        const updated = await api.updateAccountNote(req);
+        set({
+          accounts: get().accounts.map((account) =>
+            account.id === updated.id ? updated : account,
+          ),
+        });
+        app.setStatus(`Updated note for ${updated.displayName}`);
+      } catch (err) {
+        app.setError(formatError(err));
       }
     },
   })),

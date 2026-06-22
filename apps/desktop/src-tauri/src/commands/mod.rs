@@ -19,11 +19,11 @@ use localagentmanager_core::{
     relay_resume_session as core_relay_resume_session,
     rename_account_plan as core_rename_account_plan, resolve_home_root,
     sync_plan as core_sync_plan, test_provider as core_test_provider,
-    update_provider as core_update_provider, AppError, AttachProviderRequest, AttachProviderResult,
-    CodexAccount, CodexSession, CreateAccountRequest, CreateProviderRequest, CreateRelayRequest,
-    CreateResult, OperationPlan, ProviderProfile, QuotaRefreshResult, RelayResumeRequest,
-    RelayResumeResult, RenameAccountRequest, RenameAccountResult, ResumeCommand,
-    ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult, UpdateProviderRequest,
+    update_provider as core_update_provider, AccountNoteUpdate, AppError, AttachProviderRequest,
+    AttachProviderResult, CodexAccount, CodexSession, CreateAccountRequest, CreateProviderRequest,
+    CreateRelayRequest, CreateResult, OperationPlan, ProviderProfile, QuotaRefreshResult,
+    RelayResumeRequest, RelayResumeResult, RenameAccountRequest, RenameAccountResult,
+    ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult, UpdateProviderRequest,
     UsageQuotaSnapshot,
 };
 
@@ -95,6 +95,11 @@ pub fn plan_rename_account(req: RenameAccountRequest) -> Result<OperationPlan, A
 #[tauri::command]
 pub fn execute_rename_account(req: RenameAccountRequest) -> Result<RenameAccountResult, AppError> {
     core_execute_rename_account(&home_root()?, &req)
+}
+
+#[tauri::command]
+pub fn update_account_note(req: AccountNoteUpdate) -> Result<CodexAccount, AppError> {
+    localagentmanager_core::update_account_note(&home_root()?, &req)
 }
 
 #[tauri::command]

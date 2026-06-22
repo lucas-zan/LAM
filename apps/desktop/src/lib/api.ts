@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CodexAccount,
   CodexSession,
+  AccountNoteUpdate,
   AttachProviderRequest,
   AttachProviderResult,
   CreateAccountRequest,
@@ -64,6 +65,10 @@ export async function planRenameAccount(req: RenameAccountRequest): Promise<Oper
 
 export async function executeRenameAccount(req: RenameAccountRequest): Promise<RenameAccountResult> {
   return invoke<RenameAccountResult>("execute_rename_account", { req });
+}
+
+export async function updateAccountNote(req: AccountNoteUpdate): Promise<CodexAccount> {
+  return invoke<CodexAccount>("update_account_note", { req });
 }
 
 export async function planCreateRelay(req: CreateRelayRequest): Promise<OperationPlan> {
@@ -169,4 +174,3 @@ export async function getAntigravityQuota(): Promise<AntigravityQuotaResponse> {
   }
   return invoke<AntigravityQuotaResponse>("get_antigravity_quota");
 }
-

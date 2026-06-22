@@ -39,6 +39,7 @@ fn main() {
             commands::execute_create_account,
             commands::plan_rename_account,
             commands::execute_rename_account,
+            commands::update_account_note,
             commands::plan_create_relay,
             commands::execute_create_relay,
             commands::build_sync_plan,

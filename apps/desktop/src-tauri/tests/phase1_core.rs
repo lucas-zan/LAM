@@ -4,9 +4,9 @@ use localagentmanager_core::{
     execute_create_relay, execute_rename_account, execute_sync, get_profile_quota, list_accounts,
     list_cached_accounts, list_cached_quotas, list_providers, list_sessions,
     plan_attach_provider_to_profile, refresh_all_quotas, relay_resume_session, rename_account_plan,
-    resolve_home_root, sync_plan, terminal_applescript, AttachProviderRequest,
-    CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, RelayResumeRequest,
-    RenameAccountRequest, ResumeCommandRequest, SecretInput, SyncRequest,
+    resolve_home_root, sync_plan, terminal_applescript, update_account_note, AccountNoteUpdate,
+    AttachProviderRequest, CreateAccountRequest, CreateProviderRequest, CreateRelayRequest,
+    RelayResumeRequest, RenameAccountRequest, ResumeCommandRequest, SecretInput, SyncRequest,
 };
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -845,6 +845,84 @@ fn accounts_cache_roundtrip_and_fast_read() {
     assert_eq!(cached.len(), 2);
     assert!(cached.iter().any(|account| account.id == "a"));
     assert!(cached.iter().any(|account| account.id == "b"));
+}
+
+#[test]
+fn accounts_include_renewal_notes() {
+    let home = temp_home("account-notes");
+    seed_codex_home(&home, "a");
+    seed_codex_home(&home, "b");
+
+    let updated = update_account_note(
+        &home,
+        &AccountNoteUpdate {
+            profile_id: "a".into(),
+            renewal_date: Some("2026-07-15".into()),
+            note: Some("Team Plus renewal".into()),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(updated.id, "a");
+    assert_eq!(updated.renewal_date.as_deref(), Some("2026-07-15"));
+    assert_eq!(updated.note.as_deref(), Some("Team Plus renewal"));
+
+    let accounts = list_accounts(&home).unwrap();
+    let account = accounts.iter().find(|account| account.id == "a").unwrap();
+    assert_eq!(account.renewal_date.as_deref(), Some("2026-07-15"));
+    assert_eq!(account.note.as_deref(), Some("Team Plus renewal"));
+    assert_eq!(
+        accounts
+            .iter()
+            .find(|account| account.id == "b")
+            .unwrap()
+            .renewal_date,
+        None
+    );
+
+    let cached = list_cached_accounts(&home).unwrap();
+    assert!(cached
+        .iter()
+        .any(|account| account.id == "a" && account.renewal_date.as_deref() == Some("2026-07-15")));
+}
+
+#[test]
+fn update_account_note_validates_input() {
+    let home = temp_home("account-notes-validation");
+    seed_codex_home(&home, "a");
+
+    let unknown = update_account_note(
+        &home,
+        &AccountNoteUpdate {
+            profile_id: "missing".into(),
+            renewal_date: Some("2026-07-15".into()),
+            note: None,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(unknown.code, "ACCOUNT_NOT_FOUND");
+
+    let invalid_date = update_account_note(
+        &home,
+        &AccountNoteUpdate {
+            profile_id: "a".into(),
+            renewal_date: Some("2026-13-01".into()),
+            note: None,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(invalid_date.code, "ACCOUNT_RENEWAL_DATE_INVALID");
+
+    let too_long = update_account_note(
+        &home,
+        &AccountNoteUpdate {
+            profile_id: "a".into(),
+            renewal_date: None,
+            note: Some("x".repeat(501)),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(too_long.code, "ACCOUNT_NOTE_TOO_LONG");
 }
 
 #[test]

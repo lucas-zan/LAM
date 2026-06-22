@@ -72,6 +72,7 @@ export function App() {
     relayResumeTo,
     relaySessionTo,
     login,
+    saveAccountNote,
   } = useAccountStore();
   const { query, setQuery, resume, copyResume, openResume, openSessionDetails, filteredSessions } =
     useSessionStore();
@@ -462,6 +463,7 @@ export function App() {
             antigravityQuota={antigravityQuota}
             refreshingAntigravity={refreshingAntigravity}
             onRefreshAntigravity={() => void loadAntigravity(true)}
+            onSaveAccountNote={saveAccountNote}
           />
         ) : null}
         {appReady && route === 'sessions' ? (

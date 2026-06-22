@@ -17,6 +17,7 @@ vi.mock('../lib/api', () => ({
   syncTrayQuota: vi.fn(),
   relayResumeSession: vi.fn(),
   openTerminalWithCommand: vi.fn(),
+  updateAccountNote: vi.fn(),
 }));
 
 function deferred<T>() {
@@ -70,6 +71,26 @@ beforeEach(() => {
     warnings: [],
   });
   vi.mocked(api.openTerminalWithCommand).mockResolvedValue();
+  vi.mocked(api.updateAccountNote).mockResolvedValue({
+    id: 'a',
+    displayName: 'codex-a',
+    codexHome: '/tmp/.codex-a',
+    wrapperPath: null,
+    hasAuth: true,
+    hasConfig: true,
+    hasHistory: false,
+    sessionCount: 0,
+    latestSessionModifiedAt: null,
+    managed: false,
+    isRelay: false,
+    relaySource: null,
+    relayIdentity: null,
+    providerId: 'openai',
+    model: 'gpt-5-codex',
+    authMode: 'config',
+    renewalDate: '2026-07-15',
+    note: 'Team Plus renewal',
+  });
   vi.mocked(api.getProfileQuota).mockResolvedValue({
     profileId: 'a',
     source: 'app_server_rate_limits',
@@ -119,6 +140,8 @@ describe('useAccountStore', () => {
         providerId: 'openai',
         model: 'gpt-5-codex',
         authMode: 'config',
+        renewalDate: null,
+        note: null,
       },
     ]);
 
@@ -148,6 +171,8 @@ describe('useAccountStore', () => {
         providerId: 'openai',
         model: 'gpt-5-codex',
         authMode: 'config',
+        renewalDate: null,
+        note: null,
       },
     ]);
     vi.mocked(api.listCachedQuotas).mockReturnValue(staleCache.promise);
@@ -215,6 +240,8 @@ describe('useAccountStore', () => {
       providerId: 'openai',
       model: 'gpt-5',
       authMode: 'config' as const,
+      renewalDate: null,
+      note: null,
     };
     useAccountStore.setState({
       accounts: [target],
@@ -241,6 +268,47 @@ describe('useAccountStore', () => {
       sessionId: 'latest-session',
       cwd: '/repo/latest',
       divergedStrategy: 'summarize_fork_with_target_account',
+    });
+  });
+
+  it('saves account note metadata and updates the matching account', async () => {
+    const account = {
+      id: 'a',
+      displayName: 'codex-a',
+      codexHome: '/tmp/.codex-a',
+      wrapperPath: null,
+      hasAuth: true,
+      hasConfig: true,
+      hasHistory: false,
+      sessionCount: 0,
+      latestSessionModifiedAt: null,
+      managed: false,
+      isRelay: false,
+      relaySource: null,
+      relayIdentity: null,
+      providerId: 'openai',
+      model: 'gpt-5-codex',
+      authMode: 'config' as const,
+      renewalDate: null,
+      note: null,
+    };
+    useAccountStore.setState({ accounts: [account], selectedAccountId: 'a' });
+
+    await useAccountStore.getState().saveAccountNote({
+      profileId: 'a',
+      renewalDate: '2026-07-15',
+      note: 'Team Plus renewal',
+    });
+
+    expect(api.updateAccountNote).toHaveBeenCalledWith({
+      profileId: 'a',
+      renewalDate: '2026-07-15',
+      note: 'Team Plus renewal',
+    });
+    expect(useAccountStore.getState().accounts[0]).toMatchObject({
+      id: 'a',
+      renewalDate: '2026-07-15',
+      note: 'Team Plus renewal',
     });
   });
 });

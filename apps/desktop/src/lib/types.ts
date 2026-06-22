@@ -28,6 +28,8 @@ export type CodexAccount = {
   providerId?: string | null;
   model?: string | null;
   authMode?: string | null;
+  renewalDate?: string | null;
+  note?: string | null;
 };
 
 export type CodexSession = {
@@ -91,6 +93,12 @@ export type RenameAccountResult = {
   previousWrapperPath: string;
   operations: string[];
   warnings: string[];
+};
+
+export type AccountNoteUpdate = {
+  profileId: string;
+  renewalDate?: string | null;
+  note?: string | null;
 };
 
 export type SyncRequest = {

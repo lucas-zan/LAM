@@ -18,7 +18,9 @@
       "relayIdentity": null,
       "providerId": "openai",
       "model": "gpt-5-codex",
-      "authMode": "config"
+      "authMode": "config",
+      "renewalDate": null,
+      "note": null
     },
     {
       "id": "b",
@@ -36,7 +38,9 @@
       "relayIdentity": null,
       "providerId": "company-proxy",
       "model": "gpt-5.4",
-      "authMode": "config"
+      "authMode": "config",
+      "renewalDate": null,
+      "note": null
     },
     {
       "id": "b-relay-a",
@@ -54,7 +58,9 @@
       "relayIdentity": "b",
       "providerId": null,
       "model": null,
-      "authMode": null
+      "authMode": null,
+      "renewalDate": null,
+      "note": null
     },
     {
       "id": "main",
@@ -72,7 +78,9 @@
       "relayIdentity": null,
       "providerId": "openai",
       "model": "gpt-5-codex",
-      "authMode": "config"
+      "authMode": "config",
+      "renewalDate": null,
+      "note": null
     }
   ]
 }

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { sessionDisplayName } from '../lib/format';
 import { countAccountsWithAvailableQuota, countAccountsWithQuotaData } from '../lib/quota';
 import type {
+  AccountNoteUpdate,
   CodexAccount,
   CodexSession,
   DivergedSessionStrategy,
@@ -144,6 +145,7 @@ export function Overview({
   antigravityQuota,
   refreshingAntigravity,
   onRefreshAntigravity,
+  onSaveAccountNote,
 }: {
   accounts: CodexAccount[];
   quotas: UsageQuotaSnapshot[];
@@ -160,6 +162,7 @@ export function Overview({
   antigravityQuota: AntigravityQuotaResponse | null;
   refreshingAntigravity: boolean;
   onRefreshAntigravity: () => void;
+  onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
 }) {
   const [activeTab, setActiveTab] = useState<'codex' | 'antigravity'>('codex');
 
@@ -228,6 +231,7 @@ export function Overview({
           currentSession={currentSession}
           refreshAccountQuota={refreshAccountQuota}
           refreshingQuotaIds={refreshingQuotaIds}
+          onSaveAccountNote={onSaveAccountNote}
           variant="overview"
         />
       ) : (
@@ -253,6 +257,7 @@ export function Accounts({
   currentSession,
   refreshAccountQuota,
   refreshingQuotaIds,
+  onSaveAccountNote,
   variant = 'default',
 }: {
   accounts: CodexAccount[];
@@ -266,6 +271,7 @@ export function Accounts({
   currentSession?: CodexSession;
   refreshAccountQuota: (profileId: string) => void;
   refreshingQuotaIds: string[];
+  onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
   variant?: 'default' | 'overview';
 }) {
   if (!accounts.length) return <div className="emptyBox">No Codex profiles found.</div>;
@@ -340,6 +346,7 @@ export function Accounts({
               >
                 {account.sessionCount} sessions · Provider: {providerLabel} · {modelLabel}
               </p>
+              <AccountNotePanel account={account} onSave={onSaveAccountNote} />
               <div className="accountQuota">
                 <QuotaWindow
                   label="Session (5h)"
@@ -433,6 +440,96 @@ export function Accounts({
         })}
       </div>
     </section>
+  );
+}
+
+function AccountNotePanel({
+  account,
+  onSave,
+}: {
+  account: CodexAccount;
+  onSave: (req: AccountNoteUpdate) => Promise<void> | void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [renewalDate, setRenewalDate] = useState(account.renewalDate ?? '');
+  const [note, setNote] = useState(account.note ?? '');
+  const [saving, setSaving] = useState(false);
+
+  function startEditing() {
+    setRenewalDate(account.renewalDate ?? '');
+    setNote(account.note ?? '');
+    setEditing(true);
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      await onSave({
+        profileId: account.id,
+        renewalDate: renewalDate || null,
+        note: note || null,
+      });
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <form
+        className="accountNoteForm"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+      >
+        <label>
+          <span>Renewal date</span>
+          <input
+            type="date"
+            value={renewalDate}
+            onChange={(event) => setRenewalDate(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Account note</span>
+          <textarea
+            value={note}
+            maxLength={500}
+            rows={3}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </label>
+        <div className="accountNoteActions">
+          <UIButton size="sm" variant="primary" type="submit" disabled={saving}>
+            Save
+          </UIButton>
+          <UIButton
+            size="sm"
+            type="button"
+            onClick={() => setEditing(false)}
+            disabled={saving}
+          >
+            Cancel
+          </UIButton>
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <div className="accountNoteSummary" onClick={(event) => event.stopPropagation()}>
+      <div>
+        <strong>{account.renewalDate ? `Renews ${account.renewalDate}` : 'No renewal date'}</strong>
+        <span>{account.note || 'No note'}</span>
+      </div>
+      <UIButton size="sm" className="accountNoteEditBtn" onClick={startEditing}>
+        <IconPencil size={13} />
+        Edit note
+      </UIButton>
+    </div>
   );
 }
 
