@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planTypeLabel, quotaDisplayWindows } from './quota';
+import { planTypeLabel, quotaDisplayWindows, accountHasAvailableQuota } from './quota';
 import type { UsageQuotaSnapshot } from './types';
 
 const baseQuota: UsageQuotaSnapshot = {
@@ -76,5 +76,47 @@ describe('planTypeLabel', () => {
   it('hides missing or blank plan types', () => {
     expect(planTypeLabel(null)).toBeNull();
     expect(planTypeLabel('   ')).toBeNull();
+  });
+});
+
+describe('accountHasAvailableQuota', () => {
+  it('returns true if all present quotas have remaining volume', () => {
+    expect(accountHasAvailableQuota(baseQuota)).toBe(true);
+
+    expect(
+      accountHasAvailableQuota({
+        ...baseQuota,
+        primaryUsedPercent: 20,
+        secondaryUsedPercent: null,
+      }),
+    ).toBe(true);
+  });
+
+  it('returns false if any present quota is exhausted', () => {
+    expect(
+      accountHasAvailableQuota({
+        ...baseQuota,
+        primaryUsedPercent: 100,
+        secondaryUsedPercent: 50,
+      }),
+    ).toBe(false);
+
+    expect(
+      accountHasAvailableQuota({
+        ...baseQuota,
+        primaryUsedPercent: 100,
+        secondaryUsedPercent: null,
+      }),
+    ).toBe(false);
+  });
+
+  it('returns false if no quota data is present', () => {
+    expect(
+      accountHasAvailableQuota({
+        ...baseQuota,
+        primaryUsedPercent: null,
+        secondaryUsedPercent: null,
+      }),
+    ).toBe(false);
   });
 });

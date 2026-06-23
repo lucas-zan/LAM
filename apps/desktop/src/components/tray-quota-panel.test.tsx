@@ -147,7 +147,7 @@ describe('TrayQuotaPanel', () => {
     const { container } = render(<TrayQuotaPanel />);
     await waitFor(() => expect(screen.getAllByText('60%').length).toBeGreaterThan(0));
     expect(screen.getByText('TEAM')).toBeTruthy();
-    expect(container.querySelector('.trayAccountPlanLine')?.textContent).toContain('TEAM');
+    expect(container.querySelector('.planTypeBadge')?.textContent).toContain('TEAM');
 
     const cachedReads = vi.mocked(api.listCachedQuotas).mock.calls.length;
     listeners.get('quota-popover-refresh')?.forEach((handler) => handler());

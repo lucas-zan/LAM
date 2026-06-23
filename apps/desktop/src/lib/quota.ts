@@ -23,9 +23,23 @@ export function hasQuotaRemaining(used?: number | null): boolean {
 
 export function accountHasAvailableQuota(quota?: UsageQuotaSnapshot): boolean {
   if (!quota) return false;
-  return (
-    hasQuotaRemaining(quota.primaryUsedPercent) && hasQuotaRemaining(quota.secondaryUsedPercent)
-  );
+
+  const pUsed = quota.primaryUsedPercent;
+  const sUsed = quota.secondaryUsedPercent;
+
+  const hasP = pUsed !== null && pUsed !== undefined;
+  const hasS = sUsed !== null && sUsed !== undefined;
+
+  if (hasP && hasS) {
+    return hasQuotaRemaining(pUsed) && hasQuotaRemaining(sUsed);
+  }
+  if (hasP) {
+    return hasQuotaRemaining(pUsed);
+  }
+  if (hasS) {
+    return hasQuotaRemaining(sUsed);
+  }
+  return false;
 }
 
 export function filterQuotaSnapshotsForAccounts(

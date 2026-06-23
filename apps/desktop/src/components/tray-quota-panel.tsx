@@ -286,7 +286,7 @@ function TrayPopoverHeader({
             <IconLogo size={24} />
           </span>
           <div>
-            <h2>LAM Quota</h2>
+            <h2>LAM</h2>
             <p>
               <IconClock size={12} /> {status}
             </p>
