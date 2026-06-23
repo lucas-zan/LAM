@@ -22,7 +22,6 @@ import {
   countAccountsWithAvailableQuota,
   countAccountsWithQuotaData,
   mergeQuotaSnapshots,
-  planTypeLabel,
   quotaDisplayWindows,
   quotaRemainingPercent,
 } from '../lib/quota';
@@ -48,6 +47,7 @@ import {
   IconMoon,
 } from './icons';
 import { UIButton } from './ui-button';
+import { PlanTypeBadge } from './plan-type-badge';
 
 type ProviderGroup = {
   id: string;
@@ -669,7 +669,6 @@ function TrayAccountList({
             {activeGroup.accounts.map((account, index) => {
               const quota = quotas.find((q) => q.profileId === account.id);
               const title = account.displayName.trim() || account.id;
-              const planLabel = planTypeLabel(quota?.planType);
               const isActiveAccount = activeSession?.accountId === account.id;
               const isRefreshingQuota = refreshingQuotaIds.includes(account.id);
 
@@ -707,19 +706,7 @@ function TrayAccountList({
                       />
                       <div className="trayAccountNameWrap">
                         <strong title={title}>{title}</strong>
-                        {planLabel || isActiveAccount ? (
-                          <div className="trayAccountPlanLine">
-                            {planLabel ? <span className="planTypeBadge">{planLabel}</span> : null}
-                            {isActiveAccount && (
-                              <span
-                                className="accountActiveBadge"
-                                aria-label="Active session account"
-                              >
-                                Active
-                              </span>
-                            )}
-                          </div>
-                        ) : null}
+                        <PlanTypeBadge planType={quota?.planType} />
                       </div>
                     </div>
                     <div className="trayAccountActions">

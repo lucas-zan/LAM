@@ -649,16 +649,55 @@ p {
   border-color: color-mix(in srgb, var(--amber) 25%, transparent);
 }
 .planTypeBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3.5px;
   flex: 0 0 auto;
-  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
   border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 2px 5.5px;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+.badgeIcon {
+  flex-shrink: 0;
+  display: inline-block;
+  vertical-align: middle;
+}
+.planTypeBadge--free {
+  border: 1px solid var(--text-faint);
+  background: transparent;
+  color: var(--text-muted);
+}
+.planTypeBadge--plus {
+  border: 1px solid color-mix(in srgb, var(--green) 24%, transparent);
+  background: color-mix(in srgb, var(--green) 8%, transparent);
+  color: var(--green);
+}
+.planTypeBadge--pro {
+  background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+  color: #ffffff;
+  border: 0;
+  box-shadow: 0 1px 3px rgba(234, 88, 12, 0.2);
+}
+.planTypeBadge--team {
+  background: linear-gradient(135deg, #6366f1 0%, #3b82f6 100%);
+  color: #ffffff;
+  border: 0;
+  box-shadow: 0 1px 3px rgba(59, 130, 246, 0.2);
+}
+.planTypeBadge--business {
+  background: linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%);
+  color: #ffffff;
+  border: 0;
+  box-shadow: 0 1px 3px rgba(139, 92, 246, 0.2);
+}
+.planTypeBadge--default {
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
-  font-size: 9px;
-  font-weight: 850;
-  line-height: 1;
-  padding: 2px 5px;
-  white-space: nowrap;
 }
 
 .iconCircleBtn {
@@ -1212,25 +1251,20 @@ html[data-tray-popover='1'] #root {
 }
 .trayAccountNameWrap {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
+  flex: 1;
 }
 .trayAccountNameWrap > strong {
   font-weight: 800;
   min-width: 0;
+  flex-shrink: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
   font-size: 13px;
-}
-.trayAccountPlanLine {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
 }
 .trayAccountActions {
   display: flex;

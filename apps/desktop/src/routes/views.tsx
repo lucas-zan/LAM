@@ -3,7 +3,6 @@ import { sessionDisplayName } from '../lib/format';
 import {
   countAccountsWithAvailableQuota,
   countAccountsWithQuotaData,
-  planTypeLabel,
   quotaDisplayWindows,
 } from '../lib/quota';
 import type {
@@ -29,6 +28,7 @@ import {
   IconKey,
 } from '../components/icons';
 import { UIButton } from '../components/ui-button';
+import { PlanTypeBadge } from '../components/plan-type-badge';
 
 export function AntigravityModels({
   quota,
@@ -304,7 +304,6 @@ export function Accounts({
         {orderedAccounts.map((account) => {
           const isRefreshing = refreshingQuotaIds.includes(account.id);
           const quota = quotas.find((item) => item.profileId === account.id);
-          const planLabel = planTypeLabel(quota?.planType);
           const providerLabel = account.providerId ?? 'unknown';
           const modelLabel = account.model ?? 'unknown';
           const isActiveAccount = currentSession?.accountId === account.id;
@@ -317,7 +316,7 @@ export function Accounts({
               <div className="cardHead">
                 <div className="cardTitleRow">
                   <h3>{account.displayName}</h3>
-                  {planLabel ? <span className="planTypeBadge">{planLabel}</span> : null}
+                  <PlanTypeBadge planType={quota?.planType} />
                   {isActiveAccount ? (
                     <span className="accountActiveBadge" aria-label="Active session account">
                       Active
