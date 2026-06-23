@@ -648,6 +648,18 @@ p {
   background: var(--amber-soft);
   border-color: color-mix(in srgb, var(--amber) 25%, transparent);
 }
+.planTypeBadge {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 850;
+  line-height: 1;
+  padding: 2px 5px;
+  white-space: nowrap;
+}
 
 .iconCircleBtn {
   background: var(--surface2);
@@ -1200,8 +1212,9 @@ html[data-tray-popover='1'] #root {
 }
 .trayAccountNameWrap {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
   min-width: 0;
 }
 .trayAccountNameWrap > strong {
@@ -1212,6 +1225,12 @@ html[data-tray-popover='1'] #root {
   white-space: nowrap;
   color: var(--text-primary);
   font-size: 13px;
+}
+.trayAccountPlanLine {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
 }
 .trayAccountActions {
   display: flex;
@@ -1269,12 +1288,18 @@ html[data-tray-popover='1'] #root {
   gap: 8px;
   flex-shrink: 0;
 }
+.trayAccountRow--monthlyOnly .trayAccountRowContentLeft {
+  gap: 28px;
+}
 .trayAccountRowContentLeftText {
   display: flex;
   flex-direction: column;
   gap: 2px;
   justify-content: center;
   width: 48px;
+}
+.trayAccountRow--monthlyOnly .trayAccountRowContentLeftText {
+  width: 160px;
 }
 .trayAccountRowContentLeftText strong {
   font-size: 13px;
@@ -2192,8 +2217,6 @@ pre {
   }
 }
 
-
-
 /* Segmented Tabs for Overview Agent Switcher */
 .overviewTabs {
   display: flex;
@@ -2250,7 +2273,7 @@ pre {
 }
 .splash-text {
   margin-top: 24px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.08em;
@@ -2275,6 +2298,11 @@ pre {
 }
 
 @keyframes splash-fade {
-  0%, 100% { opacity: 0.55; }
-  50% { opacity: 0.95; }
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.95;
+  }
 }

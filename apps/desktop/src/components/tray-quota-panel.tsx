@@ -22,6 +22,8 @@ import {
   countAccountsWithAvailableQuota,
   countAccountsWithQuotaData,
   mergeQuotaSnapshots,
+  planTypeLabel,
+  quotaDisplayWindows,
   quotaRemainingPercent,
 } from '../lib/quota';
 import { formatResetCountdown } from '../lib/reset';
@@ -440,10 +442,7 @@ interface TrayAntigravityModelListProps {
   isDark: boolean;
 }
 
-function TrayAntigravityModelList({
-  quota,
-  isDark,
-}: TrayAntigravityModelListProps) {
+function TrayAntigravityModelList({ quota, isDark }: TrayAntigravityModelListProps) {
   const [_, setTick] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => {
@@ -468,7 +467,14 @@ function TrayAntigravityModelList({
           <p style={{ margin: 0, fontSize: '13px', fontWeight: 500, color: 'var(--text-muted)' }}>
             Antigravity Offline
           </p>
-          <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'var(--text-muted)', opacity: 0.8 }}>
+          <p
+            style={{
+              margin: '4px 0 0 0',
+              fontSize: '11px',
+              color: 'var(--text-muted)',
+              opacity: 0.8,
+            }}
+          >
             {quota.error || 'Server is not running'}
           </p>
         </div>
@@ -488,7 +494,8 @@ function TrayAntigravityModelList({
     <div className="trayProviderRows">
       {quota.models.map((model, index) => {
         const remainingFraction = model.remainingFraction ?? null;
-        const remainingPercent = remainingFraction !== null ? Math.round(remainingFraction * 100) : null;
+        const remainingPercent =
+          remainingFraction !== null ? Math.round(remainingFraction * 100) : null;
         const isDepleted = remainingPercent === 0;
 
         const modelTheme = getAccountTheme(model.label, index, isDark);
@@ -506,13 +513,25 @@ function TrayAntigravityModelList({
                   className="trayAccountStatusDot"
                   style={{
                     backgroundColor: isDepleted ? '#ef4444' : '#22c55e',
-                    boxShadow: isDepleted ? '0 0 4px rgba(239, 68, 68, 0.5)' : '0 0 4px rgba(34, 197, 94, 0.5)',
+                    boxShadow: isDepleted
+                      ? '0 0 4px rgba(239, 68, 68, 0.5)'
+                      : '0 0 4px rgba(34, 197, 94, 0.5)',
                   }}
                 />
-                <div className="trayAccountNameWrap" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div
+                  className="trayAccountNameWrap"
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
                   <strong title={model.label}>{model.label}</strong>
                   {isDepleted && (
-                    <span style={{ fontSize: '12px' }} title="Quota depleted" role="img" aria-label="warning">⚠️</span>
+                    <span
+                      style={{ fontSize: '12px' }}
+                      title="Quota depleted"
+                      role="img"
+                      aria-label="warning"
+                    >
+                      ⚠️
+                    </span>
                   )}
                 </div>
               </div>
@@ -548,7 +567,9 @@ function TrayAntigravityModelList({
                   />
                 </div>
                 <span className="trayResetSub" style={{ textAlign: 'right' }}>
-                  {model.resetTime ? `Resets in ${formatRelativeTime(model.resetTime)}` : 'No reset scheduled'}
+                  {model.resetTime
+                    ? `Resets in ${formatRelativeTime(model.resetTime)}`
+                    : 'No reset scheduled'}
                 </span>
               </div>
             </div>
@@ -616,7 +637,9 @@ function TrayAccountList({
               >
                 {group.title}
                 {group.id === 'codex' && <em>{group.accounts.length}</em>}
-                {group.id === 'antigravity' && antigravityQuota?.ok && <em>{antigravityQuota.models.length}</em>}
+                {group.id === 'antigravity' && antigravityQuota?.ok && (
+                  <em>{antigravityQuota.models.length}</em>
+                )}
               </button>
             ))}
           </div>
@@ -636,114 +659,136 @@ function TrayAccountList({
         ) : null}
 
         {activeGroup.id === 'antigravity' ? (
-          <TrayAntigravityModelList
-            quota={antigravityQuota}
-            isDark={isDark}
-          />
+          <TrayAntigravityModelList quota={antigravityQuota} isDark={isDark} />
         ) : activeGroup.accounts.length === 0 ? (
           <div className="trayProviderRows">
             <p className="trayPopoverEmpty">No Codex profiles found.</p>
           </div>
         ) : (
           <div className="trayProviderRows">
-          {activeGroup.accounts.map((account, index) => {
-            const quota = quotas.find((q) => q.profileId === account.id);
-            const title = account.displayName.trim() || account.id;
-            const isActiveAccount = activeSession?.accountId === account.id;
-            const isRefreshingQuota = refreshingQuotaIds.includes(account.id);
+            {activeGroup.accounts.map((account, index) => {
+              const quota = quotas.find((q) => q.profileId === account.id);
+              const title = account.displayName.trim() || account.id;
+              const planLabel = planTypeLabel(quota?.planType);
+              const isActiveAccount = activeSession?.accountId === account.id;
+              const isRefreshingQuota = refreshingQuotaIds.includes(account.id);
 
-            const accountTheme = getAccountTheme(account.id, index, isDark);
-            const primaryRemaining = quotaRemainingPercent(quota?.primaryUsedPercent);
-            const secondaryRemaining = quotaRemainingPercent(quota?.secondaryUsedPercent);
+              const accountTheme = getAccountTheme(account.id, index, isDark);
+              const quotaWindows = quotaDisplayWindows(quota);
+              const primaryWindow = quotaWindows[0] ?? null;
+              const secondaryWindow = quotaWindows[1] ?? null;
+              const monthlyOnly = primaryWindow?.variant === 'monthly' && !secondaryWindow;
+              const primaryRemaining = quotaRemainingPercent(primaryWindow?.usedPercent);
+              const secondaryRemaining = quotaRemainingPercent(secondaryWindow?.usedPercent);
 
-            const primaryStateTheme = getQuotaStateTheme(primaryRemaining, isDark);
-            const secondaryStateTheme = getQuotaStateTheme(secondaryRemaining, isDark);
+              const primaryStateTheme = getQuotaStateTheme(primaryRemaining, isDark);
+              const secondaryStateTheme = getQuotaStateTheme(secondaryRemaining, isDark);
 
-            const cardStyle = {
-              borderColor: accountTheme.color + '22',
-            } as CSSProperties;
+              const cardStyle = {
+                borderColor: accountTheme.color + '22',
+              } as CSSProperties;
 
-            const btnStyle = {
-              '--btn-bg': accountTheme.color + '14',
-              '--btn-text': accountTheme.color,
-              '--btn-border': accountTheme.color + '22',
-            } as CSSProperties;
+              const btnStyle = {
+                '--btn-bg': accountTheme.color + '14',
+                '--btn-text': accountTheme.color,
+                '--btn-border': accountTheme.color + '22',
+              } as CSSProperties;
 
-            return (
-              <div className="trayAccountRow" key={account.id} style={cardStyle}>
-                <div className="trayAccountRowTop">
-                  <div className="trayAccountMain">
-                    <span className={`trayAccountStatusDot ${isActiveAccount ? 'isActive' : ''}`} />
-                    <div className="trayAccountNameWrap">
-                      <strong title={title}>{title}</strong>
-                      {isActiveAccount && (
-                        <span className="accountActiveBadge" aria-label="Active session account">
-                          Active
+              return (
+                <div
+                  className={`trayAccountRow ${monthlyOnly ? 'trayAccountRow--monthlyOnly' : ''}`}
+                  key={account.id}
+                  style={cardStyle}
+                >
+                  <div className="trayAccountRowTop">
+                    <div className="trayAccountMain">
+                      <span
+                        className={`trayAccountStatusDot ${isActiveAccount ? 'isActive' : ''}`}
+                      />
+                      <div className="trayAccountNameWrap">
+                        <strong title={title}>{title}</strong>
+                        {planLabel || isActiveAccount ? (
+                          <div className="trayAccountPlanLine">
+                            {planLabel ? <span className="planTypeBadge">{planLabel}</span> : null}
+                            {isActiveAccount && (
+                              <span
+                                className="accountActiveBadge"
+                                aria-label="Active session account"
+                              >
+                                Active
+                              </span>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="trayAccountActions">
+                      <button
+                        type="button"
+                        className={`trayAccountRefreshButton ${isRefreshingQuota ? 'isRefreshing' : ''}`}
+                        aria-label={`Refresh ${title} quota`}
+                        title={`Refresh ${title} quota`}
+                        disabled={isRefreshingQuota}
+                        onClick={() => onRefreshAccount(account)}
+                      >
+                        <IconRefresh size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className="trayRelayButton"
+                        style={btnStyle}
+                        disabled={!activeSession || relayingAccountId === account.id}
+                        onClick={() => onRelayTo(account)}
+                      >
+                        {activeSession?.accountId === account.id ? 'Resume' : 'Relay'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="trayAccountRowContent">
+                    <div className="trayAccountRowContentLeft">
+                      <div className="trayAccountRowContentLeftText">
+                        <strong>{primaryWindow?.shortLabel ?? 'N/A'}</strong>
+                        <span>
+                          {primaryWindow
+                            ? formatResetCountdown(primaryWindow.resetAt, primaryWindow.variant)
+                            : 'unknown'}
                         </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="trayAccountActions">
-                    <button
-                      type="button"
-                      className={`trayAccountRefreshButton ${isRefreshingQuota ? 'isRefreshing' : ''}`}
-                      aria-label={`Refresh ${title} quota`}
-                      title={`Refresh ${title} quota`}
-                      disabled={isRefreshingQuota}
-                      onClick={() => onRefreshAccount(account)}
-                    >
-                      <IconRefresh size={12} />
-                    </button>
-                    <button
-                      type="button"
-                      className="trayRelayButton"
-                      style={btnStyle}
-                      disabled={!activeSession || relayingAccountId === account.id}
-                      onClick={() => onRelayTo(account)}
-                    >
-                      {activeSession?.accountId === account.id ? 'Resume' : 'Relay'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="trayAccountRowContent">
-                  <div className="trayAccountRowContentLeft">
-                    <div className="trayAccountRowContentLeftText">
-                      <strong>5h</strong>
-                      <span>{formatResetCountdown(quota?.resetAt, 'session')}</span>
-                    </div>
-                    <CircularProgressRing
-                      percent={primaryRemaining}
-                      themeColor={primaryStateTheme.color}
-                      themeGlow={primaryStateTheme.glow}
-                    />
-                  </div>
-
-                  <div className="trayAccountRowContentRight">
-                    <div className="trayAccountRowContentRightLabel">
-                      <strong style={{ color: secondaryStateTheme.color }}>
-                        {secondaryRemaining === null ? 'N/A' : `${secondaryRemaining}%`}
-                      </strong>
-                      <span>weekly</span>
-                    </div>
-                    <div className="trayQuotaTrack">
-                      <i
-                        style={{
-                          width: `${secondaryRemaining ?? 0}%`,
-                          background: secondaryStateTheme.color,
-                          boxShadow: `0 0 4px ${secondaryStateTheme.glow}`,
-                        }}
+                      </div>
+                      <CircularProgressRing
+                        percent={primaryRemaining}
+                        themeColor={primaryStateTheme.color}
+                        themeGlow={primaryStateTheme.glow}
                       />
                     </div>
-                    <span className="trayResetSub" style={{ textAlign: 'right' }}>
-                      {formatResetCountdown(quota?.secondaryResetAt, 'weekly')}
-                    </span>
+
+                    {secondaryWindow && (
+                      <div className="trayAccountRowContentRight">
+                        <div className="trayAccountRowContentRightLabel">
+                          <strong style={{ color: secondaryStateTheme.color }}>
+                            {secondaryRemaining === null ? 'N/A' : `${secondaryRemaining}%`}
+                          </strong>
+                          <span>{secondaryWindow.shortLabel}</span>
+                        </div>
+                        <div className="trayQuotaTrack">
+                          <i
+                            style={{
+                              width: `${secondaryRemaining ?? 0}%`,
+                              background: secondaryStateTheme.color,
+                              boxShadow: `0 0 4px ${secondaryStateTheme.glow}`,
+                            }}
+                          />
+                        </div>
+                        <span className="trayResetSub" style={{ textAlign: 'right' }}>
+                          {formatResetCountdown(secondaryWindow.resetAt, secondaryWindow.variant)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </section>
@@ -907,10 +952,7 @@ export function TrayQuotaPanel() {
     setRefreshing(true);
     setStatus('Refreshing…');
     try {
-      await Promise.all([
-        load(true),
-        loadAntigravity(true),
-      ]);
+      await Promise.all([load(true), loadAntigravity(true)]);
     } finally {
       setRefreshing(false);
     }
@@ -1005,7 +1047,8 @@ export function TrayQuotaPanel() {
   const avg5hRemaining = averagePrimaryRemainingPercent(quotas);
 
   const antigravityModelsCount = antigravityQuota?.models.length ?? 0;
-  const antigravityUsableCount = antigravityQuota?.models.filter(m => (m.remainingFraction ?? 0) > 0).length ?? 0;
+  const antigravityUsableCount =
+    antigravityQuota?.models.filter((m) => (m.remainingFraction ?? 0) > 0).length ?? 0;
   const antigravityAvgRemaining = useMemo(() => {
     if (!antigravityQuota?.models.length) return null;
     const total = antigravityQuota.models.reduce((sum, m) => sum + (m.remainingFraction ?? 0), 0);
@@ -1068,7 +1111,12 @@ export function TrayQuotaPanel() {
 
   useEffect(() => {
     scheduleTrayPopoverWindowSize(panelRef.current);
-  }, [accounts.length, quotas.length, activeGroup?.accounts.length, antigravityQuota?.models.length]);
+  }, [
+    accounts.length,
+    quotas.length,
+    activeGroup?.accounts.length,
+    antigravityQuota?.models.length,
+  ]);
 
   return (
     <div ref={panelRef} className="trayPopoverPanel" data-theme={resolvedTheme}>
@@ -1078,9 +1126,11 @@ export function TrayQuotaPanel() {
         onRefresh={() => void handleRefreshAll()}
         onClose={() => void closePopover()}
         accountsWithQuotaData={isAntigravityActive ? antigravityUsableCount : accountsWithQuotaData}
-        totalAccounts={isAntigravityActive ? antigravityModelsCount : (accounts.length || 0)}
+        totalAccounts={isAntigravityActive ? antigravityModelsCount : accounts.length || 0}
         avg5hRemaining={isAntigravityActive ? antigravityAvgRemaining : avg5hRemaining}
-        availableQuotaAccounts={isAntigravityActive ? antigravityUsableCount : availableQuotaAccounts}
+        availableQuotaAccounts={
+          isAntigravityActive ? antigravityUsableCount : availableQuotaAccounts
+        }
         activeAccountDisplayName={activeAccount?.displayName ?? activeSession?.accountId}
         activeSessionId={activeSession?.id}
         resolvedTheme={resolvedTheme}

@@ -977,7 +977,7 @@ if [ "$1" = "app-server" ]; then
   read _line1 || exit 1
   read _line2 || exit 1
   echo "$_line2" | /usr/bin/grep '"params":null' >/dev/null || exit 2
-  echo '{"jsonrpc":"2.0","id":1,"result":{"plan_type":"plus","primary":{"used_percent":42,"reset_at":"2026-06-02T10:00:00Z"},"secondary":{"used_percent":18,"reset_at":"2026-06-08T00:00:00Z"}}}'
+  echo '{"jsonrpc":"2.0","id":1,"result":{"plan_type":"plus","primary":{"used_percent":42,"windowDurationMins":300,"reset_at":"2026-06-02T10:00:00Z"},"secondary":{"used_percent":18,"windowDurationMins":10080,"reset_at":"2026-06-08T00:00:00Z"}}}'
   sleep 5
   exit 0
 fi
@@ -998,6 +998,8 @@ exit 1
     assert_eq!(snapshot.plan_type.as_deref(), Some("plus"));
     assert_eq!(snapshot.primary_used_percent, Some(42));
     assert_eq!(snapshot.secondary_used_percent, Some(18));
+    assert_eq!(snapshot.primary_window_duration_mins, Some(300));
+    assert_eq!(snapshot.secondary_window_duration_mins, Some(10080));
     assert_eq!(snapshot.remaining_percent, Some(58));
     assert_eq!(snapshot.reset_at.as_deref(), Some("2026-06-02T10:00:00Z"));
     assert_eq!(
@@ -1184,6 +1186,41 @@ exit 1
     assert_eq!(snapshot.staleness, "fresh");
     assert_eq!(snapshot.primary_used_percent, Some(24));
     assert_eq!(snapshot.secondary_used_percent, Some(81));
+}
+
+#[test]
+fn quota_app_server_parses_monthly_only_window() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-monthly-window");
+    seed_codex_home(&home, "monthly");
+    let bin = home.join("fake-codex.sh");
+    write_executable(
+        &bin,
+        r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  read _line1 || exit 1
+  read _line2 || exit 1
+  echo '{"id":2,"result":{"rateLimits":{"planType":"team","primary":{"usedPercent":11,"windowDurationMins":43800,"resetsAt":1784724636},"secondary":null}}}'
+  /bin/sleep 1
+  exit 0
+fi
+exit 1
+"#,
+    );
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::set_var("LAM_CODEX_BIN", bin.to_string_lossy().to_string());
+    let snapshot = get_profile_quota(&home, "monthly", true).unwrap();
+    std::env::remove_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+    std::env::remove_var("LAM_CODEX_BIN");
+
+    assert_eq!(snapshot.plan_type.as_deref(), Some("team"));
+    assert_eq!(snapshot.primary_used_percent, Some(11));
+    assert_eq!(snapshot.primary_window_duration_mins, Some(43800));
+    assert_eq!(snapshot.secondary_used_percent, None);
+    assert_eq!(snapshot.secondary_window_duration_mins, None);
+    assert_eq!(snapshot.remaining_percent, Some(89));
+    assert_eq!(snapshot.reset_at.as_deref(), Some("1784724636"));
+    assert_eq!(snapshot.secondary_reset_at, None);
 }
 
 #[test]

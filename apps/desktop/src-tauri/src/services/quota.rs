@@ -22,7 +22,11 @@ pub struct UsageQuotaSnapshot {
     pub plan_type: Option<String>,
     pub activity_tokens: Option<u64>,
     pub primary_used_percent: Option<u8>,
+    #[serde(default)]
+    pub primary_window_duration_mins: Option<u64>,
     pub secondary_used_percent: Option<u8>,
+    #[serde(default)]
+    pub secondary_window_duration_mins: Option<u64>,
     pub remaining_percent: Option<u8>,
     pub reset_at: Option<String>,
     pub secondary_reset_at: Option<String>,
@@ -142,7 +146,9 @@ fn unavailable_quota_snapshot(profile_id: &str, alert: Option<String>) -> UsageQ
         plan_type: None,
         activity_tokens: None,
         primary_used_percent: None,
+        primary_window_duration_mins: None,
         secondary_used_percent: None,
+        secondary_window_duration_mins: None,
         remaining_percent: None,
         reset_at: None,
         secondary_reset_at: None,
@@ -403,6 +409,8 @@ fn parse_rate_limit_snapshot_line(line: &str, profile_id: &str) -> Option<UsageQ
     let secondary = find_window(result, &["secondary", "secondary_window"]);
     let primary_used = extract_percent(primary)?;
     let secondary_used = secondary.and_then(extract_percent);
+    let primary_window_duration_mins = extract_window_duration_mins(primary);
+    let secondary_window_duration_mins = secondary.and_then(extract_window_duration_mins);
     let reset_at = extract_reset(primary);
     let secondary_reset_at = secondary.and_then(extract_reset);
     let plan_type = extract_string(result, &["plan_type", "planType"]).or_else(|| {
@@ -420,7 +428,9 @@ fn parse_rate_limit_snapshot_line(line: &str, profile_id: &str) -> Option<UsageQ
         plan_type,
         activity_tokens: None,
         primary_used_percent: Some(primary_used),
+        primary_window_duration_mins,
         secondary_used_percent: secondary_used,
+        secondary_window_duration_mins,
         remaining_percent: Some(100_u8.saturating_sub(primary_used)),
         reset_at,
         secondary_reset_at,
@@ -471,6 +481,24 @@ fn find_window<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
         }
     }
     None
+}
+
+fn extract_window_duration_mins(value: &Value) -> Option<u64> {
+    value
+        .get("windowDurationMins")
+        .or_else(|| value.get("window_duration_mins"))
+        .or_else(|| value.get("windowDurationMinutes"))
+        .and_then(|v| {
+            if let Some(raw) = v.as_u64() {
+                return Some(raw);
+            }
+            if let Some(raw) = v.as_f64() {
+                if raw.is_finite() && raw >= 0.0 {
+                    return Some(raw.round() as u64);
+                }
+            }
+            None
+        })
 }
 
 fn extract_percent(value: &Value) -> Option<u8> {

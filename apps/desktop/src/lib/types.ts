@@ -179,7 +179,9 @@ export type UsageQuotaSnapshot = {
   planType?: string | null;
   activityTokens?: number | null;
   primaryUsedPercent?: number | null;
+  primaryWindowDurationMins?: number | null;
   secondaryUsedPercent?: number | null;
+  secondaryWindowDurationMins?: number | null;
   remainingPercent?: number | null;
   resetAt?: string | null;
   secondaryResetAt?: string | null;

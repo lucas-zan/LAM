@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import { sessionDisplayName } from '../lib/format';
-import { countAccountsWithAvailableQuota, countAccountsWithQuotaData } from '../lib/quota';
+import {
+  countAccountsWithAvailableQuota,
+  countAccountsWithQuotaData,
+  planTypeLabel,
+  quotaDisplayWindows,
+} from '../lib/quota';
 import type {
   AccountNoteUpdate,
   CodexAccount,
@@ -299,6 +304,7 @@ export function Accounts({
         {orderedAccounts.map((account) => {
           const isRefreshing = refreshingQuotaIds.includes(account.id);
           const quota = quotas.find((item) => item.profileId === account.id);
+          const planLabel = planTypeLabel(quota?.planType);
           const providerLabel = account.providerId ?? 'unknown';
           const modelLabel = account.model ?? 'unknown';
           const isActiveAccount = currentSession?.accountId === account.id;
@@ -311,6 +317,7 @@ export function Accounts({
               <div className="cardHead">
                 <div className="cardTitleRow">
                   <h3>{account.displayName}</h3>
+                  {planLabel ? <span className="planTypeBadge">{planLabel}</span> : null}
                   {isActiveAccount ? (
                     <span className="accountActiveBadge" aria-label="Active session account">
                       Active
@@ -348,18 +355,15 @@ export function Accounts({
               </p>
               <AccountNotePanel account={account} onSave={onSaveAccountNote} />
               <div className="accountQuota">
-                <QuotaWindow
-                  label="Session (5h)"
-                  usedPercent={quota?.primaryUsedPercent}
-                  resetAt={quota?.resetAt}
-                  variant="session"
-                />
-                <QuotaWindow
-                  label="Weekly (7d)"
-                  usedPercent={quota?.secondaryUsedPercent}
-                  resetAt={quota?.secondaryResetAt}
-                  variant="weekly"
-                />
+                {quotaDisplayWindows(quota).map((window) => (
+                  <QuotaWindow
+                    key={window.key}
+                    label={window.label}
+                    usedPercent={window.usedPercent}
+                    resetAt={window.resetAt}
+                    variant={window.variant}
+                  />
+                ))}
               </div>
               <div className="cardActions">
                 <UIButton
@@ -506,12 +510,7 @@ function AccountNotePanel({
           <UIButton size="sm" variant="primary" type="submit" disabled={saving}>
             Save
           </UIButton>
-          <UIButton
-            size="sm"
-            type="button"
-            onClick={() => setEditing(false)}
-            disabled={saving}
-          >
+          <UIButton size="sm" type="button" onClick={() => setEditing(false)} disabled={saving}>
             Cancel
           </UIButton>
         </div>

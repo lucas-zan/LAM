@@ -1,6 +1,6 @@
-export type ResetWindowKind = "session" | "weekly";
+export type ResetWindowKind = 'session' | 'weekly' | 'monthly';
 
-const RESET_LOCALE = "en-US";
+const RESET_LOCALE = 'en-US';
 
 export function parseResetAt(resetAt?: string | null): Date | null {
   if (!resetAt) return null;
@@ -25,38 +25,33 @@ function isSameLocalCalendarDay(a: Date, b: Date): boolean {
 }
 
 /** Absolute reset time, e.g. "Resets 2:08 PM" or "Resets Jun 11, 2026 11:07 AM". */
-export function formatResetAt(
-  resetAt?: string | null,
-  kind: ResetWindowKind = "session",
-): string {
+export function formatResetAt(resetAt?: string | null, kind: ResetWindowKind = 'session'): string {
   const date = parseResetAt(resetAt);
-  if (!date) return "unknown";
-  if (date.getTime() <= Date.now()) return "now";
+  if (!date) return 'unknown';
+  if (date.getTime() <= Date.now()) return 'now';
 
   const timeOnly: Intl.DateTimeFormatOptions = {
-    hour: "numeric",
-    minute: "2-digit",
+    hour: 'numeric',
+    minute: '2-digit',
   };
   const dateTime: Intl.DateTimeFormatOptions = {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
   };
 
   const useDateTime =
-    kind === "weekly" || (kind !== "session" && !isSameLocalCalendarDay(date, new Date()));
-  const formatted = date.toLocaleString(
-    RESET_LOCALE,
-    useDateTime ? dateTime : timeOnly,
-  );
+    kind !== 'session' &&
+    (kind === 'weekly' || kind === 'monthly' || !isSameLocalCalendarDay(date, new Date()));
+  const formatted = date.toLocaleString(RESET_LOCALE, useDateTime ? dateTime : timeOnly);
   return `${formatted}`;
 }
 
 export function formatResetCountdown(
   resetAt?: string | null,
-  kind: ResetWindowKind = "session",
+  kind: ResetWindowKind = 'session',
 ): string {
   return formatResetAt(resetAt, kind);
 }

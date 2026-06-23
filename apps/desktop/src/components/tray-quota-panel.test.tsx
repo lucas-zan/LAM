@@ -62,7 +62,7 @@ const cachedQuota = {
   source: 'app_server_rate_limits',
   fetchedAt: 1,
   staleness: 'cached',
-  planType: 'plus',
+  planType: 'team',
   activityTokens: null,
   primaryUsedPercent: 40,
   secondaryUsedPercent: 10,
@@ -144,8 +144,10 @@ describe('TrayQuotaPanel', () => {
       return Promise.resolve(vi.fn());
     });
 
-    render(<TrayQuotaPanel />);
+    const { container } = render(<TrayQuotaPanel />);
     await waitFor(() => expect(screen.getAllByText('60%').length).toBeGreaterThan(0));
+    expect(screen.getByText('TEAM')).toBeTruthy();
+    expect(container.querySelector('.trayAccountPlanLine')?.textContent).toContain('TEAM');
 
     const cachedReads = vi.mocked(api.listCachedQuotas).mock.calls.length;
     listeners.get('quota-popover-refresh')?.forEach((handler) => handler());
@@ -157,13 +159,41 @@ describe('TrayQuotaPanel', () => {
   });
 
   it('refreshes only the selected account from its row action', async () => {
-    render(<TrayQuotaPanel />);
+    const { container } = render(<TrayQuotaPanel />);
     await waitFor(() => expect(screen.getAllByText('60%').length).toBeGreaterThan(0));
+    expect(
+      container.querySelector('.trayAccountRow')?.classList.contains('trayAccountRow--monthlyOnly'),
+    ).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh main quota' }));
 
     await waitFor(() => expect(api.getProfileQuota).toHaveBeenCalledWith('main', true));
     expect(api.getProfileQuota).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.getAllByText('80%').length).toBeGreaterThan(0));
+  });
+
+  it('shows only the monthly window for monthly-only quota accounts', async () => {
+    vi.mocked(api.listCachedQuotas).mockResolvedValue([
+      {
+        ...cachedQuota,
+        primaryUsedPercent: 11,
+        primaryWindowDurationMins: 43800,
+        secondaryUsedPercent: null,
+        secondaryWindowDurationMins: null,
+        remainingPercent: 89,
+        resetAt: '1784724636',
+        secondaryResetAt: null,
+      },
+    ]);
+
+    const { container } = render(<TrayQuotaPanel />);
+
+    await waitFor(() => expect(screen.getByText('monthly')).toBeTruthy());
+    expect(
+      container.querySelector('.trayAccountRow')?.classList.contains('trayAccountRow--monthlyOnly'),
+    ).toBe(true);
+    expect(screen.getAllByText('89%').length).toBeGreaterThan(0);
+    expect(screen.queryByText('weekly')).toBeNull();
+    expect(screen.queryByText('5h')).toBeNull();
   });
 });

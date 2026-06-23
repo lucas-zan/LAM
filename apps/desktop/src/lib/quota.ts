@@ -1,4 +1,15 @@
-import type { CodexAccount, UsageQuotaSnapshot } from "./types";
+import type { CodexAccount, UsageQuotaSnapshot } from './types';
+
+export type QuotaWindowVariant = 'session' | 'weekly' | 'monthly';
+
+export type QuotaDisplayWindow = {
+  key: 'primary' | 'secondary';
+  label: string;
+  shortLabel: string;
+  usedPercent: number | null | undefined;
+  resetAt: string | null | undefined;
+  variant: QuotaWindowVariant;
+};
 
 export function quotaRemainingPercent(used?: number | null): number | null {
   if (used === null || used === undefined) return null;
@@ -12,7 +23,9 @@ export function hasQuotaRemaining(used?: number | null): boolean {
 
 export function accountHasAvailableQuota(quota?: UsageQuotaSnapshot): boolean {
   if (!quota) return false;
-  return hasQuotaRemaining(quota.primaryUsedPercent) && hasQuotaRemaining(quota.secondaryUsedPercent);
+  return (
+    hasQuotaRemaining(quota.primaryUsedPercent) && hasQuotaRemaining(quota.secondaryUsedPercent)
+  );
 }
 
 export function filterQuotaSnapshotsForAccounts(
@@ -59,6 +72,68 @@ export function mergeQuotaSnapshots(
   return Array.from(next.values());
 }
 
+export function planTypeLabel(planType?: string | null): string | null {
+  const trimmed = planType?.trim();
+  return trimmed ? trimmed.toUpperCase() : null;
+}
+
+export function quotaDisplayWindows(quota?: UsageQuotaSnapshot | null): QuotaDisplayWindow[] {
+  if (!quota) return [];
+  const windows: QuotaDisplayWindow[] = [];
+  if (quota.primaryUsedPercent !== null && quota.primaryUsedPercent !== undefined) {
+    windows.push({
+      key: 'primary',
+      ...quotaWindowLabels(quota.primaryWindowDurationMins, 'primary'),
+      usedPercent: quota.primaryUsedPercent,
+      resetAt: quota.resetAt,
+    });
+  }
+  if (quota.secondaryUsedPercent !== null && quota.secondaryUsedPercent !== undefined) {
+    windows.push({
+      key: 'secondary',
+      ...quotaWindowLabels(quota.secondaryWindowDurationMins, 'secondary'),
+      usedPercent: quota.secondaryUsedPercent,
+      resetAt: quota.secondaryResetAt,
+    });
+  }
+  return windows;
+}
+
+function quotaWindowLabels(
+  durationMins: number | null | undefined,
+  slot: 'primary' | 'secondary',
+): Pick<QuotaDisplayWindow, 'label' | 'shortLabel' | 'variant'> {
+  if (durationMins === 300) {
+    return { label: 'Session (5h)', shortLabel: '5h', variant: 'session' };
+  }
+  if (durationMins === 10080) {
+    return { label: 'Weekly (7d)', shortLabel: 'weekly', variant: 'weekly' };
+  }
+  if (durationMins && durationMins >= 28 * 24 * 60 && durationMins <= 32 * 24 * 60) {
+    return { label: 'Monthly', shortLabel: 'monthly', variant: 'monthly' };
+  }
+  if (durationMins) {
+    return quotaDurationLabels(durationMins);
+  }
+  return slot === 'secondary'
+    ? { label: 'Weekly (7d)', shortLabel: 'weekly', variant: 'weekly' }
+    : { label: 'Session (5h)', shortLabel: '5h', variant: 'session' };
+}
+
+function quotaDurationLabels(
+  durationMins: number,
+): Pick<QuotaDisplayWindow, 'label' | 'shortLabel' | 'variant'> {
+  if (durationMins % 1440 === 0) {
+    const days = durationMins / 1440;
+    return { label: `${days}d`, shortLabel: `${days}d`, variant: 'weekly' };
+  }
+  if (durationMins % 60 === 0) {
+    const hours = durationMins / 60;
+    return { label: `${hours}h`, shortLabel: `${hours}h`, variant: 'session' };
+  }
+  return { label: `${durationMins}m`, shortLabel: `${durationMins}m`, variant: 'session' };
+}
+
 /** Mean 5h-window remaining % across accounts that have primary quota data. */
 export function averagePrimaryRemainingPercent(quotas: UsageQuotaSnapshot[]): number | null {
   const values = quotas
@@ -70,7 +145,7 @@ export function averagePrimaryRemainingPercent(quotas: UsageQuotaSnapshot[]): nu
 
 export function formatQuotaRemainingLabel(used?: number | null): string {
   const remaining = quotaRemainingPercent(used);
-  if (remaining === null) return "N/A";
+  if (remaining === null) return 'N/A';
   return `${remaining}% left`;
 }
 
@@ -80,18 +155,18 @@ export function formatQuotaCompactSummary(
 ): string {
   const session = quotaRemainingPercent(primaryUsed);
   const weekly = quotaRemainingPercent(secondaryUsed);
-  const sessionText = session === null ? "5h N/A" : `5h ${session}%`;
-  const weeklyText = weekly === null ? "7d N/A" : `7d ${weekly}%`;
+  const sessionText = session === null ? '5h N/A' : `5h ${session}%`;
+  const weeklyText = weekly === null ? '7d N/A' : `7d ${weekly}%`;
   return `${sessionText} · ${weeklyText}`;
 }
 
-export type QuotaColorState = "safe" | "warn" | "danger" | "empty" | "na";
+export type QuotaColorState = 'safe' | 'warn' | 'danger' | 'empty' | 'na';
 
 export function quotaColorState(used?: number | null): QuotaColorState {
   const remaining = quotaRemainingPercent(used);
-  if (remaining === null) return "na";
-  if (remaining === 0) return "empty";
-  if (remaining < 25) return "danger";
-  if (remaining < 70) return "warn";
-  return "safe";
+  if (remaining === null) return 'na';
+  if (remaining === 0) return 'empty';
+  if (remaining < 25) return 'danger';
+  if (remaining < 70) return 'warn';
+  return 'safe';
 }

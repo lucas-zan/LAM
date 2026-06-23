@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { routes } from './types';
 import { Overview, Sessions } from './views';
-import type { CodexAccount, CodexSession } from '../lib/types';
+import type { CodexAccount, CodexSession, UsageQuotaSnapshot } from '../lib/types';
 
 const accounts: CodexAccount[] = [
   {
@@ -64,10 +64,30 @@ const sessions: CodexSession[] = [
   },
 ];
 
+const quotas: UsageQuotaSnapshot[] = [
+  {
+    profileId: 'a',
+    source: 'app_server_rate_limits',
+    fetchedAt: 1,
+    staleness: 'fresh',
+    planType: 'team',
+    activityTokens: null,
+    primaryUsedPercent: 20,
+    primaryWindowDurationMins: 300,
+    secondaryUsedPercent: 10,
+    secondaryWindowDurationMins: 10080,
+    remainingPercent: 80,
+    resetAt: '1782109286',
+    secondaryResetAt: '1782352982',
+    alerts: [],
+    suggestedActions: [],
+  },
+];
+
 function overviewProps() {
   return {
     accounts,
-    quotas: [],
+    quotas,
     providers: [],
     select: vi.fn(),
     openSync: vi.fn(),
@@ -96,6 +116,12 @@ describe('handoff navigation and entry points', () => {
 
     expect(screen.getAllByRole('button', { name: /handoff/i })).toHaveLength(accounts.length);
     expect(screen.getAllByRole('button', { name: /relay latest/i })).toHaveLength(accounts.length);
+  });
+
+  it('shows plan type beside account names when quota data includes it', () => {
+    render(<Overview {...overviewProps()} />);
+
+    expect(screen.getByText('TEAM')).toBeTruthy();
   });
 
   it('uses one overview account action button size class', () => {
