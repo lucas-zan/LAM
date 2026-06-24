@@ -484,3 +484,63 @@ cat ~/.codex-test-main/config.toml
 **准备好了吗？开始测试吧！** 🎉
 
 如果遇到任何问题，立即告诉我！
+
+---
+
+## ⚠️ 更新：Login 按钮逻辑调整
+
+**日期：** 2026-06-24  
+**Commit：** 45d0bcf
+
+### 变更说明
+
+在 PAT Mode 下，Login 按钮行为调整：
+
+**之前：** 所有账号的 Login 都禁用  
+**现在：** 只有激活账号的 Login 可用
+
+### 新的按钮状态（PAT Mode）
+
+#### 激活账号（例如 main）
+
+| 按钮 | 状态 | 说明 |
+|------|------|------|
+| Relay Latest | ❌ 灰色 | 不支持 |
+| Handoff | ❌ 灰色 | 不支持 |
+| Sync Sessions | ❌ 灰色 | 不支持 |
+| Rename | ❌ 灰色 | 不支持 |
+| **Login** | ✅ **蓝色** | **可用！用于刷新 token** |
+| Switch | ❌ 灰色 | 已经激活 |
+
+#### 其他账号
+
+| 按钮 | 状态 | 说明 |
+|------|------|------|
+| Relay Latest | ❌ 灰色 | 不支持 |
+| Handoff | ❌ 灰色 | 不支持 |
+| Sync Sessions | ❌ 灰色 | 不支持 |
+| Rename | ❌ 灰色 | 不支持 |
+| Login | ❌ 灰色 | 必须先 Switch |
+| **Switch** | ✅ **蓝色** | **可用！切换账号** |
+
+### 设计原因
+
+1. **激活账号需要 Login**
+   - Token 可能过期，需要刷新
+   - 不需要切换账号，直接重新登录
+
+2. **其他账号先 Switch 再 Login**
+   - PAT Mode 只有一个激活账号
+   - 必须先 Switch 激活，才能 Login
+
+### 更新后的测试
+
+在 **测试 4：PAT Mode 下的按钮状态** 中，修改预期：
+
+**激活账号 (test-backup):**
+- Login: ✅ 蓝色（可用）
+
+**非激活账号 (test-main):**
+- Login: ❌ 灰色（"Use Switch to activate this account first"）
+- Switch: ✅ 蓝色（可用）
+
