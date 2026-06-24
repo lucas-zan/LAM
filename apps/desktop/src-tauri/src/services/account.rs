@@ -162,6 +162,7 @@ pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
         let (is_relay, relay_identity, relay_source) = relay_parts(&id);
         let config = parse_codex_config(&home.join("config.toml"))?;
         let note = notes.accounts.get(&id);
+        let auth_mode = detect_auth_mode(home_root, &id, &home, &config);
         accounts.push(CodexAccount {
             id: id.clone(),
             display_name: if id == "main" {
@@ -186,7 +187,7 @@ pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
             relay_identity,
             provider_id: config.provider_id,
             model: config.model,
-            auth_mode: config.auth_mode,
+            auth_mode,
             renewal_date: note.and_then(|metadata| metadata.renewal_date.clone()),
             note: note.and_then(|metadata| metadata.note.clone()),
         });
@@ -833,6 +834,41 @@ pub fn check_token_expiration(
     })
 }
 
+/// Detects auth mode by checking both Lam metadata and Codex auth.json
+fn detect_auth_mode(
+    home_root: &Path,
+    profile_id: &str,
+    codex_home: &Path,
+    config: &CodexConfigBinding,
+) -> Option<String> {
+    // Priority 1: Check if Lam has recorded PAT metadata
+    if let Ok(Some(metadata)) = read_pat_metadata(home_root, profile_id) {
+        if metadata.auth_type == "personal_token" {
+            return Some("personal_token".to_string());
+        }
+    }
+
+    // Priority 2: Check Codex auth.json structure (read-only inspection)
+    let auth_path = codex_home.join("auth.json");
+    if auth_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&auth_path) {
+            // Simple heuristic: check for personal_access_token field
+            if content.contains("\"personal_access_token\"") {
+                return Some("personal_token".to_string());
+            }
+            if content.contains("\"token\"") {
+                return Some("oauth".to_string());
+            }
+            if content.contains("\"OPENAI_API_KEY\"") {
+                return Some("api_key".to_string());
+            }
+        }
+    }
+
+    // Priority 3: Fall back to config.toml detection
+    config.auth_mode.clone()
+}
+
 #[cfg(test)]
 mod pat_tests {
     use super::*;
@@ -913,5 +949,25 @@ mod pat_tests {
         assert!(status.is_expired);
         assert_eq!(status.warning_level, "expired");
         assert!(status.days_until_expiration.unwrap() < 0);
+    }
+
+    #[test]
+    fn test_detect_auth_mode_priority() {
+        let temp = TempDir::new().unwrap();
+        let home_root = temp.path();
+        let codex_home = temp.path().join("codex-a");
+        std::fs::create_dir_all(&codex_home).unwrap();
+
+        // Create PAT metadata (priority 1 - should override config)
+        record_pat_metadata(home_root, "a", Some("2030-12-31T10:00:00+08:00".to_string())).unwrap();
+
+        let config = CodexConfigBinding {
+            provider_id: Some("test".to_string()),
+            model: None,
+            auth_mode: Some("config".to_string()),
+        };
+
+        let detected = detect_auth_mode(home_root, "a", &codex_home, &config);
+        assert_eq!(detected, Some("personal_token".to_string()));
     }
 }
