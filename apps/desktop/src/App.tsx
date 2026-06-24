@@ -6,7 +6,7 @@ import { useQuotaStore } from './stores/quota';
 import { useProviderStore } from './stores/providers';
 import * as api from './lib/api';
 import * as Shell from './components/shell';
-import { IconClock, IconLogo, IconRefresh, IconPlus } from './components/icons';
+import { IconClock, IconLogo, IconRefresh, IconPlus, IconSync } from './components/icons';
 import { SyncModal } from './components/sync-modal';
 import { ThemeToggle } from './components/theme-toggle';
 import { UIButton } from './components/ui-button';
@@ -706,8 +706,14 @@ export function App() {
               <form onSubmit={async (e) => {
                 e.preventDefault();
                 const formData = new FormData(e.currentTarget);
+                const accountName = (formData.get('accountName') as string || '').trim();
                 const file = formData.get('authFile') as File;
                 const patToken = formData.get('patToken') as string;
+                
+                if (!accountName) {
+                  useAppStore.getState().setError('Please provide an account name');
+                  return;
+                }
                 
                 if (!file) {
                   useAppStore.getState().setError('Please select an auth.json file');
@@ -718,21 +724,15 @@ export function App() {
                   const fileContent = await file.text();
                   const authJson = JSON.parse(fileContent);
                   
-                  // Auth.json should contain metadata
-                  const accountId = authJson.account_id || authJson.accountId;
-                  const email = authJson.email;
+                  // Use the provided account name instead of auth.json's account_id
+                  const email = authJson.email || 'unknown@example.com';
                   const expired = authJson.expired;
                   
-                  if (!accountId) {
-                    useAppStore.getState().setError('auth.json missing account_id field');
-                    return;
-                  }
-                  
-                  // Build credentials
+                  // Build credentials with custom account name
                   const creds: UploadedCredentials = {
                     accessToken: authJson.access_token || "",
-                    accountId: accountId,
-                    email: email || "unknown@example.com",
+                    accountId: accountName,  // Use custom name
+                    email: email,
                     expired: expired || "2030-12-31T23:59:59+00:00",
                     headers: patToken ? {
                       authorization: `Bearer ${patToken}`
@@ -745,14 +745,34 @@ export function App() {
                     disabled: authJson.disabled || false,
                   };
                   
-                  handleAddPatAccount(creds);
+                  // Create account
+                  const result = await api.addPatAccount({ credentials: creds });
+                  
+                  // Auto-switch to the new account
+                  await api.switchToPatAccount(result.accountId);
+                  
+                  // Refresh and close
+                  await refresh();
+                  closeModal();
                 } catch (err) {
                   useAppStore.getState().setError(
-                    err instanceof Error ? err.message : 'Failed to parse auth.json'
+                    err instanceof Error ? err.message : 'Failed to create and switch account'
                   );
                 }
               }}>
                 <div className="uploadPatForm">
+                  <label>
+                    Account name *
+                    <input
+                      name="accountName"
+                      type="text"
+                      placeholder="luna"
+                      required
+                    />
+                    <span className="inputHint">
+                      This will create ~/.codex-{'{'}name{'}'}/
+                    </span>
+                  </label>
                   <label className="fileUploadLabel">
                     Select auth.json file *
                     <input
@@ -780,7 +800,7 @@ export function App() {
                   </UIButton>
                   <div className="modalFootPrimary">
                     <UIButton type="submit" variant="primary">
-                      Upload & Create
+                      <IconSync size={14} /> Switch
                     </UIButton>
                   </div>
                 </div>
