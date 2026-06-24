@@ -192,6 +192,35 @@ suggested_actions[]:
 | 3 | 解析 `sessions/**/rollout-*.jsonl` 最近 `token_count` 事件 | 离线 fallback，只能表示近期 activity/估算，不伪装成实时剩余额度 |
 | — | 未登录 | `source=unavailable`，引导 `codex-xxx login` |
 
+#### Personal Access Token Authentication Tracking
+
+**Added:** 2026-06-24
+
+LocalAgentManager tracks authentication modes for display purposes only:
+
+| Mode | Detection Method | Lam Storage |
+|------|------------------|-------------|
+| OAuth (traditional) | Codex `auth.json` contains `"token"` field | None |
+| Personal Access Token | Lam metadata file or `auth.json` contains `"personal_access_token"` | `~/.config/agent-workspace/auth-metadata/{profile_id}.json` |
+| API Key | `auth.json` contains `"OPENAI_API_KEY"` | None |
+
+**Lam-only feature**: This is a **display and tracking feature** for Lam's UI. Lam **never modifies** Codex's `auth.json` or `config.toml` files. It only:
+- Records PAT metadata when user uploads credentials via Lam UI
+- Reads Codex files to detect auth type for display
+- Tracks token expiration for warnings
+
+**Auth metadata structure** (`~/.config/agent-workspace/auth-metadata/{profile_id}.json`):
+```json
+{
+  "profileId": "a",
+  "authType": "personal_token",
+  "tokenExpiration": "2030-12-31T23:59:59+00:00",
+  "lastChecked": "2026-06-24T10:00:00+00:00"
+}
+```
+
+**Expiration warnings**: ok (>30d) | warning (8-30d) | critical (1-7d) | expired (<0d)
+
 **缓存：** `~/.config/agent-workspace/quota-cache/<profile_id>.json`，TTL 默认 5 分钟；设置项可改 1–60 分钟或关闭自动刷新。
 
 #### ProviderProfile

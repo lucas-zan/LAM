@@ -1,251 +1,258 @@
-# LAM (LocalAgentManager)
+# LocalAgentManager (Lam)
 
-**LAM** is a **macOS menu bar app** for people who run **multiple [Codex CLI](https://github.com/openai/codex) accounts** (`~/.codex`, `~/.codex-a`, …). It shows quota at a glance, lists sessions per account, and helps you **move conversations to another account safely** — without uploading your code or chat history to the cloud.
+**A local-first AI coding agent workspace manager.** Phase 1 is **Codex-first**: manage multiple `CODEX_HOME` profiles, relay workspaces, safe `sessions/` sync, and auditable `codex resume` commands. The architecture reserves extension to more agents (Claude Code, OpenCode, etc.) while shipping **Codex-first** today.
 
 **中文说明：** [`README.zh-CN.md`](README.zh-CN.md)
 
 ---
 
-## Why use LAM?
+## Background & motivation
 
-If you use more than one Codex profile, you have probably run into this:
+Common pain points when using Codex CLI day to day:
 
-- Each profile is a **separate folder** with its own `auth.json`, `config.toml`, and `sessions/`.
-- `codex resume` only finds sessions under the **current** `CODEX_HOME`.
-- When account A runs out of quota and you switch to B, **the conversation does not come with you** unless you copy the right files — and copying the whole folder can break login or pollute B’s environment.
+- **Multiple accounts side by side** — `~/.codex`, `~/.codex-a`, etc. each keep their own `auth.json`, `config.toml`, and `sessions/`. Switching is manual and easy to run the wrong wrapper or `CODEX_HOME`.
+- **Sessions do not follow account switches** — Codex stores conversation state under a specific `CODEX_HOME`. If you change account (or quota runs out on A and you open B) **without moving the session assets**, the new account does not inherit the prior thread. You often re-open the repo, re-explain context, and **re-read code — wasting tokens**.
+- **Unsafe session copy** — Copying account A’s tree into B can drag along `auth.json`, sqlite state, or cache and corrupt the target profile.
+- **Provider vs runtime drift** — A transcript may still `resume`, but model/proxy/cost/tool behavior may differ; that should be visible, not silent.
+- **No unified desktop surface** — The CLI is powerful but there is no single place to see accounts, sessions, quota, and sync plans.
 
-LAM keeps everything **on your Mac**. It scans local profiles, reads real quota (5h / weekly), and helps you **copy only what is safe**, then opens Terminal with the right `codex resume` command.
+Lam addresses this **without uploading sessions, code, or prompts**: account boundaries, provider references, session assets, relay, and sync live in a local Rust core + desktop UI, and **every write path is dry-run first**.
 
----
-
-## What LAM does
-
-| Area | What you get |
-|------|----------------|
-| **Menu bar tray** | Left-click for a quota panel; Relay / Resume shortcuts when a recent session is known |
-| **Overview** | All Codex accounts, quota bars, renewal notes, per-account actions |
-| **Sessions** | Browse, search, copy resume command, open Terminal, hand off a session |
-| **Sync** | Bulk-copy `sessions/` between profiles (dry-run first) |
-| **Providers** | Manage API endpoint metadata and attach to profiles (secrets stay in Keychain / env) |
-| **Settings** | Theme, home root, strategy when two accounts edited the same session differently |
-
-LAM does **not** run Codex inside the app. It prepares commands and opens **Terminal.app**.
+Authoritative design: [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md). Task tracking: [`docs/TODO.md`](docs/TODO.md), [`docs/IMPLEMENTATION-ISSUES.md`](docs/IMPLEMENTATION-ISSUES.md).
 
 ---
 
-## Install
+## Goals
 
-### From a release DMG (recommended)
+| Area | Intent |
+|------|--------|
+| **Local-first** | Data stays on disk; no cloud session sync. |
+| **Clear boundaries** | Account (`CODEX_HOME`) · Provider (metadata + secret refs) · Session (`sessions/` assets). |
+| **Safe defaults** | Sync **`sessions/` only** by default; **never copy `auth.json`**; do not merge `history.jsonl` by default. |
+| **Auditable writes** | Create account, relay, sync, attach provider: **plan → confirm → execute**. |
+| **Codex-first delivery** | Scan, resume, safe sync, provider center (Phase 1.5 basics shipped); `AgentAdapter` hook for Phase 2. |
+| **Native desktop** | **Tauri v2 + Rust + React** on **macOS** (not Electron; other OSes not planned yet). See [`docs/DESKTOP-RUNTIME.md`](docs/DESKTOP-RUNTIME.md). |
 
-1. Download **`LAM_<version>_*.dmg`** from [GitHub Releases](https://github.com/lucas-zan/LAM/releases).
-2. Open the DMG and drag **LAM** into **Applications**.
-3. Launch LAM. A **menu bar icon** appears; the main window opens as a normal app.
+---
 
-**Unsigned builds:** macOS may block the first launch. Use **right-click → Open**, or allow the app under **System Settings → Privacy & Security**.
+## Cross-account session handoff — what exists today
 
-**You need:**
+This is the core problem behind “switch account → session not inherited → token waste.” **Lam does not yet offer a single automatic “switch account and keep chatting” button inside Codex.** Phase 1 provides a **manual, safe pipeline** that matches how Codex actually stores state.
 
-- macOS (match the DMG architecture — e.g. Apple Silicon vs Intel).
-- **Codex CLI** installed; at least one profile logged in for real quota and sessions.
+### Why Codex does not inherit across accounts
 
-### From source (developers)
+Each profile is an isolated home directory:
 
-Requirements: **Node.js**, **npm**, **Rust**, **Cargo**, **macOS**.
+```text
+~/.codex-a/sessions/...   ← only visible when CODEX_HOME=~/.codex-a
+~/.codex-b/sessions/...   ← only visible when CODEX_HOME=~/.codex-b
+```
+
+`codex resume <session-id>` always resolves sessions **under the current `CODEX_HOME`**. Changing wrapper/account without copying the right `sessions/` tree means Codex starts from scratch for that home.
+
+### What Lam implements (Phase 1)
+
+| Step | Feature in app | What it does |
+|------|----------------|--------------|
+| 1 | **Create Relay** (`Relay` route / “+ New Relay”) | Creates a dedicated relay profile (e.g. `~/.codex-b-relay-a`) with **B’s login**, separate from source A. |
+| 2 | **Sync To…** (account card or Sync) | **Safe Sync** copies **`sessions/` only** from source → relay (dry-run required). Blocks `auth.json`, sqlite, cache, etc. |
+| 3 | **Login** on relay | Opens Terminal with `CODEX_HOME=<relay> codex login` so B’s auth lives in the relay home — not copied from A. |
+| 4 | **Resume** (Sessions → Copy / Terminal / Details) | Builds `CODEX_HOME=<profile> codex resume <id>` and opens Terminal or clipboard. |
+| 5 | **Relay / Continue** (Overview account card, tray popover) | With an active session selected, copies the session asset to the target profile when needed (`relay_resume_session`), then opens Terminal with `codex resume` (diverged-session strategies in Settings). |
+
+End-to-end relay flow (documented in [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md) §4.3–4.5):
+
+```text
+Account A (quota low)  --[Safe Sync sessions/]-->  Relay home (B’s auth)
+                                                      |
+                                                      v
+                                            codex resume <session-id>
+                                            with CODEX_HOME=relay
+```
+
+### What is **not** implemented yet
+
+- **No one-click “continue this session on account B”** — you still run relay + sync + resume yourself.
+- **Sessions UI is per-account** — dropdown filters one `CODEX_HOME` at a time; there is no unified cross-account session board with built-in handoff (see `docs/CORRECTION-PLAN.md` A1/A2).
+- **No in-app Codex process** — Lam does not embed the CLI; it prepares commands and opens **Terminal.app**.
+- **No automatic sync on account switch** — switching the Sessions filter only changes which directory is listed; it does not move files.
+- **`history.jsonl` merge** — intentionally out of scope for Phase 1.
+
+Planned improvements: guided relay wizard, cross-profile session browsing, clearer handoff from Overview when quota is low (see **Future roadmap**).
+
+---
+
+## Current capabilities (initial / Phase 1)
+
+**Rust core (`apps/desktop/src-tauri`)**
+
+- Scan `~/.codex` and `~/.codex-*` and parse session metadata.
+- Managed account / relay workspace plan & execute.
+- Safe sync (`sessions/` only, target backup, manifest).
+- Resume command builder (shell-escaped) + Terminal launch.
+- **`relay_resume_session`:** copy/merge a single session into a target profile (with diverged strategies) and return a resume command.
+- Provider metadata CRUD; secrets via env/Keychain refs only (no API keys in UI).
+- Attach provider to profile; **provider mismatch** warnings on sessions.
+- Account/quota **disk cache** for faster startup (`accounts-cache.json`, cached quota snapshots).
+- **Personal Access Token (PAT) tracking:** Track PAT expiration, display auth status (Lam UI only, doesn't modify Codex files).
+
+**Desktop UI (`apps/desktop`)**
+
+- Routes: **Overview** (accounts + quota), **Sessions**, **Relay**, **Providers**, **Sync**, **Settings**.
+- Quota via Codex app-server (5h / weekly); shows **N/A** when unavailable (no fake percentages).
+- **Menu bar tray (macOS):** **left-click** opens a compact **quota popover** (5h / weekly meters, per-account **Relay** or **Resume** when a latest session exists). **Right-click** for Refresh / Open app. Click outside the panel or **Close** dismisses it (main window stays hidden unless you choose **Open**). Background refresh every 5 minutes (startup also loads cached accounts/quota first, then refreshes per account in parallel).
+- Sync modal: dry-run required before execute.
+
+**Explicitly out of Phase 1**
+
+- `history.jsonl` merge.
+- Cloud sync.
+- Non-Codex agents (Phase 2).
+- Fake quota / token estimates presented as official limits.
+
+See [`docs/PHASE1-ACCEPTANCE.md`](docs/PHASE1-ACCEPTANCE.md), [`docs/CORRECTION-PLAN.md`](docs/CORRECTION-PLAN.md).
+
+---
+
+## Safety defaults
+
+- **Never** copy `auth.json` in sync.
+- **Block** `config.toml`, sqlite, `cache/`, `tmp/`, `logs/`, `installation_id` by default.
+- Prefer relay profiles (e.g. `~/.codex-b-relay-a`) so source accounts are not polluted.
+- UI sync / create flows require **dry-run first**.
+
+---
+
+## Roadmap
+
+### Shipped (Phase 1 core + 1.2 quota + 1.5 provider basics)
+
+| Area | Delivered |
+|------|-----------|
+| **Accounts & relay** | Scan `~/.codex*`; create managed accounts; **relay workspaces**; safe `sessions/` sync (dry-run → execute). |
+| **Quota** | Codex app-server **5h / weekly** in Overview; **menu bar tray popover**; disk cache; **per-account parallel refresh**; N/A when unavailable. |
+| **Handoff** | `codex resume` commands; **`relay_resume_session`** (copy/merge session → target profile) from Overview **Relay/Continue** and tray **Relay/Resume**; diverged-session strategies in Settings. |
+| **Provider** | Provider Center CRUD, env/Keychain secret refs, attach to profile, mismatch warnings. |
+| **Desktop** | Tauri v2 app; tray-first launch (main window via **Open**); click-outside to dismiss popover. |
+
+### Next (Phase 1 wrap-up — macOS only)
+
+**Platform scope:** **macOS only** for now. No Linux/Windows port planned; focus on polishing tray, popover, Terminal integration, and Phase 1 acceptance on Mac.
+
+| Theme | Direction |
+|-------|-----------|
+| **Product & UI** | Activity timeline; **unified cross-profile Sessions** list; settings polish; [`docs/PHASE1-ACCEPTANCE.md`](docs/PHASE1-ACCEPTANCE.md) sign-off. |
+| **Handoff UX** | **Guided wizard** when quota is low (single flow: relay → sync → login → resume), not only separate buttons. |
+| **Quota & relay tuning** | Edge cases, staleness UX, docs/tests alignment for provider + quota paths. |
+| **macOS polish** | Menu bar tray UX, popover focus/dismiss, app-server quota reliability, signed bundle readiness. |
+
+### Later
+
+| Phase | Direction |
+|-------|-----------|
+| **Phase 2** | `AgentAdapter`; Claude Code / OpenCode without weakening Codex safety defaults. |
+
+Details: [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md), [`docs/TODO.md`](docs/TODO.md).
+
+---
+
+## Requirements
+
+- **Node.js** + **npm**
+- **Rust** + **Cargo**
+- **macOS** — supported target platform (tray, Terminal integration); Linux/Windows not planned yet. Full Xcode only for signed bundles
+- Optional: **Codex CLI** logged in (real quota/sessions); repo **`.fake-home`** for offline tests
+
+---
+
+## Quick start
 
 ```bash
-git clone https://github.com/lucas-zan/LAM.git
-cd LAM
 make install
 make start
 ```
 
-Test fixtures without touching your real `~/.codex*`:
+Fixture home (does not touch real `~/.codex*`):
 
 ```bash
-LAM_HOME="$(pwd)/examples/fake-home" LAM_ALLOW_FAKE_HOME=1 make start
+LAM_HOME="$(pwd)/.fake-home" make start
 ```
 
-Build a DMG locally: `make dmg`  
-Release builds: push a tag like `v0.1.0` (see [`.github/workflows/release.yml`](.github/workflows/release.yml)).
+- `make start` launches the **Tauri app** (menu bar tray on macOS). The **main window starts hidden**; open it from the tray (**Open** in the popover or right-click → Open LocalAgentManager). The Vite URL in the terminal is only the embedded dev server, not a browser-only product.
+- By default Lam scans your real home. Set `LAM_HOME` explicitly to use fixtures.
 
 ---
 
-## Daily use
-
-### Menu bar tray
-
-- **Left-click** — quota popover for every account (5h and weekly bars).
-- **Relay / Resume** on a row — same as **Relay Latest** on that account (see below).
-- **Right-click** — refresh quotas or open the main window.
-- Click outside the panel or **Close** to dismiss it.
-
-### Main window
-
-Bottom navigation: **Overview · Sessions · Providers · Sync · Settings**
-
-Toolbar: **Refresh**, **New Account**, **New Provider**
-
-On **Overview → Codex**, each account card shows quota, notes, and action buttons explained in the next section.
-
----
-
-## Account actions: Relay Latest, Handoff, Sync Sessions, Rename
-
-These four buttons solve **different** problems. Pick the one that matches what you want to do.
-
-### Relay Latest — “Continue my **most recent** session on this account”
-
-**What it does**
-
-1. Finds the **single most recently modified session across all your Codex profiles** (“latest active session”).
-2. If that session file is not already on the **target account** you clicked, LAM **copies that one session file** into the target’s `sessions/` folder (never `auth.json`).
-3. Opens **Terminal** with `CODEX_HOME=<target> codex resume <session-id>` so you can keep working there.
-
-**When to use**
-
-- You were just coding on account A and want to **continue the same thread on account B** (e.g. B still has quota).
-- You do not need to pick a session manually — you want “whatever I was doing last.”
-
-**When not to use**
-
-- You need a **specific older session**, not the latest one → use **Handoff**.
-- You want to copy **many sessions at once** → use **Sync Sessions**.
-- The button is disabled if LAM cannot find any session yet.
-
----
-
-### Handoff — “Continue a **chosen** session on another account”
-
-**What it does**
-
-1. Opens a dialog: **source account**, **session** (list from that account), **target account**.
-2. Copies **only that session’s transcript file** to the target if needed (same safe rules as Relay Latest).
-3. Opens **Terminal** with `codex resume` on the target account.
-
-**How to open it**
-
-- On an account card: **Handoff** — target is preset to that card; you choose source + session.
-- On **Sessions** tab: **Relay To…** on a row — that session is preset; you choose target (and can change source).
-
-**When to use**
-
-- You know **exactly which session** to move (not necessarily the latest).
-- You want control before anything is copied.
-
-**If both sides already edited the same session differently**, behavior follows **Settings → Diverged session strategy** (backup, fork, or stop and ask). LAM will not silently overwrite without a rule.
-
----
-
-### Sync Sessions — “Copy **all** session files from A to B (bulk)”
-
-**What it does**
-
-1. Opens the **Sync** dialog with source and target profiles.
-2. You run **Dry Run** first — LAM lists every file under `sessions/` that would be copied, skipped, or blocked.
-3. After you confirm, it copies the **entire `sessions/` tree** from source to target (file by file).
-4. Backs up the target’s existing `sessions/` folder before overwriting.
-5. Writes a manifest of what changed.
-
-**What it never copies**
-
-- `auth.json`, `config.toml`, sqlite, `cache/`, `tmp/`, `logs/`, etc.
-
-**When to use**
-
-- You are setting up a **relay workspace** or second account and want **many or all** conversations available there before resuming.
-- You are doing a **one-time migration** of session assets between homes.
-
-**When not to use**
-
-- You only need **one** conversation and want Terminal opened immediately → use **Relay Latest** or **Handoff**.
-- Sync does **not** run `codex resume` for you; after sync, use Sessions or Relay Latest to resume.
-
-**Note:** Syncing into a **primary** profile (not a relay-style home) works but LAM will warn you — a dedicated relay directory is safer so you do not mix accounts’ runtime state.
-
----
-
-### Rename — “Rename a managed account folder and wrapper”
-
-**What it does**
-
-1. Renames `~/.codex-{oldName}` → `~/.codex-{newName}` (moves the whole directory).
-2. Creates a new wrapper `~/bin/codex-{newName}` and removes the old wrapper script.
-3. **`auth.json` moves with the folder** — it is not deleted or copied separately.
-
-**When to use**
-
-- You created a profile as `~/.codex-b` and want a clearer name like `~/.codex-work`.
-- You want LAM and your shell wrappers to stay in sync with a new account id.
-
-**Limits**
-
-- **`main` (`~/.codex`) cannot be renamed.**
-- Target name must not already exist.
-- **Dry run** first; close any Codex process using that profile before renaming.
-
-Rename does **not** move sessions to another account — it only changes the **same** account’s directory name.
-
----
-
-### Quick comparison
-
-| Button | Copies | What gets copied | Opens Terminal? | You choose session? |
-|--------|--------|------------------|-----------------|---------------------|
-| **Relay Latest** | One file | Latest session across all profiles | Yes (`codex resume`) | No (automatic) |
-| **Handoff** | One file | Session you pick | Yes (`codex resume`) | Yes |
-| **Sync Sessions** | Many files | Whole `sessions/` tree | No | N/A (all sessions) |
-| **Rename** | — | Renames one profile’s home dir | No | N/A |
-
----
-
-## Other common tasks
-
-**New Account** — Create `~/.codex-{name}` + `~/bin/codex-{name}` (dry-run → create). Optional: copy `config.toml` from an existing profile.
-
-**Login** — Open Terminal with `codex login` for that profile’s `CODEX_HOME`.
-
-**Edit note** — Store a renewal date and short memo in LAM’s local metadata (not inside Codex auth).
-
-**Sessions tab** — Filter by account; **Copy** / **Terminal** / **Details** / **Relay To…**
-
-**Providers** — Register proxy or custom API endpoints; attach to a profile; API keys stay in env or Keychain.
-
----
-
-## How LAM is built (short)
-
-```text
-React UI  →  Tauri (macOS)  →  Rust core  →  ~/.codex*  +  Terminal
-```
-
-- **UI:** `apps/desktop/src` — tray popover + main window.
-- **Core:** `apps/desktop/src-tauri` — filesystem scan, sync, quota via Codex app-server, command generation.
-- **LAM metadata:** `~/.config/agent-workspace/` — account cache, notes, provider registry.
-- **Your Codex data:** stays in `~/.codex*`; LAM does not sync it to the cloud.
-
-More detail: [`docs/DESKTOP-RUNTIME.md`](docs/DESKTOP-RUNTIME.md)
-
----
-
-## Safety rules
-
-- Sync and handoff **never copy `auth.json`**.
-- Destructive actions use **dry-run → confirm → execute** where applicable.
-- Provider secrets are **not** shown in the UI or written into `config.toml` as plaintext.
-
----
-
-## Develop & test
+## Common commands
 
 | Command | Purpose |
 |---------|---------|
-| `make start` | Run app in dev mode |
-| `make check` | Build, UI smoke, Rust tests |
-| `make dmg` | Build installable DMG |
-| `make clean` | Remove `target/` and `dist/` (frees disk space; `target/` can grow to several GB during dev) |
+| `make start` | Tauri dev (foreground; Ctrl+C to stop) |
+| `make stop` | Stop Tauri/Vite started from this repo |
+| `make check` | Frontend build + UI smoke + `cargo fmt --check` + `cargo test` |
+| `make build` | Production frontend + Tauri bundle (local `.dmg` under `src-tauri/target/release/bundle/dmg/`) |
+| Git tag `v*` | Push e.g. `v0.1.0` → [`.github/workflows/release.yml`](.github/workflows/release.yml) builds macOS `.dmg` on GitHub Releases |
+| `make status` | Node / Rust / Tauri info |
+| `make accounts` | CLI scan (`lam-core`) |
+| `make help` | All Make targets |
+
+---
+
+## Tests
+
+**Rust:**
+
+```bash
+cd apps/desktop/src-tauri
+cargo test
+LAM_HOME="$(pwd)/../../.fake-home" cargo test
+```
+
+**Frontend:**
+
+```bash
+cd apps/desktop
+npm run build
+npm run test:ui
+```
+
+**Scanner only:**
+
+```bash
+cd apps/desktop/src-tauri
+LAM_HOME=/path/to/.fake-home cargo run --bin lam-core
+```
+
+---
+
+## Repository layout
+
+```text
+apps/desktop/              # React + Vite UI
+apps/desktop/src-tauri/    # Tauri + Rust core
+.fake-home/                # Test fixtures (no sqlite/cache/real auth in git)
+account-manager/           # HTML prototypes (reference)
+docs/                      # Specs, TODO, acceptance
+Makefile                   # Dev entrypoint
+```
+
+---
+
+## Documentation index
+
+| Doc | Purpose |
+|-----|---------|
+| [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md) | Master product & technical spec |
+| [`docs/TODO.md`](docs/TODO.md) | Implementation checklist |
+| [`docs/IMPLEMENTATION-ISSUES.md`](docs/IMPLEMENTATION-ISSUES.md) | Issue-level tracking |
+| [`docs/DESKTOP-RUNTIME.md`](docs/DESKTOP-RUNTIME.md) | Tauri architecture & troubleshooting |
+| [`docs/CORRECTION-PLAN.md`](docs/CORRECTION-PLAN.md) | UI/spec gap plan |
+| [`docs/PHASE1-ACCEPTANCE.md`](docs/PHASE1-ACCEPTANCE.md) | Phase 1 manual acceptance |
 
 ---
 
 ## License
 
-[MIT License](LICENSE) — use, modify, and distribute freely. Please include the copyright notice when redistributing.
+[MIT License](LICENSE) — free to use, modify, merge, publish, distribute, sublicense, and sell copies.
+
+Redistributions should include the copyright notice and MIT license text from [`LICENSE`](LICENSE). **Attribution in README or About** (e.g. “Based on LocalAgentManager”) is appreciated but not required by the license.
