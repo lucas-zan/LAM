@@ -250,6 +250,58 @@ export function Overview({
   );
 }
 
+
+function AuthModeBadge({ authMode }: { authMode?: string | null }) {
+  if (!authMode) return null;
+  
+  const modeLabels: Record<string, string> = {
+    personal_token: 'PAT',
+    oauth: 'OAuth',
+    api_key: 'API Key',
+    config: 'Config',
+  };
+  
+  const label = modeLabels[authMode] ?? authMode;
+  
+  return (
+    <span className="badge badge--authMode" title={`Auth mode: ${label}`}>
+      {label}
+    </span>
+  );
+}
+
+function TokenExpirationBadge({ 
+  status 
+}: { 
+  status?: { isExpired: boolean; daysUntilExpiration?: number | null; warningLevel: string } | null 
+}) {
+  if (!status) return null;
+  
+  const { isExpired, daysUntilExpiration, warningLevel } = status;
+  
+  if (warningLevel === 'ok') return null; // Don't show badge when >30 days
+  
+  let badgeClass = 'badge';
+  let label = '';
+  
+  if (isExpired) {
+    badgeClass += ' badge--expired';
+    label = 'Token expired';
+  } else if (warningLevel === 'critical') {
+    badgeClass += ' badge--critical';
+    label = `Expires in ${daysUntilExpiration}d`;
+  } else if (warningLevel === 'warning') {
+    badgeClass += ' badge--warning';
+    label = `Expires in ${daysUntilExpiration}d`;
+  }
+  
+  return (
+    <span className={badgeClass} title="PAT token expiration">
+      {label}
+    </span>
+  );
+}
+
 export function Accounts({
   accounts,
   quotas,
@@ -341,6 +393,7 @@ export function Accounts({
                   <span className={account.hasAuth ? 'badge badge--auth' : 'badge warn'}>
                     {account.hasAuth ? 'Logged in' : 'Login needed'}
                   </span>
+                  <AuthModeBadge authMode={account.authMode} />
                 </div>
               </div>
               <p className="cardPath mono" title={account.codexHome}>
