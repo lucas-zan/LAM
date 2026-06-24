@@ -94,6 +94,46 @@ pub struct AccountNoteUpdate {
     pub note: Option<String>,
 }
 
+/// User-uploaded credentials from external account management
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadedCredentials {
+    pub access_token: String,
+    pub account_id: String,
+    pub disabled: bool,
+    pub email: String,
+    pub expired: String,  // ISO 8601 format
+    #[serde(default)]
+    pub headers: Option<serde_json::Map<String, serde_json::Value>>,
+    pub id_token: Option<String>,
+    pub last_refresh: String,
+    pub refresh_token: Option<String>,
+    #[serde(rename = "type")]
+    pub credential_type: String,
+    pub websockets: bool,
+}
+
+/// Lam-tracked PAT metadata (stored in ~/.config/agent-workspace/auth-metadata/)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthMetadata {
+    pub profile_id: String,
+    pub auth_type: String,  // "personal_token" | "oauth" | "api_key"
+    pub token_expiration: Option<String>,  // ISO 8601
+    pub last_checked: String,  // ISO 8601
+}
+
+/// Token expiration status for UI display
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenExpirationStatus {
+    pub profile_id: String,
+    pub is_expired: bool,
+    pub days_until_expiration: Option<i64>,
+    pub expiration_date: Option<String>,
+    pub warning_level: String,  // "ok" | "warning" | "critical" | "expired"
+}
+
 pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
     let mut accounts = Vec::new();
     if !home_root.exists() {
