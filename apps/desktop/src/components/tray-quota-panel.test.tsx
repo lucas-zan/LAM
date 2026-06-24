@@ -110,7 +110,6 @@ beforeEach(() => {
       disconnect() {}
     },
   });
-  localStorage.clear();
   vi.mocked(api.listCachedAccounts).mockResolvedValue([account]);
   vi.mocked(api.listAccounts).mockResolvedValue([account]);
   vi.mocked(api.listCachedQuotas).mockResolvedValue([cachedQuota]);
