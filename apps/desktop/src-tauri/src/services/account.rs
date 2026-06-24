@@ -792,6 +792,47 @@ pub fn process_uploaded_credentials(
     Ok(())
 }
 
+/// Checks token expiration from metadata
+pub fn check_token_expiration(
+    home_root: &Path,
+    profile_id: &str,
+) -> Result<TokenExpirationStatus> {
+    let metadata = read_pat_metadata(home_root, profile_id)?;
+
+    let (expiration_date, is_expired, days_until, warning_level) = match metadata {
+        Some(meta) if meta.token_expiration.is_some() => {
+            let exp_str = meta.token_expiration.unwrap();
+            let expiry = chrono::DateTime::parse_from_rfc3339(&exp_str).map_err(|e| {
+                AppError::new("INVALID_EXPIRATION_FORMAT", e.to_string())
+            })?;
+
+            let now = chrono::Utc::now();
+            let days = (expiry.timestamp() - now.timestamp()) / 86400;
+
+            let level = if days < 0 {
+                "expired"
+            } else if days <= 7 {
+                "critical"
+            } else if days <= 30 {
+                "warning"
+            } else {
+                "ok"
+            };
+
+            (Some(exp_str), days < 0, Some(days), level.to_string())
+        }
+        _ => (None, false, None, "ok".to_string()),
+    };
+
+    Ok(TokenExpirationStatus {
+        profile_id: profile_id.to_string(),
+        is_expired,
+        days_until_expiration: days_until,
+        expiration_date,
+        warning_level,
+    })
+}
+
 #[cfg(test)]
 mod pat_tests {
     use super::*;
@@ -848,7 +889,29 @@ mod pat_tests {
             credential_type: "codex".to_string(),
             websockets: true,
         };
-
         assert!(process_uploaded_credentials(temp.path(), "test", &creds).is_err());
+    }
+    #[test]
+    fn test_expiration_not_expired() {
+        let temp = TempDir::new().unwrap();
+
+        record_pat_metadata(temp.path(), "test", Some("2030-12-31T10:00:00+08:00".to_string())).unwrap();
+
+        let status = check_token_expiration(temp.path(), "test").unwrap();
+        assert!(!status.is_expired);
+        assert_eq!(status.warning_level, "ok");
+        assert!(status.days_until_expiration.unwrap() > 0);
+    }
+
+    #[test]
+    fn test_expiration_expired() {
+        let temp = TempDir::new().unwrap();
+
+        record_pat_metadata(temp.path(), "test", Some("2020-01-01T10:00:00+08:00".to_string())).unwrap();
+
+        let status = check_token_expiration(temp.path(), "test").unwrap();
+        assert!(status.is_expired);
+        assert_eq!(status.warning_level, "expired");
+        assert!(status.days_until_expiration.unwrap() < 0);
     }
 }
