@@ -24,6 +24,7 @@ import type {
   SyncResult,
   AntigravityQuotaResponse,
   UploadedCredentials,
+  CodexAccount,
 } from './lib/types';
 import * as Views from './routes/views';
 
@@ -116,6 +117,7 @@ export function App() {
   const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
   const [uploadPatAccountId, setUploadPatAccountId] = useState('');
+  const [createMode, setCreateMode] = useState<'oauth' | 'pat'>('oauth');
 
   const resolvedTheme = useMemo(() => {
     if (themeMode === 'system')
@@ -306,6 +308,35 @@ export function App() {
     }
   }
 
+  async function handleAddPatAccount(credentials: UploadedCredentials) {
+    try {
+      const result = await api.addPatAccount({ credentials });
+      closeModal();
+      await refresh();
+      useAppStore.getState().setStatus(`PAT account '${result.accountId}' added successfully`);
+    } catch (err) {
+      useAppStore.getState().setStatus('Failed to add PAT account');
+      useAppStore.getState().setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleSwitchAccount(account: CodexAccount) {
+    // For PAT accounts, directly switch by copying auth file
+    if (account.authMode === 'personal_token') {
+      try {
+        await api.switchToPatAccount(account.id);
+        await refresh();
+        useAppStore.getState().setStatus(`Switched to PAT account '${account.id}'`);
+      } catch (err) {
+        useAppStore.getState().setStatus('Failed to switch PAT account');
+        useAppStore.getState().setError(err instanceof Error ? err.message : String(err));
+      }
+    } else {
+      // For OAuth accounts, use the traditional login flow
+      login(account);
+    }
+  }
+
   if (!appReady) {
     return (
       <div className="splash-container">
@@ -469,7 +500,7 @@ export function App() {
             select={setSelectedAccountId}
             openSync={openSyncModal}
             rename={openRenameAccountModal}
-            login={login}
+            login={handleSwitchAccount}
             openHandoff={(account) => openHandoffModal({ targetAccountId: account.id })}
             relayLatest={relayResumeTo}
             currentSession={activeSession}
@@ -547,82 +578,146 @@ export function App() {
       </div>
 
       {modal === 'account' ? (
-        <Shell.Modal title="Add Managed Account" close={closeModal}>
-          <div className="formGrid">
-            <label>
-              Account name
-              <input
-                value={accountReq.name}
-                onChange={(e) => setAccountReq({ ...accountReq, name: e.target.value })}
-              />
-            </label>
-            <label>
-              Copy config from
-              <select
-                value={accountReq.copyConfigFrom ?? ''}
-                onChange={(e) =>
-                  setAccountReq({ ...accountReq, copyConfigFrom: e.target.value || null })
+        <Shell.Modal title="Add Account" close={closeModal}>
+          <div className="createModeTabs">
+            <button
+              className={createMode === 'oauth' ? 'active' : ''}
+              onClick={() => setCreateMode('oauth')}
+            >
+              OAuth (Traditional)
+            </button>
+            <button
+              className={createMode === 'pat' ? 'active' : ''}
+              onClick={() => setCreateMode('pat')}
+            >
+              PAT (Upload Credentials)
+            </button>
+          </div>
+
+          {createMode === 'oauth' ? (
+            <>
+              <div className="formGrid">
+                <label>
+                  Account name
+                  <input
+                    value={accountReq.name}
+                    onChange={(e) => setAccountReq({ ...accountReq, name: e.target.value })}
+                  />
+                </label>
+                <label>
+                  Copy config from
+                  <select
+                    value={accountReq.copyConfigFrom ?? ''}
+                    onChange={(e) =>
+                      setAccountReq({ ...accountReq, copyConfigFrom: e.target.value || null })
+                    }
+                  >
+                    <option value="">None</option>
+                    {accounts
+                      .filter((a) => a.hasConfig)
+                      .map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.id}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              </div>
+              <div className="previewBox">
+                <div className="previewLine">
+                  <span>CODEX_HOME</span>
+                  <strong>~/.codex-{accountReq.name || 'name'}</strong>
+                </div>
+                <div className="previewLine">
+                  <span>Wrapper</span>
+                  <strong>~/bin/codex-{accountReq.name || 'name'}</strong>
+                </div>
+              </div>
+              <label className="syncOption">
+                <input
+                  type="checkbox"
+                  checked={accountReq.overwriteWrapper}
+                  onChange={(e) => setAccountReq({ ...accountReq, overwriteWrapper: e.target.checked })}
+                />
+                <span>
+                  <strong>Overwrite wrapper if it exists</strong>
+                  <span>Keeps CODEX_HOME untouched; only wrapper script is replaced.</span>
+                </span>
+              </label>
+              <Views.PlanView plan={plan} />
+              <div className="modalFoot">
+                <UIButton type="button" variant="ghost" onClick={closeModal}>
+                  Cancel
+                </UIButton>
+                <div className="modalFootPrimary">
+                  <UIButton
+                    type="button"
+                    onClick={async () => setPlan(await api.planCreateAccount(accountReq))}
+                  >
+                    Dry Run
+                  </UIButton>
+                  <UIButton
+                    type="button"
+                    variant="primary"
+                    disabled={!plan}
+                    onClick={async () => {
+                      await api.executeCreateAccount(accountReq);
+                      closeModal();
+                      setPlan(null);
+                      await refresh();
+                    }}
+                  >
+                    Create
+                  </UIButton>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div>
+              <p className="modalHint">
+                Upload credentials JSON from your PAT provider:
+              </p>
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                const formData = new FormData(e.currentTarget);
+                const jsonStr = formData.get('credentialsJson') as string;
+                try {
+                  const creds = JSON.parse(jsonStr) as UploadedCredentials;
+                  handleAddPatAccount(creds);
+                } catch (err) {
+                  useAppStore.getState().setError('Invalid JSON format');
                 }
-              >
-                <option value="">None</option>
-                {accounts
-                  .filter((a) => a.hasConfig)
-                  .map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.id}
-                    </option>
-                  ))}
-              </select>
-            </label>
-          </div>
-          <div className="previewBox">
-            <div className="previewLine">
-              <span>CODEX_HOME</span>
-              <strong>~/.codex-{accountReq.name || 'name'}</strong>
+              }}>
+                <textarea
+                  name="credentialsJson"
+                  className="uploadPatTextarea"
+                  placeholder={`{
+  "access_token": "",
+  "account_id": "your-account-id",
+  "email": "you@example.com",
+  "expired": "2030-12-31T10:00:00+08:00",
+  "headers": {
+    "authorization": "Bearer at-xxx"
+  },
+  "type": "codex",
+  "websockets": true
+}`}
+                  rows={15}
+                  required
+                />
+                <div className="modalFoot">
+                  <UIButton type="button" variant="ghost" onClick={closeModal}>
+                    Cancel
+                  </UIButton>
+                  <div className="modalFootPrimary">
+                    <UIButton type="submit" variant="primary">
+                      Add Account
+                    </UIButton>
+                  </div>
+                </div>
+              </form>
             </div>
-            <div className="previewLine">
-              <span>Wrapper</span>
-              <strong>~/bin/codex-{accountReq.name || 'name'}</strong>
-            </div>
-          </div>
-          <label className="syncOption">
-            <input
-              type="checkbox"
-              checked={accountReq.overwriteWrapper}
-              onChange={(e) => setAccountReq({ ...accountReq, overwriteWrapper: e.target.checked })}
-            />
-            <span>
-              <strong>Overwrite wrapper if it exists</strong>
-              <span>Keeps CODEX_HOME untouched; only wrapper script is replaced.</span>
-            </span>
-          </label>
-          <Views.PlanView plan={plan} />
-          <div className="modalFoot">
-            <UIButton type="button" variant="ghost" onClick={closeModal}>
-              Cancel
-            </UIButton>
-            <div className="modalFootPrimary">
-              <UIButton
-                type="button"
-                onClick={async () => setPlan(await api.planCreateAccount(accountReq))}
-              >
-                Dry Run
-              </UIButton>
-              <UIButton
-                type="button"
-                variant="primary"
-                disabled={!plan}
-                onClick={async () => {
-                  await api.executeCreateAccount(accountReq);
-                  closeModal();
-                  setPlan(null);
-                  await refresh();
-                }}
-              >
-                Create
-              </UIButton>
-            </div>
-          </div>
+          )}
         </Shell.Modal>
       ) : null}
 

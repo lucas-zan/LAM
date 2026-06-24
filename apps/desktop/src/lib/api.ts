@@ -28,6 +28,8 @@ import type {
   UploadedCredentials,
   AuthMetadata,
   TokenExpirationStatus,
+  AddPatAccountRequest,
+  AddPatAccountResult,
 } from "./types";
 
 export const inTauri = () => "__TAURI_INTERNALS__" in window;
@@ -193,4 +195,14 @@ export async function checkProfileTokenExpiration(
   profileId: string
 ): Promise<TokenExpirationStatus> {
   return invoke<TokenExpirationStatus>("check_profile_token_expiration", { profileId });
+}
+
+export async function addPatAccount(
+  req: AddPatAccountRequest
+): Promise<AddPatAccountResult> {
+  return invoke<AddPatAccountResult>("add_pat_account", { req });
+}
+
+export async function switchToPatAccount(accountId: string): Promise<void> {
+  return invoke<void>("switch_to_pat_account", { accountId });
 }

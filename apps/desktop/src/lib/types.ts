@@ -277,3 +277,13 @@ export type TokenExpirationStatus = {
   expirationDate?: string | null;
   warningLevel: string; // "ok" | "warning" | "critical" | "expired"
 };
+
+export type AddPatAccountRequest = {
+  credentials: UploadedCredentials;
+};
+
+export type AddPatAccountResult = {
+  accountId: string;
+  email: string;
+  expired: string;
+};
