@@ -535,10 +535,10 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
-                  disabled={authMode === 'pat' && isActiveAccount}
+                  disabled={authMode === 'pat' && !isActiveAccount}
                   title={
-                    authMode === 'pat' && isActiveAccount
-                      ? 'Not available for active account in PAT mode'
+                    authMode === 'pat' && !isActiveAccount
+                      ? 'Use Switch to activate this account first'
                       : 'Login to this account'
                   }
                   onClick={(e) => {
