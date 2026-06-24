@@ -27,6 +27,7 @@ import {
   IconCloud,
   IconPencil,
   IconKey,
+  IconSync,
 } from '../components/icons';
 import { UIButton } from '../components/ui-button';
 import { PlanTypeBadge } from '../components/plan-type-badge';
@@ -401,12 +402,17 @@ export function Accounts({
                     <span className="accountActiveBadge" aria-label="Active session account">
                       Active
                     </span>
-                  ) : null}
+                  ) : account.hasAuth ? (
+                    <span className="badge badge--auth" aria-label="Logged in account">
+                      Logged in
+                    </span>
+                  ) : (
+                    <span className="badge warn" aria-label="Login needed account">
+                      Login needed
+                    </span>
+                  )}
                 </div>
                 <div className="cardHeadActions">
-                  <span className={account.hasAuth ? 'badge badge--auth' : 'badge warn'}>
-                    {account.hasAuth ? 'Logged in' : 'Login needed'}
-                  </span>
                   <AuthModeBadge authMode={account.authMode} />
                   <TokenExpirationBadge status={tokenStatuses[account.id]} />
                   <UIButton
@@ -522,15 +528,15 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
-                  aria-label="Upload PAT"
-                  title="Upload personal access token credentials"
+                  aria-label="Switch to this account"
+                  title="Switch to this account"
                   onClick={(e) => {
                     e.stopPropagation();
                     openUploadPat(account.id);
                   }}
                 >
-                  <IconKey size={13} />
-                  Upload PAT
+                  <IconSync size={13} />
+                  Switch
                 </UIButton>
               </div>
             </article>
