@@ -540,6 +540,7 @@ export function App() {
               setUploadPatAccountId(accountId);
               openModal('uploadPat');
             }}
+            authMode={authMode}
           />
         ) : null}
         {appReady && route === 'sessions' ? (

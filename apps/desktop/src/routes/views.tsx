@@ -155,6 +155,7 @@ export function Overview({
   onRefreshAntigravity,
   onSaveAccountNote,
   openUploadPat,
+  authMode,
 }: {
   accounts: CodexAccount[];
   quotas: UsageQuotaSnapshot[];
@@ -173,6 +174,7 @@ export function Overview({
   onRefreshAntigravity: () => void;
   onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
   openUploadPat: (accountId: string) => void;
+  authMode?: 'oauth' | 'pat';
 }) {
   const [activeTab, setActiveTab] = useState<'codex' | 'antigravity'>('codex');
 
@@ -244,6 +246,7 @@ export function Overview({
           onSaveAccountNote={onSaveAccountNote}
           openUploadPat={openUploadPat}
           variant="overview"
+          authMode={authMode}
         />
       ) : (
         <AntigravityModels
@@ -307,7 +310,6 @@ function TokenExpirationBadge({
     </span>
   );
 }
-
 export function Accounts({
   accounts,
   quotas,
@@ -323,6 +325,7 @@ export function Accounts({
   onSaveAccountNote,
   openUploadPat,
   variant = 'default',
+  authMode = 'oauth',
 }: {
   accounts: CodexAccount[];
   quotas: UsageQuotaSnapshot[];
@@ -338,6 +341,7 @@ export function Accounts({
   onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
   openUploadPat: (accountId: string) => void;
   variant?: 'default' | 'overview';
+  authMode?: 'oauth' | 'pat';
 }) {
   const [tokenStatuses, setTokenStatuses] = useState<Record<string, TokenExpirationStatus>>({});
   useEffect(() => {
@@ -457,10 +461,12 @@ export function Accounts({
                   size="sm"
                   variant="primary"
                   className="accountActionBtn"
-                  disabled={!currentSession}
+                  disabled={!currentSession || (authMode === 'pat' && isActiveAccount)}
                   aria-label="Relay Latest"
                   title={
-                    currentSession
+                    authMode === 'pat' && isActiveAccount
+                      ? 'Not available for active account in PAT mode'
+                      : currentSession
                       ? `Relay latest active session ${currentSession.id} with ${account.displayName}`
                       : 'No active session found'
                   }
@@ -475,9 +481,13 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
-                  disabled={accounts.length < 2}
+                  disabled={accounts.length < 2 || (authMode === 'pat' && isActiveAccount)}
                   aria-label="Handoff"
-                  title={`Choose a session to continue with ${account.displayName}`}
+                  title={
+                    authMode === 'pat' && isActiveAccount
+                      ? 'Not available for active account in PAT mode'
+                      : `Choose a session to continue with ${account.displayName}`
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
                     openHandoff(account);
@@ -489,6 +499,12 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
+                  disabled={authMode === 'pat' && isActiveAccount}
+                  title={
+                    authMode === 'pat' && isActiveAccount
+                      ? 'Not available for active account in PAT mode'
+                      : 'Sync sessions'
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
                     openSync(account.id);
@@ -500,9 +516,11 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
-                  disabled={account.id === 'main'}
+                  disabled={account.id === 'main' || (authMode === 'pat' && isActiveAccount)}
                   title={
-                    account.id === 'main'
+                    authMode === 'pat' && isActiveAccount
+                      ? 'Not available for active account in PAT mode'
+                      : account.id === 'main'
                       ? 'Main profile cannot be renamed'
                       : `Rename ${account.displayName}`
                   }
@@ -517,6 +535,12 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
+                  disabled={authMode === 'pat' && isActiveAccount}
+                  title={
+                    authMode === 'pat' && isActiveAccount
+                      ? 'Not available for active account in PAT mode'
+                      : 'Login to this account'
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
                     login(account);
@@ -528,8 +552,13 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
+                  disabled={authMode === 'pat' && isActiveAccount}
                   aria-label="Switch to this account"
-                  title="Switch to this account"
+                  title={
+                    authMode === 'pat' && isActiveAccount
+                      ? 'Already active in PAT mode'
+                      : 'Switch to this account'
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
                     openUploadPat(account.id);
