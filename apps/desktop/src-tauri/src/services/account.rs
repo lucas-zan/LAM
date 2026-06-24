@@ -765,6 +765,33 @@ pub fn read_pat_metadata(home_root: &Path, profile_id: &str) -> Result<Option<Au
     Ok(Some(metadata))
 }
 
+/// Transforms uploaded credentials and records metadata
+pub fn process_uploaded_credentials(
+    home_root: &Path,
+    profile_id: &str,
+    creds: &UploadedCredentials,
+) -> Result<()> {
+    if creds.access_token.is_empty() {
+        return Err(AppError::new(
+            "INVALID_CREDENTIALS",
+            "access_token is required",
+        ));
+    }
+
+    // Validate expiration date format
+    if chrono::DateTime::parse_from_rfc3339(&creds.expired).is_err() {
+        return Err(AppError::new(
+            "INVALID_EXPIRATION",
+            "expired field must be valid ISO 8601 date",
+        ));
+    }
+
+    // Record metadata in Lam's config
+    record_pat_metadata(home_root, profile_id, Some(creds.expired.clone()))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod pat_tests {
     use super::*;
@@ -781,5 +808,47 @@ mod pat_tests {
         assert_eq!(metadata.profile_id, "test-profile");
         assert_eq!(metadata.auth_type, "personal_token");
         assert_eq!(metadata.token_expiration, Some("2030-12-31T10:00:00+08:00".to_string()));
+    }
+    #[test]
+    fn test_process_valid_credentials() {
+        let temp = TempDir::new().unwrap();
+        let creds = UploadedCredentials {
+            access_token: "at-test".to_string(),
+            account_id: "id".to_string(),
+            disabled: false,
+            email: "test@example.com".to_string(),
+            expired: "2030-12-31T10:00:00+08:00".to_string(),
+            headers: None,
+            id_token: None,
+            last_refresh: "2026-06-23T22:19:32+08:00".to_string(),
+            refresh_token: None,
+            credential_type: "codex".to_string(),
+            websockets: true,
+        };
+
+        process_uploaded_credentials(temp.path(), "test", &creds).unwrap();
+
+        let metadata = read_pat_metadata(temp.path(), "test").unwrap().unwrap();
+        assert_eq!(metadata.auth_type, "personal_token");
+    }
+
+    #[test]
+    fn test_process_invalid_expiration() {
+        let temp = TempDir::new().unwrap();
+        let creds = UploadedCredentials {
+            access_token: "at-test".to_string(),
+            account_id: "id".to_string(),
+            disabled: false,
+            email: "test@example.com".to_string(),
+            expired: "not-a-date".to_string(),
+            headers: None,
+            id_token: None,
+            last_refresh: "2026-06-23T22:19:32+08:00".to_string(),
+            refresh_token: None,
+            credential_type: "codex".to_string(),
+            websockets: true,
+        };
+
+        assert!(process_uploaded_credentials(temp.path(), "test", &creds).is_err());
     }
 }
