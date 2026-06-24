@@ -648,6 +648,28 @@ p {
   background: var(--amber-soft);
   border-color: color-mix(in srgb, var(--amber) 25%, transparent);
 }
+.badge--authMode {
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 6px;
+}
+.badge--warning {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fbbf24;
+}
+.badge--critical {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #f87171;
+}
+.badge--expired {
+  background: #fecaca;
+  color: #7f1d1d;
+  border: 1px solid #ef4444;
+  font-weight: 600;
+}
 .planTypeBadge {
   display: inline-flex;
   align-items: center;
@@ -1979,6 +2001,17 @@ html[data-tray-popover='1'] #root {
   display: flex;
   gap: 8px;
   margin-left: auto;
+}
+.uploadPatTextarea {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface2);
+  resize: vertical;
+  margin-bottom: 16px;
 }
 .code,
 pre {
