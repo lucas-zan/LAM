@@ -25,6 +25,9 @@ import type {
   UpdateProviderRequest,
   UsageQuotaSnapshot,
   AntigravityQuotaResponse,
+  UploadedCredentials,
+  AuthMetadata,
+  TokenExpirationStatus,
 } from "./types";
 
 export const inTauri = () => "__TAURI_INTERNALS__" in window;
@@ -173,4 +176,21 @@ export async function getAntigravityQuota(): Promise<AntigravityQuotaResponse> {
     return { ok: false, models: [], error: "Not in Tauri environment" };
   }
   return invoke<AntigravityQuotaResponse>("get_antigravity_quota");
+}
+
+export async function uploadPatCredentials(
+  profileId: string,
+  uploaded: UploadedCredentials
+): Promise<void> {
+  return invoke<void>("upload_pat_credentials", { profileId, uploaded });
+}
+
+export async function getPatMetadata(profileId: string): Promise<AuthMetadata | null> {
+  return invoke<AuthMetadata | null>("get_pat_metadata", { profileId });
+}
+
+export async function checkProfileTokenExpiration(
+  profileId: string
+): Promise<TokenExpirationStatus> {
+  return invoke<TokenExpirationStatus>("check_profile_token_expiration", { profileId });
 }
