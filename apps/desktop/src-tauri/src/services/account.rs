@@ -207,65 +207,6 @@ pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
         });
     }
     
-    // Scan PAT accounts
-    let pat_dir = pat_accounts_dir(home_root);
-    if pat_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&pat_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.starts_with("auth-") && name.ends_with(".json") {
-                        // Extract account_id from "auth-{id}.json"
-                        let account_id = name
-                            .strip_prefix("auth-")
-                            .and_then(|s| s.strip_suffix(".json"))
-                            .unwrap_or("");
-                        
-                        if account_id.is_empty() {
-                            continue;
-                        }
-                        
-                        // Read metadata
-                        let metadata_path = pat_metadata_path(home_root, account_id);
-                        let metadata: Option<serde_json::Value> = std::fs::read_to_string(&metadata_path)
-                            .ok()
-                            .and_then(|s| serde_json::from_str(&s).ok());
-                        
-                        let email = metadata.as_ref()
-                            .and_then(|m| m.get("email"))
-                            .and_then(|e| e.as_str())
-                            .unwrap_or("");
-                        
-                        let expired = metadata.as_ref()
-                            .and_then(|m| m.get("expired"))
-                            .and_then(|e| e.as_str());
-                        
-                        accounts.push(CodexAccount {
-                            id: account_id.to_string(),
-                            display_name: format!("PAT: {} ({})", account_id, email),
-                            codex_home: home_root.join(".codex"), // Shared
-                            wrapper_path: None,
-                            has_auth: true,
-                            has_config: true, // Shares config.toml
-                            has_history: false,
-                            session_count: 0, // TODO: count shared sessions?
-                            latest_session_modified_at: None,
-                            managed: true,
-                            is_relay: false,
-                            relay_source: None,
-                            relay_identity: None,
-                            provider_id: Some("anthropic".to_string()), // Assume Codex
-                            model: None,
-                            auth_mode: Some("personal_token".to_string()),
-                            renewal_date: expired.map(|s| s.to_string()),
-                            note: None,
-                        });
-                    }
-                }
-            }
-        }
-    }
-    
     accounts.sort_by(|a, b| a.id.cmp(&b.id));
     write_accounts_cache(home_root, &accounts)?;
     Ok(accounts)
@@ -908,59 +849,91 @@ pub fn check_token_expiration(
     })
 }
 
-/// Adds a new PAT account by storing credentials in Lam storage
+/// Adds a new PAT account by creating a full .codex-{id} directory
 pub fn add_pat_account(
     home_root: &Path,
     req: &AddPatAccountRequest,
 ) -> Result<AddPatAccountResult> {
     let account_id = &req.credentials.account_id;
     
-    // 1. Validate account_id not empty
+    // 1. Validate account_id
     if account_id.trim().is_empty() {
         return Err(AppError::new("INVALID_ACCOUNT_ID", "account_id cannot be empty"));
     }
     
-    // 2. Check if account already exists (both OAuth and PAT)
-    if codex_home_path(home_root, account_id).exists() {
+    let validated_id = validate_profile_name(account_id)?;
+    
+    // 2. Check if account already exists
+    let codex_dir = codex_home_path(home_root, &validated_id);
+    if codex_dir.exists() {
         return Err(AppError::new("ACCOUNT_EXISTS", 
-            format!("OAuth account '{}' already exists", account_id)));
+            format!("Account '{}' already exists", validated_id)));
     }
     
-    let auth_path = pat_auth_path(home_root, account_id);
-    if auth_path.exists() {
-        return Err(AppError::new("ACCOUNT_EXISTS", 
-            format!("PAT account '{}' already exists", account_id)));
-    }
-    
-    // 3. Extract token from headers.authorization (optional)
+    // 3. Extract optional token from headers.authorization
     let token = extract_bearer_token(&req.credentials)?;
     
-    // 4. Generate and save auth-{id}.json
-    let auth_json = generate_pat_auth_json(token.as_deref());
-    let dir = pat_accounts_dir(home_root);
-    std::fs::create_dir_all(&dir).map_err(|e| {
-        AppError::new("CREATE_DIR_FAILED", format!("Failed to create pat-accounts dir: {}", e))
+    // 4. Create directory structure
+    std::fs::create_dir_all(&codex_dir).map_err(|e| {
+        AppError::new("CREATE_DIR_FAILED", format!("Failed to create codex directory: {}", e))
     })?;
-    write_file_private(&auth_path, &auth_json)?;
     
-    // 5. Save metadata
-    let metadata = serde_json::json!({
-        "accountId": account_id,
-        "email": req.credentials.email,
-        "expired": req.credentials.expired,
-        "type": req.credentials.credential_type,
-        "addedAt": chrono::Utc::now().to_rfc3339(),
-    });
-    let metadata_path = pat_metadata_path(home_root, account_id);
-    let metadata_str = serde_json::to_string_pretty(&metadata).map_err(|e| {
-        AppError::new("SERIALIZE_FAILED", format!("Metadata serialize failed: {}", e))
+    let sessions_dir = codex_dir.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).map_err(|e| {
+        AppError::new("CREATE_DIR_FAILED", format!("Failed to create sessions directory: {}", e))
     })?;
-    write_file_private(&metadata_path, &metadata_str)?;
+    
+    // 5. Save uploaded auth.json with optional personal_access_token
+    let auth_path = codex_dir.join("auth.json");
+    let auth_content = build_pat_auth_json(&req.credentials, token.as_deref())?;
+    write_file_private(&auth_path, &auth_content)?;
+    
+    // 6. Create minimal config.toml
+    let config_path = codex_dir.join("config.toml");
+    let config_content = r#"# PAT account configuration
+# This file is managed by LAM
+"#;
+    write_file_private(&config_path, config_content)?;
+    
+    // 7. Mark directory as managed
+    let marker_path = codex_dir.join(NEW_MARKER);
+    write_file_private(&marker_path, "{}")?;
     
     Ok(AddPatAccountResult {
-        account_id: account_id.clone(),
+        account_id: validated_id,
         email: req.credentials.email.clone(),
         expired: req.credentials.expired.clone(),
+    })
+}
+
+/// Builds auth.json content from uploaded credentials and optional PAT
+fn build_pat_auth_json(creds: &UploadedCredentials, token: Option<&str>) -> Result<String> {
+    // Start with uploaded credentials as base
+    let mut auth_json = serde_json::json!({
+        "access_token": creds.access_token,
+        "account_id": creds.account_id,
+        "email": creds.email,
+        "expired": creds.expired,
+        "id_token": creds.id_token,
+        "last_refresh": creds.last_refresh,
+        "refresh_token": creds.refresh_token,
+        "type": creds.credential_type,
+        "websockets": creds.websockets,
+        "disabled": creds.disabled,
+    });
+    
+    // Add headers if present
+    if let Some(headers) = &creds.headers {
+        auth_json["headers"] = serde_json::to_value(headers).unwrap();
+    }
+    
+    // Add personal_access_token if provided
+    if let Some(pat) = token {
+        auth_json["personal_access_token"] = serde_json::Value::String(pat.to_string());
+    }
+    
+    serde_json::to_string_pretty(&auth_json).map_err(|e| {
+        AppError::new("SERIALIZE_FAILED", format!("Failed to serialize auth.json: {}", e))
     })
 }
 
@@ -982,43 +955,90 @@ fn extract_bearer_token(creds: &UploadedCredentials) -> Result<Option<String>> {
     }
 }
 
-fn generate_pat_auth_json(token: Option<&str>) -> String {
-    match token {
-        Some(t) => format!(r#"{{
-  "OPENAI_API_KEY": null,
-  "personal_access_token": "{}"
-}}"#, json_escape(t)),
-        None => r#"{
-  "OPENAI_API_KEY": null
-}"#.to_string(),
-    }
-}
-
-/// Switches to a PAT account by copying its auth file to ~/.codex/auth.json
+/// Switches to an account based on the configured auth mode
+/// - OAuth mode: switches the entire directory (symlink or copy)
+/// - PAT mode: copies only auth.json
 pub fn switch_to_pat_account(
     home_root: &Path,
     account_id: &str,
 ) -> Result<()> {
-    // 1. Verify PAT account exists
-    let source_auth = pat_auth_path(home_root, account_id);
-    if !source_auth.exists() {
+    // 1. Verify account exists
+    let codex_dir = codex_home_path(home_root, account_id);
+    if !codex_dir.exists() {
         return Err(AppError::new("ACCOUNT_NOT_FOUND", 
-            format!("PAT account '{}' not found", account_id)));
+            format!("Account '{}' not found", account_id)));
     }
     
-    // 2. Copy to ~/.codex/auth.json
-    let codex_home = home_root.join(".codex");
-    std::fs::create_dir_all(&codex_home).map_err(|e| {
-        AppError::new("CREATE_DIR_FAILED", format!("Failed to create .codex dir: {}", e))
+    let source_auth = codex_dir.join("auth.json");
+    if !source_auth.exists() {
+        return Err(AppError::new("AUTH_NOT_FOUND", 
+            format!("auth.json not found for account '{}'", account_id)));
+    }
+    
+    // 2. Get current auth mode
+    let auth_mode = get_auth_mode(home_root)?;
+    
+    // 3. Switch based on mode
+    let target_codex = home_root.join(".codex");
+    
+    if auth_mode == "oauth" {
+        // OAuth mode: switch entire directory (symlink or copy)
+        if target_codex.exists() {
+            std::fs::remove_dir_all(&target_codex).map_err(|e| {
+                AppError::new("REMOVE_DIR_FAILED", format!("Failed to remove old .codex: {}", e))
+            })?;
+        }
+        
+        // Try symlink first, fall back to copy
+        #[cfg(unix)]
+        {
+            if std::os::unix::fs::symlink(&codex_dir, &target_codex).is_ok() {
+                return Ok(());
+            }
+        }
+        
+        // Fall back to directory copy
+        copy_dir_all(&codex_dir, &target_codex)?;
+    } else {
+        // PAT mode: copy only auth.json
+        std::fs::create_dir_all(&target_codex).map_err(|e| {
+            AppError::new("CREATE_DIR_FAILED", format!("Failed to create .codex dir: {}", e))
+        })?;
+        
+        let target_auth = target_codex.join("auth.json");
+        std::fs::copy(&source_auth, &target_auth).map_err(|e| {
+            AppError::new("COPY_FAILED", format!("Failed to copy auth.json: {}", e))
+        })?;
+        
+        set_file_private(&target_auth)?;
+    }
+    
+    Ok(())
+}
+
+/// Helper to copy a directory recursively
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst).map_err(|e| {
+        AppError::new("CREATE_DIR_FAILED", format!("Failed to create directory: {}", e))
     })?;
     
-    let target_auth = codex_home.join("auth.json");
-    std::fs::copy(&source_auth, &target_auth).map_err(|e| {
-        AppError::new("COPY_FAILED", format!("Failed to copy auth file: {}", e))
-    })?;
-    
-    // Set private permissions
-    set_file_private(&target_auth)?;
+    for entry in std::fs::read_dir(src).map_err(|e| {
+        AppError::new("READ_DIR_FAILED", format!("Failed to read directory: {}", e))
+    })? {
+        let entry = entry.map_err(|e| {
+            AppError::new("READ_ENTRY_FAILED", format!("Failed to read entry: {}", e))
+        })?;
+        let path = entry.path();
+        let dest_path = dst.join(entry.file_name());
+        
+        if path.is_dir() {
+            copy_dir_all(&path, &dest_path)?;
+        } else {
+            std::fs::copy(&path, &dest_path).map_err(|e| {
+                AppError::new("COPY_FILE_FAILED", format!("Failed to copy file: {}", e))
+            })?;
+        }
+    }
     
     Ok(())
 }
