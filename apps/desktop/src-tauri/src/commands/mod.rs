@@ -20,7 +20,8 @@ use localagentmanager_core::{
     rename_account_plan as core_rename_account_plan, resolve_home_root,
     sync_plan as core_sync_plan, test_provider as core_test_provider,
     update_provider as core_update_provider, process_uploaded_credentials, check_token_expiration, read_pat_metadata,
-    UploadedCredentials, AuthMetadata, TokenExpirationStatus, AccountNoteUpdate, AppError, AttachProviderRequest,
+    add_pat_account as core_add_pat_account, switch_to_pat_account as core_switch_to_pat_account,
+    UploadedCredentials, AuthMetadata, TokenExpirationStatus, AddPatAccountRequest, AddPatAccountResult, AccountNoteUpdate, AppError, AttachProviderRequest,
     AttachProviderResult, CodexAccount, CodexSession, CreateAccountRequest, CreateProviderRequest,
     CreateRelayRequest, CreateResult, OperationPlan, ProviderProfile, QuotaRefreshResult,
     RelayResumeRequest, RelayResumeResult, RenameAccountRequest, RenameAccountResult,
@@ -272,4 +273,18 @@ pub fn check_profile_token_expiration(
     profile_id: String,
 ) -> Result<TokenExpirationStatus, AppError> {
     check_token_expiration(&home_root()?, &profile_id)
+}
+
+#[tauri::command]
+pub fn add_pat_account(
+    req: AddPatAccountRequest,
+) -> Result<AddPatAccountResult, AppError> {
+    core_add_pat_account(&home_root()?, &req)
+}
+
+#[tauri::command]
+pub fn switch_to_pat_account(
+    account_id: String,
+) -> Result<(), AppError> {
+    core_switch_to_pat_account(&home_root()?, &account_id)
 }

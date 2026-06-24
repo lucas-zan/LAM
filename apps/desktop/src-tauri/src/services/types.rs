@@ -58,6 +58,21 @@ pub(crate) fn auth_metadata_path(home_root: &Path, profile_id: &str) -> PathBuf 
     auth_metadata_dir(home_root).join(format!("{}.json", profile_id))
 }
 
+/// Returns the PAT accounts directory
+pub(crate) fn pat_accounts_dir(home_root: &Path) -> PathBuf {
+    config_root(home_root).join("pat-accounts")
+}
+
+/// Returns auth file path for a PAT account
+pub(crate) fn pat_auth_path(home_root: &Path, account_id: &str) -> PathBuf {
+    pat_accounts_dir(home_root).join(format!("auth-{}.json", account_id))
+}
+
+/// Returns metadata file path for a PAT account
+pub(crate) fn pat_metadata_path(home_root: &Path, account_id: &str) -> PathBuf {
+    pat_accounts_dir(home_root).join(format!("metadata-{}.json", account_id))
+}
+
 pub(crate) fn write_file_private(path: &Path, body: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

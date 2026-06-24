@@ -47,6 +47,20 @@ pub struct CreateRelayRequest {
     pub overwrite_wrapper: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddPatAccountRequest {
+    pub credentials: UploadedCredentials,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddPatAccountResult {
+    pub account_id: String,
+    pub email: String,
+    pub expired: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationPlan {
@@ -192,6 +206,66 @@ pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
             note: note.and_then(|metadata| metadata.note.clone()),
         });
     }
+    
+    // Scan PAT accounts
+    let pat_dir = pat_accounts_dir(home_root);
+    if pat_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&pat_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with("auth-") && name.ends_with(".json") {
+                        // Extract account_id from "auth-{id}.json"
+                        let account_id = name
+                            .strip_prefix("auth-")
+                            .and_then(|s| s.strip_suffix(".json"))
+                            .unwrap_or("");
+                        
+                        if account_id.is_empty() {
+                            continue;
+                        }
+                        
+                        // Read metadata
+                        let metadata_path = pat_metadata_path(home_root, account_id);
+                        let metadata: Option<serde_json::Value> = std::fs::read_to_string(&metadata_path)
+                            .ok()
+                            .and_then(|s| serde_json::from_str(&s).ok());
+                        
+                        let email = metadata.as_ref()
+                            .and_then(|m| m.get("email"))
+                            .and_then(|e| e.as_str())
+                            .unwrap_or("");
+                        
+                        let expired = metadata.as_ref()
+                            .and_then(|m| m.get("expired"))
+                            .and_then(|e| e.as_str());
+                        
+                        accounts.push(CodexAccount {
+                            id: account_id.to_string(),
+                            display_name: format!("PAT: {} ({})", account_id, email),
+                            codex_home: home_root.join(".codex"), // Shared
+                            wrapper_path: None,
+                            has_auth: true,
+                            has_config: true, // Shares config.toml
+                            has_history: false,
+                            session_count: 0, // TODO: count shared sessions?
+                            latest_session_modified_at: None,
+                            managed: true,
+                            is_relay: false,
+                            relay_source: None,
+                            relay_identity: None,
+                            provider_id: Some("anthropic".to_string()), // Assume Codex
+                            model: None,
+                            auth_mode: Some("personal_token".to_string()),
+                            renewal_date: expired.map(|s| s.to_string()),
+                            note: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
     accounts.sort_by(|a, b| a.id.cmp(&b.id));
     write_accounts_cache(home_root, &accounts)?;
     Ok(accounts)
@@ -832,6 +906,113 @@ pub fn check_token_expiration(
         expiration_date,
         warning_level,
     })
+}
+
+/// Adds a new PAT account by storing credentials in Lam storage
+pub fn add_pat_account(
+    home_root: &Path,
+    req: &AddPatAccountRequest,
+) -> Result<AddPatAccountResult> {
+    let account_id = &req.credentials.account_id;
+    
+    // 1. Validate account_id not empty
+    if account_id.trim().is_empty() {
+        return Err(AppError::new("INVALID_ACCOUNT_ID", "account_id cannot be empty"));
+    }
+    
+    // 2. Check if account already exists (both OAuth and PAT)
+    if codex_home_path(home_root, account_id).exists() {
+        return Err(AppError::new("ACCOUNT_EXISTS", 
+            format!("OAuth account '{}' already exists", account_id)));
+    }
+    
+    let auth_path = pat_auth_path(home_root, account_id);
+    if auth_path.exists() {
+        return Err(AppError::new("ACCOUNT_EXISTS", 
+            format!("PAT account '{}' already exists", account_id)));
+    }
+    
+    // 3. Extract token from headers.authorization
+    let token = extract_bearer_token(&req.credentials)?;
+    
+    // 4. Generate and save auth-{id}.json
+    let auth_json = generate_pat_auth_json(&token);
+    let dir = pat_accounts_dir(home_root);
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        AppError::new("CREATE_DIR_FAILED", format!("Failed to create pat-accounts dir: {}", e))
+    })?;
+    write_file_private(&auth_path, &auth_json)?;
+    
+    // 5. Save metadata
+    let metadata = serde_json::json!({
+        "accountId": account_id,
+        "email": req.credentials.email,
+        "expired": req.credentials.expired,
+        "type": req.credentials.credential_type,
+        "addedAt": chrono::Utc::now().to_rfc3339(),
+    });
+    let metadata_path = pat_metadata_path(home_root, account_id);
+    let metadata_str = serde_json::to_string_pretty(&metadata).map_err(|e| {
+        AppError::new("SERIALIZE_FAILED", format!("Metadata serialize failed: {}", e))
+    })?;
+    write_file_private(&metadata_path, &metadata_str)?;
+    
+    Ok(AddPatAccountResult {
+        account_id: account_id.clone(),
+        email: req.credentials.email.clone(),
+        expired: req.credentials.expired.clone(),
+    })
+}
+
+fn extract_bearer_token(creds: &UploadedCredentials) -> Result<String> {
+    let headers = creds.headers.as_ref()
+        .ok_or_else(|| AppError::new("MISSING_HEADERS", "Credentials missing headers field"))?;
+    
+    let auth_value = headers.get("authorization")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::new("MISSING_AUTH_HEADER", "Missing authorization header"))?;
+    
+    if let Some(token) = auth_value.strip_prefix("Bearer ") {
+        Ok(token.to_string())
+    } else {
+        Err(AppError::new("INVALID_AUTH_FORMAT", "Authorization must be 'Bearer <token>'"))
+    }
+}
+
+fn generate_pat_auth_json(token: &str) -> String {
+    format!(r#"{{
+  "OPENAI_API_KEY": null,
+  "personal_access_token": "{}"
+}}"#, json_escape(token))
+}
+
+/// Switches to a PAT account by copying its auth file to ~/.codex/auth.json
+pub fn switch_to_pat_account(
+    home_root: &Path,
+    account_id: &str,
+) -> Result<()> {
+    // 1. Verify PAT account exists
+    let source_auth = pat_auth_path(home_root, account_id);
+    if !source_auth.exists() {
+        return Err(AppError::new("ACCOUNT_NOT_FOUND", 
+            format!("PAT account '{}' not found", account_id)));
+    }
+    
+    // 2. Copy to ~/.codex/auth.json
+    let codex_home = home_root.join(".codex");
+    std::fs::create_dir_all(&codex_home).map_err(|e| {
+        AppError::new("CREATE_DIR_FAILED", format!("Failed to create .codex dir: {}", e))
+    })?;
+    
+    let target_auth = codex_home.join("auth.json");
+    std::fs::copy(&source_auth, &target_auth).map_err(|e| {
+        AppError::new("COPY_FAILED", format!("Failed to copy auth file: {}", e))
+    })?;
+    
+    // Set private permissions
+    set_file_private(&target_auth)?;
+    
+    Ok(())
 }
 
 /// Detects auth mode by checking both Lam metadata and Codex auth.json

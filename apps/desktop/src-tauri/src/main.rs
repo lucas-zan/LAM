@@ -69,6 +69,8 @@ fn main() {
             commands::upload_pat_credentials,
             commands::get_pat_metadata,
             commands::check_profile_token_expiration,
+            commands::add_pat_account,
+            commands::switch_to_pat_account,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LAM");
