@@ -19,7 +19,8 @@ use localagentmanager_core::{
     relay_resume_session as core_relay_resume_session,
     rename_account_plan as core_rename_account_plan, resolve_home_root,
     sync_plan as core_sync_plan, test_provider as core_test_provider,
-    update_provider as core_update_provider, AccountNoteUpdate, AppError, AttachProviderRequest,
+    update_provider as core_update_provider, process_uploaded_credentials, check_token_expiration, read_pat_metadata,
+    UploadedCredentials, AuthMetadata, TokenExpirationStatus, AccountNoteUpdate, AppError, AttachProviderRequest,
     AttachProviderResult, CodexAccount, CodexSession, CreateAccountRequest, CreateProviderRequest,
     CreateRelayRequest, CreateResult, OperationPlan, ProviderProfile, QuotaRefreshResult,
     RelayResumeRequest, RelayResumeResult, RenameAccountRequest, RenameAccountResult,
@@ -251,4 +252,24 @@ pub fn execute_attach_provider_to_profile(
 pub async fn get_antigravity_quota(
 ) -> Result<localagentmanager_core::AntigravityQuotaResponse, AppError> {
     run_blocking(move || localagentmanager_core::get_live_antigravity_quota()).await
+}
+
+#[tauri::command]
+pub fn upload_pat_credentials(
+    profile_id: String,
+    uploaded: UploadedCredentials,
+) -> Result<(), AppError> {
+    process_uploaded_credentials(&home_root()?, &profile_id, &uploaded)
+}
+
+#[tauri::command]
+pub fn get_pat_metadata(profile_id: String) -> Result<Option<AuthMetadata>, AppError> {
+    read_pat_metadata(&home_root()?, &profile_id)
+}
+
+#[tauri::command]
+pub fn check_profile_token_expiration(
+    profile_id: String,
+) -> Result<TokenExpirationStatus, AppError> {
+    check_token_expiration(&home_root()?, &profile_id)
 }

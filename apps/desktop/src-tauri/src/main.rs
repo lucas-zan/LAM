@@ -66,6 +66,9 @@ fn main() {
             commands::attach_provider_to_profile,
             commands::execute_attach_provider_to_profile,
             commands::get_antigravity_quota,
+            commands::upload_pat_credentials,
+            commands::get_pat_metadata,
+            commands::check_profile_token_expiration,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LAM");
