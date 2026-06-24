@@ -590,7 +590,7 @@ export function App() {
               className={createMode === 'pat' ? 'active' : ''}
               onClick={() => setCreateMode('pat')}
             >
-              PAT (Upload Credentials)
+              PAT (Personal Access Token)
             </button>
           </div>
 

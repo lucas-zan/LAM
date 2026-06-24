@@ -536,13 +536,11 @@ p {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
 .cardHeadActions {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
 }
 .cardActions {
   display: grid;
