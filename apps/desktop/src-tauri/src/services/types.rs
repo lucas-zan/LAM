@@ -50,6 +50,14 @@ pub(crate) fn config_root(home_root: &Path) -> PathBuf {
     home_root.join(".config/agent-workspace")
 }
 
+pub(crate) fn auth_metadata_dir(home_root: &Path) -> PathBuf {
+    config_root(home_root).join("auth-metadata")
+}
+
+pub(crate) fn auth_metadata_path(home_root: &Path, profile_id: &str) -> PathBuf {
+    auth_metadata_dir(home_root).join(format!("{}.json", profile_id))
+}
+
 pub(crate) fn write_file_private(path: &Path, body: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
