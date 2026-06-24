@@ -479,6 +479,17 @@ export function App() {
             <h2>{routeTitleFromModule(route)}</h2>
           </div>
         </div>
+        <div className="titlebarCenter">
+          <label className="authModeToggle">
+            <span className="authModeLabel">PAT Mode</span>
+            <input
+              type="checkbox"
+              checked={authMode === 'pat'}
+              onChange={(e) => handleSetAuthMode(e.target.checked ? 'pat' : 'oauth')}
+            />
+            <span className="toggleSlider"></span>
+          </label>
+        </div>
         <div className="titlebarActions">
           <div className="toolbar">
             <UIButton
@@ -565,8 +576,6 @@ export function App() {
             resolvedTheme={resolvedTheme}
             divergedStrategy={divergedStrategy}
             setDivergedStrategy={setDivergedStrategy}
-            authMode={authMode}
-            setAuthMode={handleSetAuthMode}
           />
         ) : null}
       </section>
