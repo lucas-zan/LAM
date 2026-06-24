@@ -528,14 +528,20 @@ p {
 }
 .cardHead {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 8px;
+}
+.cardTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .cardHeadActions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .cardActions {
   display: grid;
@@ -629,6 +635,39 @@ p {
     Menlo,
     monospace;
   overflow-wrap: anywhere;
+}
+
+/* Create Account Mode Tabs */
+.createModeTabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 2px;
+}
+
+.createModeTabs button {
+  flex: 1;
+  padding: 8px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.createModeTabs button:hover {
+  color: var(--fg);
+  background: var(--surface1);
+}
+
+.createModeTabs button.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
 }
 
 .badge {
