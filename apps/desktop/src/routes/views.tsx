@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { sessionDisplayName } from '../lib/format';
 import {
   countAccountsWithAvailableQuota,
@@ -14,6 +14,7 @@ import type {
   ProviderProfile,
   UsageQuotaSnapshot,
   AntigravityQuotaResponse,
+  TokenExpirationStatus,
 } from '../lib/types';
 import { QuotaWindow } from '../components/quota-window';
 import {
@@ -29,6 +30,7 @@ import {
 } from '../components/icons';
 import { UIButton } from '../components/ui-button';
 import { PlanTypeBadge } from '../components/plan-type-badge';
+import { checkProfileTokenExpiration } from '../lib/api';
 
 export function AntigravityModels({
   quota,
@@ -331,6 +333,27 @@ export function Accounts({
   onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
   variant?: 'default' | 'overview';
 }) {
+  const [tokenStatuses, setTokenStatuses] = useState<Record<string, TokenExpirationStatus>>({});
+  useEffect(() => {
+    // Fetch token expiration status for accounts with personal_token auth mode
+    const fetchTokenStatuses = async () => {
+      const patAccounts = accounts.filter((acc) => acc.authMode === 'personal_token');
+      
+      for (const account of patAccounts) {
+        try {
+          const status = await checkProfileTokenExpiration(account.id);
+          setTokenStatuses((prev) => ({ ...prev, [account.id]: status }));
+        } catch (err) {
+          // Silently ignore errors - badge won't show if fetch fails
+          console.warn(`Failed to fetch token status for ${account.id}:`, err);
+        }
+      }
+    };
+    
+    if (accounts.length > 0) {
+      fetchTokenStatuses();
+    }
+  }, [accounts]);
   if (!accounts.length) return <div className="emptyBox">No Codex profiles found.</div>;
   const activeAccount = currentSession
     ? accounts.find((account) => account.id === currentSession.accountId)
@@ -394,6 +417,7 @@ export function Accounts({
                     {account.hasAuth ? 'Logged in' : 'Login needed'}
                   </span>
                   <AuthModeBadge authMode={account.authMode} />
+                  <TokenExpirationBadge status={tokenStatuses[account.id]} />
                 </div>
               </div>
               <p className="cardPath mono" title={account.codexHome}>
