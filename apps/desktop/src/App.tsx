@@ -23,6 +23,7 @@ import type {
   SyncRequest,
   SyncResult,
   AntigravityQuotaResponse,
+  UploadedCredentials,
 } from './lib/types';
 import * as Views from './routes/views';
 
@@ -114,6 +115,7 @@ export function App() {
   const selectedHandoffSession = handoffSessions.find((s) => s.id === handoffSessionId);
   const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
+  const [uploadPatAccountId, setUploadPatAccountId] = useState('');
 
   const resolvedTheme = useMemo(() => {
     if (themeMode === 'system')
@@ -291,6 +293,19 @@ export function App() {
     await useSessionStore.getState().loadSessions(result.profileId);
   }
 
+  async function handleUploadPat(profileId: string, credentials: UploadedCredentials) {
+    try {
+      await api.uploadPatCredentials(profileId, credentials);
+      closeModal();
+      // Refresh accounts to show updated auth mode
+      await refresh();
+      useAppStore.getState().setStatus('PAT credentials uploaded successfully');
+    } catch (err) {
+      useAppStore.getState().setStatus('Failed to upload PAT credentials');
+      useAppStore.getState().setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   if (!appReady) {
     return (
       <div className="splash-container">
@@ -464,6 +479,10 @@ export function App() {
             refreshingAntigravity={refreshingAntigravity}
             onRefreshAntigravity={() => void loadAntigravity(true)}
             onSaveAccountNote={saveAccountNote}
+            openUploadPat={(accountId) => {
+              setUploadPatAccountId(accountId);
+              openModal('uploadPat');
+            }}
           />
         ) : null}
         {appReady && route === 'sessions' ? (
@@ -1040,6 +1059,45 @@ export function App() {
               </UIButton>
             </div>
           </div>
+        </Shell.Modal>
+      ) : null}
+
+      {modal === 'uploadPat' && uploadPatAccountId ? (
+        <Shell.Modal title="Upload PAT Credentials" close={closeModal}>
+          <p className="modalHint">
+            Paste your credential JSON from external account management system:
+          </p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              const jsonStr = formData.get('credentialsJson') as string;
+              try {
+                const creds = JSON.parse(jsonStr) as UploadedCredentials;
+                handleUploadPat(uploadPatAccountId, creds);
+              } catch (err) {
+                useAppStore.getState().setError('Invalid JSON format');
+              }
+            }}
+          >
+            <textarea
+              name="credentialsJson"
+              className="uploadPatTextarea"
+              placeholder='{"accessToken": "...", "accountId": "...", ...}'
+              rows={10}
+              required
+            />
+            <div className="modalFoot">
+              <UIButton type="button" variant="ghost" onClick={closeModal}>
+                Cancel
+              </UIButton>
+              <div className="modalFootPrimary">
+                <UIButton type="submit" variant="primary">
+                  Upload
+                </UIButton>
+              </div>
+            </div>
+          </form>
         </Shell.Modal>
       ) : null}
     </main>

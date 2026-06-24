@@ -102,6 +102,7 @@ function overviewProps() {
     refreshingAntigravity: false,
     onRefreshAntigravity: vi.fn(),
     onSaveAccountNote: vi.fn(),
+    openUploadPat: vi.fn(),
   };
 }
 

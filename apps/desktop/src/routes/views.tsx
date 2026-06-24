@@ -153,6 +153,7 @@ export function Overview({
   refreshingAntigravity,
   onRefreshAntigravity,
   onSaveAccountNote,
+  openUploadPat,
 }: {
   accounts: CodexAccount[];
   quotas: UsageQuotaSnapshot[];
@@ -170,6 +171,7 @@ export function Overview({
   refreshingAntigravity: boolean;
   onRefreshAntigravity: () => void;
   onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
+  openUploadPat: (accountId: string) => void;
 }) {
   const [activeTab, setActiveTab] = useState<'codex' | 'antigravity'>('codex');
 
@@ -239,6 +241,7 @@ export function Overview({
           refreshAccountQuota={refreshAccountQuota}
           refreshingQuotaIds={refreshingQuotaIds}
           onSaveAccountNote={onSaveAccountNote}
+          openUploadPat={openUploadPat}
           variant="overview"
         />
       ) : (
@@ -317,6 +320,7 @@ export function Accounts({
   refreshAccountQuota,
   refreshingQuotaIds,
   onSaveAccountNote,
+  openUploadPat,
   variant = 'default',
 }: {
   accounts: CodexAccount[];
@@ -331,6 +335,7 @@ export function Accounts({
   refreshAccountQuota: (profileId: string) => void;
   refreshingQuotaIds: string[];
   onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
+  openUploadPat: (accountId: string) => void;
   variant?: 'default' | 'overview';
 }) {
   const [tokenStatuses, setTokenStatuses] = useState<Record<string, TokenExpirationStatus>>({});
@@ -513,6 +518,19 @@ export function Accounts({
                 >
                   <IconKey size={13} />
                   Login
+                </UIButton>
+                <UIButton
+                  size="sm"
+                  className="accountActionBtn"
+                  aria-label="Upload PAT"
+                  title="Upload personal access token credentials"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openUploadPat(account.id);
+                  }}
+                >
+                  <IconKey size={13} />
+                  Upload PAT
                 </UIButton>
               </div>
             </article>

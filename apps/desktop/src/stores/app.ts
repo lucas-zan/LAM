@@ -12,6 +12,7 @@ type Modal =
   | 'provider'
   | 'attachProvider'
   | 'sessionDetail'
+  | 'uploadPat'
   | null;
 
 interface AppState {
