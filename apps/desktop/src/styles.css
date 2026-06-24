@@ -535,12 +535,65 @@ p {
 .cardTitleRow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+.cardTitleRow h3 {
+  font-size: 16px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  margin: 0;
 }
 .cardHeadActions {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
+}
+.cardHeadActions .iconCircleBtn {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  font-size: 11px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  margin: 0;
+  flex-shrink: 0;
+}
+.cardHead .badge,
+.cardHead .planTypeBadge,
+.cardHead .accountActiveBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  height: 20px;
+  line-height: 1;
+  padding: 0 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.cardHead .planTypeBadge {
+  padding: 0 7px 0 5px;
+  font-weight: 700;
+}
+.cardHead .accountActiveBadge {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.15);
+  font-weight: 700;
 }
 .cardActions {
   display: grid;
@@ -758,6 +811,39 @@ p {
   border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
+}
+
+/* PAT Upload Form */
+.uploadPatForm {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.fileUploadLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fileUploadLabel input[type="file"] {
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface1);
+  cursor: pointer;
+}
+
+.fileUploadLabel input[type="file"]:hover {
+  border-color: var(--primary);
+  background: var(--surface2);
+}
+
+.inputHint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
 }
 
 .iconCircleBtn {

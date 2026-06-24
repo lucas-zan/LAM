@@ -673,85 +673,93 @@ export function App() {
               </div>
             </>
           ) : (
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              const formData = new FormData(e.currentTarget);
-              const accountId = formData.get('accountId') as string;
-              const email = formData.get('email') as string;
-              const expired = formData.get('expired') as string;
-              const patToken = formData.get('patToken') as string;
-              
-              if (!accountId || !email || !expired) {
-                useAppStore.getState().setError('Account ID, email, and expiration date are required');
-                return;
-              }
-              
-              // Build credentials object
-              const creds: UploadedCredentials = {
-                access_token: "",
-                account_id: accountId,
-                email: email,
-                expired: expired,
-                headers: patToken ? {
-                  authorization: `Bearer ${patToken}`
-                } : undefined,
-                id_token: null,
-                last_refresh: new Date().toISOString(),
-                refresh_token: null,
-                type_: "codex",
-                websockets: true,
-                disabled: false,
-              };
-              
-              handleAddPatAccount(creds);
-            }}>
-              <div className="formGrid">
-                <label>
-                  Account ID *
-                  <input
-                    name="accountId"
-                    type="text"
-                    placeholder="my-account"
-                    required
-                  />
-                </label>
-                <label>
-                  Email *
-                  <input
-                    name="email"
-                    type="email"
-                    placeholder="you@example.com"
-                    required
-                  />
-                </label>
-                <label>
-                  Expiration Date *
-                  <input
-                    name="expired"
-                    type="datetime-local"
-                    required
-                  />
-                </label>
-                <label>
-                  Personal Access Token (optional)
-                  <input
-                    name="patToken"
-                    type="text"
-                    placeholder="at-xxx-token-here"
-                  />
-                </label>
-              </div>
-              <div className="modalFoot">
-                <UIButton type="button" variant="ghost" onClick={closeModal}>
-                  Cancel
-                </UIButton>
-                <div className="modalFootPrimary">
-                  <UIButton type="submit" variant="primary">
-                    Create
-                  </UIButton>
+            <div>
+              <p className="modalHint">
+                Upload your auth.json file (from ~/.codex/) and optionally provide a Personal Access Token:
+              </p>
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                const formData = new FormData(e.currentTarget);
+                const file = formData.get('authFile') as File;
+                const patToken = formData.get('patToken') as string;
+                
+                if (!file) {
+                  useAppStore.getState().setError('Please select an auth.json file');
+                  return;
+                }
+                
+                try {
+                  const fileContent = await file.text();
+                  const authJson = JSON.parse(fileContent);
+                  
+                  // Auth.json should contain metadata
+                  const accountId = authJson.account_id || authJson.accountId;
+                  const email = authJson.email;
+                  const expired = authJson.expired;
+                  
+                  if (!accountId) {
+                    useAppStore.getState().setError('auth.json missing account_id field');
+                    return;
+                  }
+                  
+                  // Build credentials
+                  const creds: UploadedCredentials = {
+                    accessToken: authJson.access_token || "",
+                    accountId: accountId,
+                    email: email || "unknown@example.com",
+                    expired: expired || "2030-12-31T23:59:59+00:00",
+                    headers: patToken ? {
+                      authorization: `Bearer ${patToken}`
+                    } : authJson.headers,
+                    idToken: authJson.id_token || null,
+                    lastRefresh: authJson.last_refresh || new Date().toISOString(),
+                    refreshToken: authJson.refresh_token || null,
+                    type: authJson.type || authJson.type_ || "codex",
+                    websockets: authJson.websockets !== undefined ? authJson.websockets : true,
+                    disabled: authJson.disabled || false,
+                  };
+                  
+                  handleAddPatAccount(creds);
+                } catch (err) {
+                  useAppStore.getState().setError(
+                    err instanceof Error ? err.message : 'Failed to parse auth.json'
+                  );
+                }
+              }}>
+                <div className="uploadPatForm">
+                  <label className="fileUploadLabel">
+                    Select auth.json file *
+                    <input
+                      name="authFile"
+                      type="file"
+                      accept=".json,application/json"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Personal Access Token (optional)
+                    <input
+                      name="patToken"
+                      type="text"
+                      placeholder="at-xxx-your-token-here"
+                    />
+                    <span className="inputHint">
+                      If provided, this will be added to the uploaded auth.json
+                    </span>
+                  </label>
                 </div>
-              </div>
-            </form>
+                <div className="modalFoot">
+                  <UIButton type="button" variant="ghost" onClick={closeModal}>
+                    Cancel
+                  </UIButton>
+                  <div className="modalFootPrimary">
+                    <UIButton type="submit" variant="primary">
+                      Upload & Create
+                    </UIButton>
+                  </div>
+                </div>
+              </form>
+            </div>
           )}
         </Shell.Modal>
       ) : null}

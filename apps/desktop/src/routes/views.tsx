@@ -404,6 +404,11 @@ export function Accounts({
                   ) : null}
                 </div>
                 <div className="cardHeadActions">
+                  <span className={account.hasAuth ? 'badge badge--auth' : 'badge warn'}>
+                    {account.hasAuth ? 'Logged in' : 'Login needed'}
+                  </span>
+                  <AuthModeBadge authMode={account.authMode} />
+                  <TokenExpirationBadge status={tokenStatuses[account.id]} />
                   <UIButton
                     variant="icon"
                     size="sm"
@@ -418,11 +423,6 @@ export function Accounts({
                   >
                     ↻
                   </UIButton>
-                  <span className={account.hasAuth ? 'badge badge--auth' : 'badge warn'}>
-                    {account.hasAuth ? 'Logged in' : 'Login needed'}
-                  </span>
-                  <AuthModeBadge authMode={account.authMode} />
-                  <TokenExpirationBadge status={tokenStatuses[account.id]} />
                 </div>
               </div>
               <p className="cardPath mono" title={account.codexHome}>
