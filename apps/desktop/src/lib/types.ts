@@ -248,3 +248,32 @@ export type AntigravityQuotaResponse = {
   models: AntigravityModelQuota[];
   error?: string | null;
 };
+
+export type UploadedCredentials = {
+  accessToken: string;
+  accountId: string;
+  disabled: boolean;
+  email: string;
+  expired: string; // ISO 8601
+  headers?: Record<string, unknown> | null;
+  idToken?: string | null;
+  lastRefresh: string; // ISO 8601
+  refreshToken?: string | null;
+  type: string;
+  websockets: boolean;
+};
+
+export type AuthMetadata = {
+  profileId: string;
+  authType: string; // "personal_token" | "oauth" | "api_key"
+  tokenExpiration?: string | null; // ISO 8601
+  lastChecked: string; // ISO 8601
+};
+
+export type TokenExpirationStatus = {
+  profileId: string;
+  isExpired: boolean;
+  daysUntilExpiration?: number | null;
+  expirationDate?: string | null;
+  warningLevel: string; // "ok" | "warning" | "critical" | "expired"
+};
