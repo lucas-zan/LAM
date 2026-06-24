@@ -712,3 +712,74 @@ fn normalize_note(value: Option<&str>) -> Result<Option<String>> {
     }
     Ok(Some(trimmed.to_string()))
 }
+
+/// Records PAT metadata for a profile (Lam-only, doesn't touch Codex files)
+pub fn record_pat_metadata(
+    home_root: &Path,
+    profile_id: &str,
+    expiration: Option<String>,
+) -> Result<()> {
+    use crate::services::types::{auth_metadata_dir, auth_metadata_path};
+    
+    let metadata = AuthMetadata {
+        profile_id: profile_id.to_string(),
+        auth_type: "personal_token".to_string(),
+        token_expiration: expiration,
+        last_checked: chrono::Utc::now().to_rfc3339(),
+    };
+
+    let dir = auth_metadata_dir(home_root);
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        AppError::new("CREATE_DIR_FAILED", format!("Failed to create auth-metadata dir: {}", e))
+    })?;
+
+    let path = auth_metadata_path(home_root, profile_id);
+    let content = serde_json::to_string_pretty(&metadata).map_err(|e| {
+        AppError::new("SERIALIZE_FAILED", format!("Serialize failed: {}", e))
+    })?;
+
+    std::fs::write(&path, content).map_err(|e| {
+        AppError::new("WRITE_METADATA_FAILED", format!("Write failed: {}", e))
+    })?;
+
+    Ok(())
+}
+
+/// Reads PAT metadata for a profile
+pub fn read_pat_metadata(home_root: &Path, profile_id: &str) -> Result<Option<AuthMetadata>> {
+    use crate::services::types::auth_metadata_path;
+    
+    let path = auth_metadata_path(home_root, profile_id);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let content = std::fs::read_to_string(&path).map_err(|e| {
+        AppError::new("READ_METADATA_FAILED", format!("Failed to read: {}", e))
+    })?;
+
+    let metadata: AuthMetadata = serde_json::from_str(&content).map_err(|e| {
+        AppError::new("INVALID_METADATA", format!("Invalid metadata: {}", e))
+    })?;
+
+    Ok(Some(metadata))
+}
+
+#[cfg(test)]
+mod pat_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_record_and_read_metadata() {
+        let temp = TempDir::new().unwrap();
+        let home_root = temp.path();
+
+        record_pat_metadata(home_root, "test-profile", Some("2030-12-31T10:00:00+08:00".to_string())).unwrap();
+
+        let metadata = read_pat_metadata(home_root, "test-profile").unwrap().unwrap();
+        assert_eq!(metadata.profile_id, "test-profile");
+        assert_eq!(metadata.auth_type, "personal_token");
+        assert_eq!(metadata.token_expiration, Some("2030-12-31T10:00:00+08:00".to_string()));
+    }
+}
