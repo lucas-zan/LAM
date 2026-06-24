@@ -932,11 +932,11 @@ pub fn add_pat_account(
             format!("PAT account '{}' already exists", account_id)));
     }
     
-    // 3. Extract token from headers.authorization
+    // 3. Extract token from headers.authorization (optional)
     let token = extract_bearer_token(&req.credentials)?;
     
     // 4. Generate and save auth-{id}.json
-    let auth_json = generate_pat_auth_json(&token);
+    let auth_json = generate_pat_auth_json(token.as_deref());
     let dir = pat_accounts_dir(home_root);
     std::fs::create_dir_all(&dir).map_err(|e| {
         AppError::new("CREATE_DIR_FAILED", format!("Failed to create pat-accounts dir: {}", e))
@@ -964,26 +964,34 @@ pub fn add_pat_account(
     })
 }
 
-fn extract_bearer_token(creds: &UploadedCredentials) -> Result<String> {
-    let headers = creds.headers.as_ref()
-        .ok_or_else(|| AppError::new("MISSING_HEADERS", "Credentials missing headers field"))?;
+fn extract_bearer_token(creds: &UploadedCredentials) -> Result<Option<String>> {
+    let headers = match creds.headers.as_ref() {
+        Some(h) => h,
+        None => return Ok(None), // No headers = no token (optional)
+    };
     
-    let auth_value = headers.get("authorization")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::new("MISSING_AUTH_HEADER", "Missing authorization header"))?;
+    let auth_value = match headers.get("authorization").and_then(|v| v.as_str()) {
+        Some(v) => v,
+        None => return Ok(None), // No authorization header = no token (optional)
+    };
     
     if let Some(token) = auth_value.strip_prefix("Bearer ") {
-        Ok(token.to_string())
+        Ok(Some(token.to_string()))
     } else {
         Err(AppError::new("INVALID_AUTH_FORMAT", "Authorization must be 'Bearer <token>'"))
     }
 }
 
-fn generate_pat_auth_json(token: &str) -> String {
-    format!(r#"{{
+fn generate_pat_auth_json(token: Option<&str>) -> String {
+    match token {
+        Some(t) => format!(r#"{{
   "OPENAI_API_KEY": null,
   "personal_access_token": "{}"
-}}"#, json_escape(token))
+}}"#, json_escape(t)),
+        None => r#"{
+  "OPENAI_API_KEY": null
+}"#.to_string(),
+    }
 }
 
 /// Switches to a PAT account by copying its auth file to ~/.codex/auth.json

@@ -673,50 +673,85 @@ export function App() {
               </div>
             </>
           ) : (
-            <div>
-              <p className="modalHint">
-                Upload credentials JSON from your PAT provider:
-              </p>
-              <form onSubmit={(e) => {
-                e.preventDefault();
-                const formData = new FormData(e.currentTarget);
-                const jsonStr = formData.get('credentialsJson') as string;
-                try {
-                  const creds = JSON.parse(jsonStr) as UploadedCredentials;
-                  handleAddPatAccount(creds);
-                } catch (err) {
-                  useAppStore.getState().setError('Invalid JSON format');
-                }
-              }}>
-                <textarea
-                  name="credentialsJson"
-                  className="uploadPatTextarea"
-                  placeholder={`{
-  "access_token": "",
-  "account_id": "your-account-id",
-  "email": "you@example.com",
-  "expired": "2030-12-31T10:00:00+08:00",
-  "headers": {
-    "authorization": "Bearer at-xxx"
-  },
-  "type": "codex",
-  "websockets": true
-}`}
-                  rows={15}
-                  required
-                />
-                <div className="modalFoot">
-                  <UIButton type="button" variant="ghost" onClick={closeModal}>
-                    Cancel
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              const accountId = formData.get('accountId') as string;
+              const email = formData.get('email') as string;
+              const expired = formData.get('expired') as string;
+              const patToken = formData.get('patToken') as string;
+              
+              if (!accountId || !email || !expired) {
+                useAppStore.getState().setError('Account ID, email, and expiration date are required');
+                return;
+              }
+              
+              // Build credentials object
+              const creds: UploadedCredentials = {
+                access_token: "",
+                account_id: accountId,
+                email: email,
+                expired: expired,
+                headers: patToken ? {
+                  authorization: `Bearer ${patToken}`
+                } : undefined,
+                id_token: null,
+                last_refresh: new Date().toISOString(),
+                refresh_token: null,
+                type_: "codex",
+                websockets: true,
+                disabled: false,
+              };
+              
+              handleAddPatAccount(creds);
+            }}>
+              <div className="formGrid">
+                <label>
+                  Account ID *
+                  <input
+                    name="accountId"
+                    type="text"
+                    placeholder="my-account"
+                    required
+                  />
+                </label>
+                <label>
+                  Email *
+                  <input
+                    name="email"
+                    type="email"
+                    placeholder="you@example.com"
+                    required
+                  />
+                </label>
+                <label>
+                  Expiration Date *
+                  <input
+                    name="expired"
+                    type="datetime-local"
+                    required
+                  />
+                </label>
+                <label>
+                  Personal Access Token (optional)
+                  <input
+                    name="patToken"
+                    type="text"
+                    placeholder="at-xxx-token-here"
+                  />
+                </label>
+              </div>
+              <div className="modalFoot">
+                <UIButton type="button" variant="ghost" onClick={closeModal}>
+                  Cancel
+                </UIButton>
+                <div className="modalFootPrimary">
+                  <UIButton type="submit" variant="primary">
+                    Create
                   </UIButton>
-                  <div className="modalFootPrimary">
-                    <UIButton type="submit" variant="primary">
-                      Add Account
-                    </UIButton>
-                  </div>
                 </div>
-              </form>
-            </div>
+              </div>
+            </form>
           )}
         </Shell.Modal>
       ) : null}
