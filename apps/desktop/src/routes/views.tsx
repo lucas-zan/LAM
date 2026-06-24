@@ -925,12 +925,16 @@ export function Settings({
   resolvedTheme,
   divergedStrategy,
   setDivergedStrategy,
+  authMode,
+  setAuthMode,
 }: {
   health: HealthCheck | null;
   themeMode: 'system' | 'light' | 'dark';
   resolvedTheme: 'light' | 'dark';
   divergedStrategy: DivergedSessionStrategy;
   setDivergedStrategy: (strategy: DivergedSessionStrategy) => void;
+  authMode: 'oauth' | 'pat';
+  setAuthMode: (mode: 'oauth' | 'pat') => void;
 }) {
   return (
     <section className="panel pagePanel">
@@ -946,10 +950,31 @@ export function Settings({
           <strong>{health?.homeRoot ?? 'unknown'}</strong>
           <em>LAM_HOME or HOME</em>
         </div>
-        <div>
-          <span>Theme mode</span>
-          <strong>{themeMode}</strong>
-          <em>resolved: {resolvedTheme}</em>
+        <div className="settingsAuthModeRow">
+          <span>Account Switch Mode</span>
+          <div className="authModeRadios">
+            <label>
+              <input
+                type="radio"
+                name="authMode"
+                value="oauth"
+                checked={authMode === 'oauth'}
+                onChange={(e) => setAuthMode(e.target.value as 'oauth' | 'pat')}
+              />
+              OAuth Mode
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="authMode"
+                value="pat"
+                checked={authMode === 'pat'}
+                onChange={(e) => setAuthMode(e.target.value as 'oauth' | 'pat')}
+              />
+              PAT Mode
+            </label>
+          </div>
+          <em>OAuth: switch entire directory | PAT: copy auth.json only</em>
         </div>
         <label className="settingsSelectRow">
           <span>Diverged session strategy</span>

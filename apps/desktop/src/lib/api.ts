@@ -206,3 +206,13 @@ export async function addPatAccount(
 export async function switchToPatAccount(accountId: string): Promise<void> {
   return invoke<void>("switch_to_pat_account", { accountId });
 }
+
+export async function getAuthMode(): Promise<string> {
+  if (!inTauri()) return "oauth";
+  return invoke<string>("get_auth_mode");
+}
+
+export async function setAuthMode(mode: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("set_auth_mode", { mode });
+}

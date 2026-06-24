@@ -288,3 +288,13 @@ pub fn switch_to_pat_account(
 ) -> Result<(), AppError> {
     core_switch_to_pat_account(&home_root()?, &account_id)
 }
+
+#[tauri::command]
+pub fn get_auth_mode() -> Result<String, AppError> {
+    localagentmanager_core::get_auth_mode(&home_root()?)
+}
+
+#[tauri::command]
+pub fn set_auth_mode(mode: String) -> Result<(), AppError> {
+    localagentmanager_core::set_auth_mode(&home_root()?, &mode)
+}

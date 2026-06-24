@@ -118,6 +118,21 @@ export function App() {
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
   const [uploadPatAccountId, setUploadPatAccountId] = useState('');
   const [createMode, setCreateMode] = useState<'oauth' | 'pat'>('oauth');
+  const [authMode, setAuthMode] = useState<'oauth' | 'pat'>('oauth');
+
+  // Load auth mode on mount
+  useEffect(() => {
+    api.getAuthMode().then(mode => setAuthMode(mode as 'oauth' | 'pat'));
+  }, []);
+
+  // Save auth mode when changed
+  const handleSetAuthMode = useCallback((mode: 'oauth' | 'pat') => {
+    setAuthMode(mode);
+    api.setAuthMode(mode).catch(err => {
+      useAppStore.getState().setError('Failed to save auth mode');
+      console.error('Failed to save auth mode:', err);
+    });
+  }, []);
 
   const resolvedTheme = useMemo(() => {
     if (themeMode === 'system')
@@ -550,6 +565,8 @@ export function App() {
             resolvedTheme={resolvedTheme}
             divergedStrategy={divergedStrategy}
             setDivergedStrategy={setDivergedStrategy}
+            authMode={authMode}
+            setAuthMode={handleSetAuthMode}
           />
         ) : null}
       </section>

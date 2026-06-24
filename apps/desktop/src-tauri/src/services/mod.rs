@@ -19,3 +19,4 @@ pub use relay::*;
 pub use runtime::*;
 pub use session::*;
 pub use sync::*;
+pub use types::{get_auth_mode, set_auth_mode};

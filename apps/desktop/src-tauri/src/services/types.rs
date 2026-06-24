@@ -239,3 +239,51 @@ pub(crate) fn validate_profile_name(input: &str) -> Result<String> {
     }
     Ok(name.to_string())
 }
+
+/// Returns the path to the settings file
+pub(crate) fn settings_file_path(home_root: &Path) -> PathBuf {
+    config_root(home_root).join("settings.json")
+}
+
+/// Gets the current auth mode (oauth or pat)
+pub fn get_auth_mode(home_root: &Path) -> Result<String> {
+    let settings_path = settings_file_path(home_root);
+    
+    if !settings_path.exists() {
+        // Default to oauth if no settings file
+        return Ok("oauth".to_string());
+    }
+    
+    let content = fs::read_to_string(&settings_path)
+        .map_err(|e| AppError::new("READ_SETTINGS_FAILED", format!("Failed to read settings: {}", e)))?;
+    
+    let settings: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| AppError::new("PARSE_SETTINGS_FAILED", format!("Failed to parse settings: {}", e)))?;
+    
+    Ok(settings.get("authMode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("oauth")
+        .to_string())
+}
+
+/// Sets the auth mode (oauth or pat)
+pub fn set_auth_mode(home_root: &Path, mode: &str) -> Result<()> {
+    if mode != "oauth" && mode != "pat" {
+        return Err(AppError::new("INVALID_AUTH_MODE", format!("Auth mode must be 'oauth' or 'pat', got: {}", mode)));
+    }
+    
+    let settings_path = settings_file_path(home_root);
+    let config_dir = config_root(home_root);
+    
+    // Ensure config directory exists
+    fs::create_dir_all(&config_dir)
+        .map_err(|e| AppError::new("CREATE_DIR_FAILED", format!("Failed to create config dir: {}", e)))?;
+    
+    let settings = serde_json::json!({
+        "authMode": mode
+    });
+    
+    write_file_private(&settings_path, &settings.to_string())?;
+    
+    Ok(())
+}

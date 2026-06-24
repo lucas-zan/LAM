@@ -71,6 +71,8 @@ fn main() {
             commands::check_profile_token_expiration,
             commands::add_pat_account,
             commands::switch_to_pat_account,
+            commands::get_auth_mode,
+            commands::set_auth_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LAM");
