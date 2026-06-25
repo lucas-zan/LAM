@@ -1,6 +1,5 @@
 use localagentmanager_core::{
-    UploadedCredentials, process_uploaded_credentials,
-    read_pat_metadata, check_token_expiration,
+    check_token_expiration, process_uploaded_credentials, read_pat_metadata, UploadedCredentials,
 };
 use tempfile::TempDir;
 
@@ -25,10 +24,20 @@ fn test_pat_auth_end_to_end() {
 
     process_uploaded_credentials(home_root, "test-profile", &creds).unwrap();
 
-    let metadata = read_pat_metadata(home_root, "test-profile").unwrap().unwrap();
+    let metadata = read_pat_metadata(home_root, "test-profile")
+        .unwrap()
+        .unwrap();
     assert_eq!(metadata.auth_type, "personal_token");
 
     let status = check_token_expiration(home_root, "test-profile").unwrap();
     assert!(!status.is_expired);
     assert_eq!(status.warning_level, "ok");
+}
+
+#[test]
+fn test_pat_metadata_rejects_path_traversal() {
+    let temp = TempDir::new().unwrap();
+    let result = read_pat_metadata(temp.path(), "../outside");
+
+    assert!(result.is_err());
 }

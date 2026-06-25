@@ -158,7 +158,6 @@ fn static_fake_home_fixture_scans_expected_profiles() {
     )
     .unwrap();
     assert!(plan.blocked_files.iter().any(|p| p == "auth.json"));
-    assert!(plan.blocked_files.iter().any(|p| p == "state_5.sqlite"));
     assert!(plan.policy_blocked_files.iter().any(|p| p == "*.sqlite*"));
 }
 

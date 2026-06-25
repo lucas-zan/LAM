@@ -21,6 +21,7 @@ vi.mock('./lib/api', () => ({
   syncTrayQuota: vi.fn(),
   relayResumeSession: vi.fn(),
   openTerminalWithCommand: vi.fn(),
+  getAuthMode: vi.fn(() => Promise.resolve('oauth')),
   getAntigravityQuota: vi.fn(() => Promise.resolve({ ok: true, models: [] })),
 }));
 

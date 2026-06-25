@@ -96,10 +96,10 @@ const checks = [
       app.includes('trayQuotaTrack') &&
       app.includes('quotaDisplayWindows') &&
       app.includes('formatResetCountdown') &&
-      trayPanel.includes('trayAccountPlanLine') &&
+      trayPanel.includes('<PlanTypeBadge planType={quota?.planType} />') &&
       app.includes('.planTypeBadge') &&
       app.includes('font-size: 9px') &&
-      app.includes('padding: 2px 5px') &&
+      app.includes('padding: 2px 5.5px') &&
       app.includes('.trayAccountRow--monthlyOnly .trayAccountRowContentLeft') &&
       app.includes('gap: 28px') &&
       app.includes('.trayAccountRow--monthlyOnly .trayAccountRowContentLeftText') &&
@@ -111,7 +111,7 @@ const checks = [
       !trayPanel.includes('<span>weekly</span>') &&
       app.includes('Refreshing…') &&
       app.includes('latestSessionModifiedAt') &&
-      app.includes('LAM Quota') &&
+      trayPanel.includes('<h2>LAM</h2>') &&
       app.includes('countAccountsWithAvailableQuota') &&
       app.includes('accountsWithQuotaData') &&
       app.includes('availableQuotaAccounts') &&

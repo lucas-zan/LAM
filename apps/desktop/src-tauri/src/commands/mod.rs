@@ -1,7 +1,8 @@
 use localagentmanager_core::{
+    add_pat_account as core_add_pat_account,
     attach_provider_to_profile as core_attach_provider_to_profile,
     build_login_command as core_build_login_command,
-    build_resume_command as core_build_resume_command,
+    build_resume_command as core_build_resume_command, check_token_expiration,
     create_account_plan as core_create_account_plan, create_provider as core_create_provider,
     create_relay_plan as core_create_relay_plan, delete_provider as core_delete_provider,
     execute_attach_provider_to_profile as core_execute_attach_provider_to_profile,
@@ -15,18 +16,17 @@ use localagentmanager_core::{
     open_terminal_with_command as core_open_terminal_with_command,
     open_terminal_with_resume as core_open_terminal_with_resume,
     plan_attach_provider_to_profile as core_plan_attach_provider_to_profile,
-    refresh_all_quotas as core_refresh_all_quotas,
+    process_uploaded_credentials, read_pat_metadata, refresh_all_quotas as core_refresh_all_quotas,
     relay_resume_session as core_relay_resume_session,
     rename_account_plan as core_rename_account_plan, resolve_home_root,
-    sync_plan as core_sync_plan, test_provider as core_test_provider,
-    update_provider as core_update_provider, process_uploaded_credentials, check_token_expiration, read_pat_metadata,
-    add_pat_account as core_add_pat_account, switch_to_pat_account as core_switch_to_pat_account,
-    UploadedCredentials, AuthMetadata, TokenExpirationStatus, AddPatAccountRequest, AddPatAccountResult, AccountNoteUpdate, AppError, AttachProviderRequest,
-    AttachProviderResult, CodexAccount, CodexSession, CreateAccountRequest, CreateProviderRequest,
-    CreateRelayRequest, CreateResult, OperationPlan, ProviderProfile, QuotaRefreshResult,
-    RelayResumeRequest, RelayResumeResult, RenameAccountRequest, RenameAccountResult,
-    ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult, UpdateProviderRequest,
-    UsageQuotaSnapshot,
+    switch_to_pat_account as core_switch_to_pat_account, sync_plan as core_sync_plan,
+    test_provider as core_test_provider, update_provider as core_update_provider,
+    AccountNoteUpdate, AddPatAccountRequest, AddPatAccountResult, AppError, AttachProviderRequest,
+    AttachProviderResult, AuthMetadata, CodexAccount, CodexSession, CreateAccountRequest,
+    CreateProviderRequest, CreateRelayRequest, CreateResult, OperationPlan, ProviderProfile,
+    QuotaRefreshResult, RelayResumeRequest, RelayResumeResult, RenameAccountRequest,
+    RenameAccountResult, ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult,
+    TokenExpirationStatus, UpdateProviderRequest, UploadedCredentials, UsageQuotaSnapshot,
 };
 
 async fn run_blocking<T, F>(task: F) -> Result<T, AppError>
@@ -252,7 +252,7 @@ pub fn execute_attach_provider_to_profile(
 #[tauri::command]
 pub async fn get_antigravity_quota(
 ) -> Result<localagentmanager_core::AntigravityQuotaResponse, AppError> {
-    run_blocking(move || localagentmanager_core::get_live_antigravity_quota()).await
+    run_blocking(localagentmanager_core::get_live_antigravity_quota).await
 }
 
 #[tauri::command]
@@ -276,16 +276,12 @@ pub fn check_profile_token_expiration(
 }
 
 #[tauri::command]
-pub fn add_pat_account(
-    req: AddPatAccountRequest,
-) -> Result<AddPatAccountResult, AppError> {
+pub fn add_pat_account(req: AddPatAccountRequest) -> Result<AddPatAccountResult, AppError> {
     core_add_pat_account(&home_root()?, &req)
 }
 
 #[tauri::command]
-pub fn switch_to_pat_account(
-    account_id: String,
-) -> Result<(), AppError> {
+pub fn switch_to_pat_account(account_id: String) -> Result<(), AppError> {
     core_switch_to_pat_account(&home_root()?, &account_id)
 }
 
