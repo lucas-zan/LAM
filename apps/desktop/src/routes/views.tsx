@@ -154,7 +154,6 @@ export function Overview({
   refreshingAntigravity,
   onRefreshAntigravity,
   onSaveAccountNote,
-  openUploadPat,
   authMode,
 }: {
   accounts: CodexAccount[];
@@ -173,7 +172,6 @@ export function Overview({
   refreshingAntigravity: boolean;
   onRefreshAntigravity: () => void;
   onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
-  openUploadPat: (accountId: string) => void;
   authMode?: 'oauth' | 'pat';
 }) {
   const [activeTab, setActiveTab] = useState<'codex' | 'antigravity'>('codex');
@@ -244,7 +242,6 @@ export function Overview({
           refreshAccountQuota={refreshAccountQuota}
           refreshingQuotaIds={refreshingQuotaIds}
           onSaveAccountNote={onSaveAccountNote}
-          openUploadPat={openUploadPat}
           variant="overview"
           authMode={authMode}
         />
@@ -267,6 +264,7 @@ function AuthModeBadge({ authMode }: { authMode?: string | null }) {
     personal_token: 'PAT',
     oauth: 'OAuth',
     api_key: 'API Key',
+    uploaded: 'Uploaded',
     config: 'Config',
   };
   
@@ -323,7 +321,6 @@ export function Accounts({
   refreshAccountQuota,
   refreshingQuotaIds,
   onSaveAccountNote,
-  openUploadPat,
   variant = 'default',
   authMode = 'oauth',
 }: {
@@ -339,15 +336,15 @@ export function Accounts({
   refreshAccountQuota: (profileId: string) => void;
   refreshingQuotaIds: string[];
   onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
-  openUploadPat: (accountId: string) => void;
   variant?: 'default' | 'overview';
   authMode?: 'oauth' | 'pat';
 }) {
   const [tokenStatuses, setTokenStatuses] = useState<Record<string, TokenExpirationStatus>>({});
   useEffect(() => {
-    // Fetch token expiration status for accounts with personal_token auth mode
     const fetchTokenStatuses = async () => {
-      const patAccounts = accounts.filter((acc) => acc.authMode === 'personal_token');
+      const patAccounts = accounts.filter(
+        (acc) => acc.authMode === 'personal_token' || acc.authMode === 'uploaded',
+      );
       
       for (const account of patAccounts) {
         try {
@@ -365,9 +362,12 @@ export function Accounts({
     }
   }, [accounts]);
   if (!accounts.length) return <div className="emptyBox">No Codex profiles found.</div>;
-  const activeAccount = currentSession
-    ? accounts.find((account) => account.id === currentSession.accountId)
-    : undefined;
+  const activeAccount =
+    authMode === 'pat'
+      ? accounts.find((account) => account.isActiveAuth)
+      : currentSession
+        ? accounts.find((account) => account.id === currentSession.accountId)
+        : undefined;
   const orderedAccounts = [...accounts].sort((a, b) => {
     const latestDiff = (b.latestSessionModifiedAt ?? 0) - (a.latestSessionModifiedAt ?? 0);
     if (latestDiff !== 0) return latestDiff;
@@ -379,11 +379,16 @@ export function Accounts({
         <h3 className="sectionTitle">Accounts</h3>
       </div>
       <div className="activeSessionBanner">
-        <span>Active source</span>
+        <span>{authMode === 'pat' ? 'Active auth' : 'Active source'}</span>
         <strong>
-          {activeAccount?.displayName ?? currentSession?.accountId ?? 'No active session'}
+          {activeAccount?.displayName ??
+            (authMode === 'pat' ? 'Unrecognized' : currentSession?.accountId ?? 'No active session')}
         </strong>
-        <em className="mono">{currentSession?.id ?? 'No session found'}</em>
+        <em className="mono">
+          {authMode === 'pat'
+            ? activeAccount?.codexHome ?? 'No unique tokens.account_id match'
+            : currentSession?.id ?? 'No session found'}
+        </em>
       </div>
       <div className="cardGrid accountCardGrid">
         {orderedAccounts.map((account) => {
@@ -391,7 +396,10 @@ export function Accounts({
           const quota = quotas.find((item) => item.profileId === account.id);
           const providerLabel = account.providerId ?? 'unknown';
           const modelLabel = account.model ?? 'unknown';
-          const isActiveAccount = currentSession?.accountId === account.id;
+          const isActiveAccount =
+            authMode === 'pat'
+              ? account.isActiveAuth === true
+              : currentSession?.accountId === account.id;
           return (
             <article
               className="card accountCard"
@@ -401,24 +409,8 @@ export function Accounts({
               <div className="cardHead">
                 <div className="cardTitleRow">
                   <h3>{account.displayName}</h3>
-                  <PlanTypeBadge planType={quota?.planType} />
-                  {isActiveAccount ? (
-                    <span className="accountActiveBadge" aria-label="Active session account">
-                      Active
-                    </span>
-                  ) : account.hasAuth ? (
-                    <span className="badge badge--auth" aria-label="Logged in account">
-                      Logged in
-                    </span>
-                  ) : (
-                    <span className="badge warn" aria-label="Login needed account">
-                      Login needed
-                    </span>
-                  )}
                 </div>
                 <div className="cardHeadActions">
-                  <AuthModeBadge authMode={account.authMode} />
-                  <TokenExpirationBadge status={tokenStatuses[account.id]} />
                   <UIButton
                     variant="icon"
                     size="sm"
@@ -434,6 +426,24 @@ export function Accounts({
                     ↻
                   </UIButton>
                 </div>
+              </div>
+              <div className="cardTagsRow">
+                <PlanTypeBadge planType={quota?.planType} />
+                {isActiveAccount ? (
+                  <span className="accountActiveBadge" aria-label="Active session account">
+                    Active
+                  </span>
+                ) : account.hasAuth ? (
+                  <span className="badge badge--auth" aria-label="Logged in account">
+                    Logged in
+                  </span>
+                ) : (
+                  <span className="badge warn" aria-label="Login needed account">
+                    Login needed
+                  </span>
+                )}
+                <AuthModeBadge authMode={account.authMode} />
+                <TokenExpirationBadge status={tokenStatuses[account.id]} />
               </div>
               <p className="cardPath mono" title={account.codexHome}>
                 {account.codexHome}
@@ -461,11 +471,11 @@ export function Accounts({
                   size="sm"
                   variant="primary"
                   className="accountActionBtn"
-                  disabled={!currentSession || (authMode === 'pat' && isActiveAccount)}
+                  disabled={authMode === 'pat' || !currentSession}
                   aria-label="Relay Latest"
                   title={
-                    authMode === 'pat' && isActiveAccount
-                      ? 'Not available for active account in PAT mode'
+                    authMode === 'pat'
+                      ? 'Not available in PAT mode'
                       : currentSession
                       ? `Relay latest active session ${currentSession.id} with ${account.displayName}`
                       : 'No active session found'
@@ -481,11 +491,11 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
-                  disabled={accounts.length < 2 || (authMode === 'pat' && isActiveAccount)}
+                  disabled={authMode === 'pat' || accounts.length < 2}
                   aria-label="Handoff"
                   title={
-                    authMode === 'pat' && isActiveAccount
-                      ? 'Not available for active account in PAT mode'
+                    authMode === 'pat'
+                      ? 'Not available in PAT mode'
                       : `Choose a session to continue with ${account.displayName}`
                   }
                   onClick={(e) => {
@@ -499,12 +509,8 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
-                  disabled={authMode === 'pat' && isActiveAccount}
-                  title={
-                    authMode === 'pat' && isActiveAccount
-                      ? 'Not available for active account in PAT mode'
-                      : 'Sync sessions'
-                  }
+                  disabled={authMode === 'pat'}
+                  title={authMode === 'pat' ? 'Not available in PAT mode' : 'Sync sessions'}
                   onClick={(e) => {
                     e.stopPropagation();
                     openSync(account.id);
@@ -547,16 +553,18 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
-                  disabled={authMode === 'pat' && isActiveAccount}
+                  disabled={account.id === 'main' || (authMode === 'pat' && isActiveAccount)}
                   aria-label="Switch to this account"
                   title={
-                    authMode === 'pat' && isActiveAccount
+                    account.id === 'main'
+                      ? 'Main profile is the active auth slot'
+                      : authMode === 'pat' && isActiveAccount
                       ? 'Already active in PAT mode'
                       : 'Switch to this account'
                   }
                   onClick={(e) => {
                     e.stopPropagation();
-                    openUploadPat(account.id);
+                    login(account);
                   }}
                 >
                   <IconSync size={13} />
@@ -955,12 +963,16 @@ export function Settings({
   resolvedTheme,
   divergedStrategy,
   setDivergedStrategy,
+  hideDockIcon,
+  setHideDockIcon,
 }: {
   health: HealthCheck | null;
   themeMode: 'system' | 'light' | 'dark';
   resolvedTheme: 'light' | 'dark';
   divergedStrategy: DivergedSessionStrategy;
   setDivergedStrategy: (strategy: DivergedSessionStrategy) => void;
+  hideDockIcon: boolean;
+  setHideDockIcon: (hide: boolean) => void;
 }) {
   return (
     <section className="panel pagePanel">
@@ -991,6 +1003,17 @@ export function Settings({
             <option value="prefer_target">Prefer target and save source fork</option>
           </select>
           <em>Used when both accounts continued the same session differently.</em>
+        </label>
+        <label className="settingsSelectRow">
+          <span>Dock icon visibility</span>
+          <select
+            value={hideDockIcon ? "true" : "false"}
+            onChange={(event) => setHideDockIcon(event.target.value === "true")}
+          >
+            <option value="false">Show Dock icon</option>
+            <option value="true">Hide Dock icon (Accessory mode)</option>
+          </select>
+          <em>Hide Dock icon on macOS while maintaining the status bar menu tray.</em>
         </label>
       </div>
     </section>

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import * as api from './lib/api';
@@ -21,6 +21,11 @@ vi.mock('./lib/api', () => ({
   syncTrayQuota: vi.fn(),
   relayResumeSession: vi.fn(),
   openTerminalWithCommand: vi.fn(),
+  openTerminalForLogin: vi.fn(),
+  buildLoginCommand: vi.fn(),
+  switchToPatAccount: vi.fn(),
+  addPatAccount: vi.fn(),
+  setAuthMode: vi.fn(),
   getAuthMode: vi.fn(() => Promise.resolve('oauth')),
   getAntigravityQuota: vi.fn(() => Promise.resolve({ ok: true, models: [] })),
 }));
@@ -109,6 +114,7 @@ function session(accountId: string, id: string, modifiedAt: number): CodexSessio
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     value: vi.fn(() => ({
@@ -179,9 +185,108 @@ beforeEach(() => {
     warnings: [],
   });
   vi.mocked(api.openTerminalWithCommand).mockResolvedValue();
+  vi.mocked(api.openTerminalForLogin).mockResolvedValue();
+  vi.mocked(api.switchToPatAccount).mockResolvedValue();
+  vi.mocked(api.addPatAccount).mockResolvedValue({
+    accountId: 'codex-nova',
+    email: 'nova@example.com',
+    expired: '2030-12-31T23:59:59Z',
+  });
+  vi.mocked(api.setAuthMode).mockResolvedValue();
+  vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
 });
 
 describe('App handoff modal', () => {
+  it('uses auth.json copy switching for every account in PAT mode', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    vi.mocked(api.listAccounts).mockImplementation(async () =>
+      accounts.map((account) => ({
+        ...account,
+        isActiveAuth:
+          account.id === 'codex-c' && vi.mocked(api.switchToPatAccount).mock.calls.length > 0,
+      })),
+    );
+
+    render(<App />);
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /switch to this account/i }));
+
+    await waitFor(() => expect(api.switchToPatAccount).toHaveBeenCalledWith('codex-c'));
+    await waitFor(() =>
+      expect(
+        within(accountCard!).getByRole('button', { name: /switch to this account/i }),
+      ).toHaveProperty('disabled', true),
+    );
+    expect(api.openTerminalForLogin).not.toHaveBeenCalled();
+  });
+
+  it('refreshes main quota after PAT switch copies auth into main', async () => {
+    const refreshAccountQuota = vi.fn();
+    useQuotaStore.setState({ refreshAccountQuota });
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /switch to this account/i }));
+
+    await waitFor(() => expect(api.switchToPatAccount).toHaveBeenCalledWith('codex-c'));
+    await waitFor(() => expect(refreshAccountQuota).toHaveBeenCalledWith('main'));
+  });
+
+  it('refreshes the new PAT card after uploading auth.json', async () => {
+    const refreshAccountQuota = vi.fn();
+    useQuotaStore.setState({ refreshAccountQuota });
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /new account/i }));
+    fireEvent.click(screen.getByRole('button', { name: /pat/i }));
+    await screen.findByText(/upload your auth\.json file/i);
+    const authFile = new File([JSON.stringify({ tokens: { account_id: 'account-test-6789' } })], 'auth.json', {
+      type: 'application/json',
+    });
+    Object.defineProperty(authFile, 'text', {
+      value: () => Promise.resolve(JSON.stringify({ tokens: { account_id: 'account-test-6789' } })),
+    });
+    vi.stubGlobal(
+      'FormData',
+      class {
+        get(name: string) {
+          if (name === 'accountName') return 'nova';
+          if (name === 'authFile') return authFile;
+          if (name === 'personalAccessToken') return '';
+          if (name === 'tokenExpiration') return '';
+          return null;
+        }
+      },
+    );
+
+    fireEvent.submit(screen.getByRole('button', { name: /upload/i }).closest('form')!);
+
+    await waitFor(() => expect(api.addPatAccount).toHaveBeenCalled());
+    await waitFor(() => expect(refreshAccountQuota).toHaveBeenCalledWith('codex-nova'));
+  });
+
+  it('uses login switching for every account in Auth mode', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /switch to this account/i }));
+
+    await waitFor(() => expect(api.openTerminalForLogin).toHaveBeenCalledWith('codex-c'));
+    expect(api.switchToPatAccount).not.toHaveBeenCalled();
+  });
+
   it('relays the selected source session and does not fall back to latest active session', async () => {
     const mainSessions = deferred<CodexSession[]>();
     let holdMainSessions = false;

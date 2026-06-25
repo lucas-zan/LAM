@@ -119,6 +119,55 @@ describe('handoff navigation and entry points', () => {
     expect(screen.getAllByRole('button', { name: /relay latest/i })).toHaveLength(accounts.length);
   });
 
+  it('disables Relay, Handoff, and Sync on every account card in PAT mode', () => {
+    render(<Overview {...overviewProps()} authMode="pat" />);
+
+    for (const name of [/relay latest/i, /handoff/i, /sync sessions/i]) {
+      for (const button of screen.getAllByRole('button', { name })) {
+        expect(button).toHaveProperty('disabled', true);
+      }
+    }
+  });
+
+  it('uses backend auth identity for PAT switch availability', () => {
+    const patAccounts: CodexAccount[] = [
+      {
+        ...accounts[0],
+        id: 'main',
+        displayName: 'main',
+        codexHome: '/tmp/.codex',
+        isActiveAuth: false,
+      },
+      { ...accounts[0], isActiveAuth: true },
+      { ...accounts[1], isActiveAuth: false },
+    ];
+    render(<Overview {...overviewProps()} accounts={patAccounts} authMode="pat" />);
+
+    expect(screen.getByText('Active auth').nextElementSibling?.textContent).toBe('codex-a');
+    expect(
+      screen.getByRole('heading', { name: 'main' }).closest('article')?.querySelector(
+        '[aria-label="Switch to this account"]',
+      ),
+    ).toHaveProperty('disabled', true);
+    expect(
+      screen.getByRole('heading', { name: 'codex-a' }).closest('article')?.querySelector(
+        '[aria-label="Switch to this account"]',
+      ),
+    ).toHaveProperty('disabled', true);
+    expect(
+      screen.getByRole('heading', { name: 'codex-b' }).closest('article')?.querySelector(
+        '[aria-label="Switch to this account"]',
+      ),
+    ).toHaveProperty('disabled', false);
+  });
+
+  it('shows unrecognized when PAT auth has no unique profile match', () => {
+    render(<Overview {...overviewProps()} authMode="pat" />);
+
+    expect(screen.getByText('Unrecognized')).toBeTruthy();
+    expect(screen.getByText('No unique tokens.account_id match')).toBeTruthy();
+  });
+
   it('shows plan type beside account names when quota data includes it', () => {
     render(<Overview {...overviewProps()} />);
 

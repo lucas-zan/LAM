@@ -28,6 +28,17 @@ fn main() {
         })
         .setup(|app| {
             tray::setup_tray(app.handle())?;
+
+            #[cfg(target_os = "macos")]
+            {
+                if let Ok(home) = localagentmanager_core::resolve_home_root() {
+                    let hide = localagentmanager_core::types::get_hide_dock_icon(&home);
+                    if hide {
+                        app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                    }
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -73,6 +84,8 @@ fn main() {
             commands::switch_to_pat_account,
             commands::get_auth_mode,
             commands::set_auth_mode,
+            commands::get_hide_dock_icon,
+            commands::set_hide_dock_icon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LAM");

@@ -20,14 +20,16 @@ fn test_pat_auth_end_to_end() {
         refresh_token: None,
         credential_type: "codex".to_string(),
         websockets: true,
+        raw_auth_json: None,
     };
 
+    std::fs::create_dir_all(home_root.join(".codex-test-profile/sessions")).unwrap();
     process_uploaded_credentials(home_root, "test-profile", &creds).unwrap();
 
     let metadata = read_pat_metadata(home_root, "test-profile")
         .unwrap()
         .unwrap();
-    assert_eq!(metadata.auth_type, "personal_token");
+    assert_eq!(metadata.auth_type, "oauth");
 
     let status = check_token_expiration(home_root, "test-profile").unwrap();
     assert!(!status.is_expired);

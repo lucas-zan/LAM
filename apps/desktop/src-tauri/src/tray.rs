@@ -16,6 +16,7 @@ pub const TRAY_ID: &str = "lam-quota-tray";
 pub const POPOVER_LABEL: &str = "quota-popover";
 const REFRESH_MENU_ID: &str = "tray-refresh";
 const SHOW_MENU_ID: &str = "tray-show";
+const QUIT_MENU_ID: &str = "tray-quit";
 
 static TRAY_BUSY: Mutex<bool> = Mutex::new(false);
 static POPOVER_OPACITY_PERCENT: AtomicU8 = AtomicU8::new(100);
@@ -143,8 +144,10 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, AppError> 
         .map_err(|err| AppError::new("TRAY_MENU_FAILED", err.to_string()))?;
     let show = MenuItem::with_id(app, SHOW_MENU_ID, "Open LAM", true, None::<&str>)
         .map_err(|err| AppError::new("TRAY_MENU_FAILED", err.to_string()))?;
+    let quit = MenuItem::with_id(app, QUIT_MENU_ID, "Quit", true, None::<&str>)
+        .map_err(|err| AppError::new("TRAY_MENU_FAILED", err.to_string()))?;
 
-    Menu::with_items(app, &[&refresh, &show])
+    Menu::with_items(app, &[&refresh, &show, &quit])
         .map_err(|err| AppError::new("TRAY_MENU_FAILED", err.to_string()))
 }
 
@@ -272,6 +275,7 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), AppError> {
         .on_menu_event(move |app_handle, event| match event.id.as_ref() {
             REFRESH_MENU_ID => refresh_tray_menu_background(app_handle.clone(), true),
             SHOW_MENU_ID => show_main_window(app_handle),
+            QUIT_MENU_ID => app_handle.exit(0),
             _ => {}
         })
         .build(app)

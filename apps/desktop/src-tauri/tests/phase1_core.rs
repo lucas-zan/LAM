@@ -162,7 +162,7 @@ fn static_fake_home_fixture_scans_expected_profiles() {
 }
 
 #[test]
-fn scans_accounts_and_sessions_without_reading_auth() {
+fn scans_accounts_and_sessions_with_auth_identity_metadata() {
     let home = temp_home("scan");
     seed_codex_home(&home, "main");
     let luna = seed_codex_home(&home, "luna");
@@ -1011,6 +1011,43 @@ exit 1
     assert_eq!(cached[0].source, "app_server_rate_limits");
     assert_eq!(cached[0].staleness, "cached");
     assert_eq!(cached[0].primary_used_percent, Some(42));
+}
+
+#[test]
+fn quota_app_server_uses_each_profile_codex_home() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-profile-codex-home");
+    seed_codex_home(&home, "main");
+    seed_codex_home(&home, "b");
+    let bin = home.join("fake-codex.sh");
+    write_executable(
+        &bin,
+        r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  case "$CODEX_HOME" in
+    */.codex) used=21 ;;
+    */.codex-b) used=64 ;;
+    *) exit 3 ;;
+  esac
+  read _line1 || exit 1
+  read _line2 || exit 1
+  echo "{\"id\":2,\"result\":{\"rateLimits\":{\"planType\":\"plus\",\"primary\":{\"usedPercent\":$used,\"resetsAt\":1781678412},\"secondary\":null}}}"
+  /bin/sleep 1
+  exit 0
+fi
+exit 1
+"#,
+    );
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::set_var("LAM_CODEX_BIN", bin.to_string_lossy().to_string());
+
+    let first = get_profile_quota(&home, "main", true).unwrap();
+    let second = get_profile_quota(&home, "b", true).unwrap();
+
+    std::env::remove_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+    std::env::remove_var("LAM_CODEX_BIN");
+    assert_eq!(first.primary_used_percent, Some(21));
+    assert_eq!(second.primary_used_percent, Some(64));
 }
 
 #[test]

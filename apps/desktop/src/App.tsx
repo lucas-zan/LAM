@@ -23,7 +23,6 @@ import type {
   SyncRequest,
   SyncResult,
   AntigravityQuotaResponse,
-  UploadedCredentials,
   CodexAccount,
 } from './lib/types';
 import * as Views from './routes/views';
@@ -61,6 +60,8 @@ export function App() {
     modal,
     openModal,
     closeModal,
+    hideDockIcon,
+    setHideDockIcon,
   } = useAppStore();
   const {
     accounts,
@@ -116,13 +117,13 @@ export function App() {
   const selectedHandoffSession = handoffSessions.find((s) => s.id === handoffSessionId);
   const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
-  const [uploadPatAccountId, setUploadPatAccountId] = useState('');
   const [createMode, setCreateMode] = useState<'oauth' | 'pat'>('oauth');
   const [authMode, setAuthMode] = useState<'oauth' | 'pat'>('oauth');
 
-  // Load auth mode on mount
+  // Load auth mode and settings on mount
   useEffect(() => {
     api.getAuthMode().then(mode => setAuthMode(mode as 'oauth' | 'pat'));
+    useAppStore.getState().loadSettings();
   }, []);
 
   // Save auth mode when changed
@@ -310,44 +311,20 @@ export function App() {
     await useSessionStore.getState().loadSessions(result.profileId);
   }
 
-  async function handleUploadPat(profileId: string, credentials: UploadedCredentials) {
-    try {
-      await api.uploadPatCredentials(profileId, credentials);
-      closeModal();
-      // Refresh accounts to show updated auth mode
-      await refresh();
-      useAppStore.getState().setStatus('PAT credentials uploaded successfully');
-    } catch (err) {
-      useAppStore.getState().setStatus('Failed to upload PAT credentials');
-      useAppStore.getState().setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function handleAddPatAccount(credentials: UploadedCredentials) {
-    try {
-      const result = await api.addPatAccount({ credentials });
-      closeModal();
-      await refresh();
-      useAppStore.getState().setStatus(`PAT account '${result.accountId}' added successfully`);
-    } catch (err) {
-      useAppStore.getState().setStatus('Failed to add PAT account');
-      useAppStore.getState().setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   async function handleSwitchAccount(account: CodexAccount) {
-    // For PAT accounts, directly switch by copying auth file
-    if (account.authMode === 'personal_token') {
+    if (authMode === 'pat') {
       try {
         await api.switchToPatAccount(account.id);
         await refresh();
-        useAppStore.getState().setStatus(`Switched to PAT account '${account.id}'`);
+        refreshAccountQuota('main');
+        useAppStore
+          .getState()
+          .setStatus(`Switched auth.json to '${account.id}'. Restart running Codex clients.`);
       } catch (err) {
-        useAppStore.getState().setStatus('Failed to switch PAT account');
+        useAppStore.getState().setStatus('Failed to switch auth.json');
         useAppStore.getState().setError(err instanceof Error ? err.message : String(err));
       }
     } else {
-      // For OAuth accounts, use the traditional login flow
       login(account);
     }
   }
@@ -536,10 +513,6 @@ export function App() {
             refreshingAntigravity={refreshingAntigravity}
             onRefreshAntigravity={() => void loadAntigravity(true)}
             onSaveAccountNote={saveAccountNote}
-            openUploadPat={(accountId) => {
-              setUploadPatAccountId(accountId);
-              openModal('uploadPat');
-            }}
             authMode={authMode}
           />
         ) : null}
@@ -577,6 +550,8 @@ export function App() {
             resolvedTheme={resolvedTheme}
             divergedStrategy={divergedStrategy}
             setDivergedStrategy={setDivergedStrategy}
+            hideDockIcon={hideDockIcon}
+            setHideDockIcon={setHideDockIcon}
           />
         ) : null}
       </section>
@@ -702,14 +677,16 @@ export function App() {
           ) : (
             <div>
               <p className="modalHint">
-                Upload your auth.json file (from ~/.codex/) and optionally provide a Personal Access Token:
+                Upload your auth.json file from ~/.codex/:
               </p>
               <form onSubmit={async (e) => {
                 e.preventDefault();
                 const formData = new FormData(e.currentTarget);
                 const accountName = (formData.get('accountName') as string || '').trim();
                 const file = formData.get('authFile') as File;
-                const patToken = formData.get('patToken') as string;
+                const personalAccessToken =
+                  (formData.get('personalAccessToken') as string || '').trim();
+                const expirationInput = (formData.get('tokenExpiration') as string || '').trim();
                 
                 if (!accountName) {
                   useAppStore.getState().setError('Please provide an account name');
@@ -725,39 +702,22 @@ export function App() {
                   const fileContent = await file.text();
                   const authJson = JSON.parse(fileContent);
                   
-                  // Use the provided account name instead of auth.json's account_id
-                  const email = authJson.email || 'unknown@example.com';
-                  const expired = authJson.expired;
-                  
-                  // Build credentials with custom account name
-                  const creds: UploadedCredentials = {
-                    accessToken: authJson.access_token || "",
-                    accountId: accountName,  // Use custom name
-                    email: email,
-                    expired: expired || "2030-12-31T23:59:59+00:00",
-                    headers: patToken ? {
-                      authorization: `Bearer ${patToken}`
-                    } : authJson.headers,
-                    idToken: authJson.id_token || null,
-                    lastRefresh: authJson.last_refresh || new Date().toISOString(),
-                    refreshToken: authJson.refresh_token || null,
-                    type: authJson.type || authJson.type_ || "codex",
-                    websockets: authJson.websockets !== undefined ? authJson.websockets : true,
-                    disabled: authJson.disabled || false,
-                  };
-                  
-                  // Create account
-                  const result = await api.addPatAccount({ credentials: creds });
-                  
-                  // Auto-switch to the new account
-                  await api.switchToPatAccount(result.accountId);
-                  
-                  // Refresh and close
+                  const result = await api.addPatAccount({
+                    accountId: accountName,
+                    authJson,
+                    personalAccessToken: personalAccessToken || null,
+                    tokenExpiration: expirationInput
+                      ? new Date(expirationInput).toISOString()
+                      : null,
+                  });
+
                   await refresh();
+                  refreshAccountQuota(result.accountId);
+                  useAppStore.getState().setStatus(`Uploaded auth.json for '${result.accountId}'`);
                   closeModal();
                 } catch (err) {
                   useAppStore.getState().setError(
-                    err instanceof Error ? err.message : 'Failed to create and switch account'
+                    err instanceof Error ? err.message : 'Failed to upload auth.json'
                   );
                 }
               }}>
@@ -786,13 +746,15 @@ export function App() {
                   <label>
                     Personal Access Token (optional)
                     <input
-                      name="patToken"
-                      type="text"
-                      placeholder="at-xxx-your-token-here"
+                      name="personalAccessToken"
+                      type="password"
+                      placeholder="Enter token"
+                      autoComplete="off"
                     />
-                    <span className="inputHint">
-                      If provided, this will be added to the uploaded auth.json
-                    </span>
+                  </label>
+                  <label>
+                    Token expiration (optional)
+                    <input name="tokenExpiration" type="datetime-local" />
                   </label>
                 </div>
                 <div className="modalFoot">
@@ -801,7 +763,7 @@ export function App() {
                   </UIButton>
                   <div className="modalFootPrimary">
                     <UIButton type="submit" variant="primary">
-                      <IconSync size={14} /> Switch
+                      <IconSync size={14} /> Upload
                     </UIButton>
                   </div>
                 </div>
@@ -1247,44 +1209,6 @@ export function App() {
         </Shell.Modal>
       ) : null}
 
-      {modal === 'uploadPat' && uploadPatAccountId ? (
-        <Shell.Modal title="Upload PAT Credentials" close={closeModal}>
-          <p className="modalHint">
-            Paste your credential JSON from external account management system:
-          </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const formData = new FormData(e.currentTarget);
-              const jsonStr = formData.get('credentialsJson') as string;
-              try {
-                const creds = JSON.parse(jsonStr) as UploadedCredentials;
-                handleUploadPat(uploadPatAccountId, creds);
-              } catch (err) {
-                useAppStore.getState().setError('Invalid JSON format');
-              }
-            }}
-          >
-            <textarea
-              name="credentialsJson"
-              className="uploadPatTextarea"
-              placeholder='{"accessToken": "...", "accountId": "...", ...}'
-              rows={10}
-              required
-            />
-            <div className="modalFoot">
-              <UIButton type="button" variant="ghost" onClick={closeModal}>
-                Cancel
-              </UIButton>
-              <div className="modalFootPrimary">
-                <UIButton type="submit" variant="primary">
-                  Upload
-                </UIButton>
-              </div>
-            </div>
-          </form>
-        </Shell.Modal>
-      ) : null}
     </main>
   );
 }

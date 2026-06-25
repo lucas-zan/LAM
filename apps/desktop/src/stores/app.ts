@@ -3,6 +3,7 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import type { ThemeMode } from '../lib/theme';
 import type { HealthCheck } from '../lib/types';
 import type { Route } from '../routes/types';
+import * as api from '../lib/api';
 
 type Modal =
   | 'account'
@@ -12,7 +13,6 @@ type Modal =
   | 'provider'
   | 'attachProvider'
   | 'sessionDetail'
-  | 'uploadPat'
   | null;
 
 interface AppState {
@@ -23,6 +23,7 @@ interface AppState {
   error: string;
   appReady: boolean;
   modal: Modal;
+  hideDockIcon: boolean;
 
   setRoute: (route: Route) => void;
   setThemeMode: (mode: ThemeMode) => void;
@@ -33,6 +34,8 @@ interface AppState {
   setAppReady: () => void;
   openModal: (modal: NonNullable<Modal>) => void;
   closeModal: () => void;
+  setHideDockIcon: (hide: boolean) => Promise<void>;
+  loadSettings: () => Promise<void>;
 }
 
 export const useAppStore = create<AppState>()(
@@ -48,6 +51,7 @@ export const useAppStore = create<AppState>()(
     error: '',
     appReady: false,
     modal: null,
+    hideDockIcon: false,
 
     setRoute: (route) => set({ route }),
     setThemeMode: (themeMode) => {
@@ -61,6 +65,22 @@ export const useAppStore = create<AppState>()(
     setAppReady: () => set({ appReady: true }),
     openModal: (modal) => set({ modal }),
     closeModal: () => set({ modal: null }),
+    setHideDockIcon: async (hide) => {
+      try {
+        await api.setHideDockIcon(hide);
+        set({ hideDockIcon: hide });
+      } catch (err) {
+        set({ error: err instanceof Error ? err.message : 'Failed to set Dock icon visibility' });
+      }
+    },
+    loadSettings: async () => {
+      try {
+        const hide = await api.getHideDockIcon();
+        set({ hideDockIcon: hide });
+      } catch (err) {
+        console.error('Failed to load settings:', err);
+      }
+    },
   })),
 );
 

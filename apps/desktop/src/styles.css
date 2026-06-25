@@ -619,6 +619,14 @@ p {
   gap: 6px;
   flex-shrink: 0;
 }
+.cardTagsRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: -2px;
+  margin-bottom: 2px;
+}
 .cardHeadActions .iconCircleBtn {
   width: 18px;
   height: 18px;
@@ -649,7 +657,10 @@ p {
 }
 .cardHead .badge,
 .cardHead .planTypeBadge,
-.cardHead .accountActiveBadge {
+.cardHead .accountActiveBadge,
+.cardTagsRow .badge,
+.cardTagsRow .planTypeBadge,
+.cardTagsRow .accountActiveBadge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -664,27 +675,32 @@ p {
   box-sizing: border-box;
   border: 1px solid transparent;
 }
-.cardHead .planTypeBadge {
+.cardHead .planTypeBadge,
+.cardTagsRow .planTypeBadge {
   padding: 0 5px 0 4px;
   font-weight: 700;
 }
-.cardHead .accountActiveBadge {
+.cardHead .accountActiveBadge,
+.cardTagsRow .accountActiveBadge {
   color: #059669;
   background: #ecfdf5;
   border: 1px solid #a7f3d0;
   font-weight: 700;
 }
-.cardHead .badge--auth {
+.cardHead .badge--auth,
+.cardTagsRow .badge--auth {
   color: #059669;
   background: #ecfdf5;
   border: 1px solid #a7f3d0;
 }
-.cardHead .badge--authMode {
+.cardHead .badge--authMode,
+.cardTagsRow .badge--authMode {
   background: var(--surface2);
   color: var(--muted);
   border: 1px solid var(--line);
 }
-.cardHead .badge.warn {
+.cardHead .badge.warn,
+.cardTagsRow .badge.warn {
   color: var(--amber);
   background: var(--amber-soft);
   border: 1px solid color-mix(in srgb, var(--amber) 15%, transparent);

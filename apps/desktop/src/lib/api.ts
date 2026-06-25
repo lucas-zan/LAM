@@ -216,3 +216,13 @@ export async function setAuthMode(mode: string): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>("set_auth_mode", { mode });
 }
+
+export async function getHideDockIcon(): Promise<boolean> {
+  if (!inTauri()) return false;
+  return invoke<boolean>("get_hide_dock_icon");
+}
+
+export async function setHideDockIcon(hide: boolean): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("set_hide_dock_icon", { hide });
+}

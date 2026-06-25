@@ -289,9 +289,71 @@ pub fn set_auth_mode(home_root: &Path, mode: &str) -> Result<()> {
         )
     })?;
 
-    let settings = serde_json::json!({
-        "authMode": mode
-    });
+    // Incremental merge to settings.json
+    let mut settings = if settings_path.exists() {
+        let content = fs::read_to_string(&settings_path).unwrap_or_default();
+        serde_json::from_str::<serde_json::Value>(&content).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    if let Some(obj) = settings.as_object_mut() {
+        obj.insert("authMode".to_string(), serde_json::Value::String(mode.to_string()));
+    }
+
+    write_file_private(&settings_path, &settings.to_string())?;
+
+    Ok(())
+}
+
+/// Gets the current hide dock icon setting (defaults to false)
+pub fn get_hide_dock_icon(home_root: &Path) -> bool {
+    let settings_path = settings_file_path(home_root);
+
+    if !settings_path.exists() {
+        return false;
+    }
+
+    let content = match fs::read_to_string(&settings_path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    let settings: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    settings
+        .get("hideDockIcon")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Sets the hide dock icon setting
+pub fn set_hide_dock_icon(home_root: &Path, hide: bool) -> Result<()> {
+    let settings_path = settings_file_path(home_root);
+    let config_dir = config_root(home_root);
+
+    // Ensure config directory exists
+    fs::create_dir_all(&config_dir).map_err(|e| {
+        AppError::new(
+            "CREATE_DIR_FAILED",
+            format!("Failed to create config dir: {}", e),
+        )
+    })?;
+
+    // Incremental merge to settings.json
+    let mut settings = if settings_path.exists() {
+        let content = fs::read_to_string(&settings_path).unwrap_or_default();
+        serde_json::from_str::<serde_json::Value>(&content).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    if let Some(obj) = settings.as_object_mut() {
+        obj.insert("hideDockIcon".to_string(), serde_json::Value::Bool(hide));
+    }
 
     write_file_private(&settings_path, &settings.to_string())?;
 

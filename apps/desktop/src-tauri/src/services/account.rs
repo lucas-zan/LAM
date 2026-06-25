@@ -3,6 +3,7 @@ use super::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -25,6 +26,8 @@ pub struct CodexAccount {
     pub provider_id: Option<String>,
     pub model: Option<String>,
     pub auth_mode: Option<String>,
+    #[serde(default)]
+    pub is_active_auth: bool,
     pub renewal_date: Option<String>,
     pub note: Option<String>,
 }
@@ -50,7 +53,12 @@ pub struct CreateRelayRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddPatAccountRequest {
-    pub credentials: UploadedCredentials,
+    pub account_id: String,
+    pub auth_json: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub personal_access_token: Option<String>,
+    #[serde(default)]
+    pub token_expiration: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +133,8 @@ pub struct UploadedCredentials {
     #[serde(rename = "type")]
     pub credential_type: String,
     pub websockets: bool,
+    #[serde(default)]
+    pub raw_auth_json: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// Lam-tracked PAT metadata (stored in ~/.config/agent-workspace/auth-metadata/)
@@ -132,7 +142,7 @@ pub struct UploadedCredentials {
 #[serde(rename_all = "camelCase")]
 pub struct AuthMetadata {
     pub profile_id: String,
-    pub auth_type: String, // "personal_token" | "oauth" | "api_key"
+    pub auth_type: String, // "personal_token" | "oauth" | "api_key" | "uploaded"
     pub token_expiration: Option<String>, // ISO 8601
     pub last_checked: String, // ISO 8601
 }
@@ -202,14 +212,46 @@ pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
             provider_id: config.provider_id,
             model: config.model,
             auth_mode,
+            is_active_auth: false,
             renewal_date: note.and_then(|metadata| metadata.renewal_date.clone()),
             note: note.and_then(|metadata| metadata.note.clone()),
         });
     }
 
+    mark_active_auth_account(home_root, &mut accounts);
     accounts.sort_by(|a, b| a.id.cmp(&b.id));
     write_accounts_cache(home_root, &accounts)?;
     Ok(accounts)
+}
+
+fn mark_active_auth_account(home_root: &Path, accounts: &mut [CodexAccount]) {
+    let Some(active_suffix) = auth_account_id_suffix(&home_root.join(".codex/auth.json")) else {
+        return;
+    };
+    let matches = accounts
+        .iter()
+        .enumerate()
+        .filter(|(_, account)| account.id != "main")
+        .filter(|(_, account)| {
+            auth_account_id_suffix(&account.codex_home.join("auth.json")).as_deref()
+                == Some(active_suffix.as_str())
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+
+    if let [index] = matches.as_slice() {
+        accounts[*index].is_active_auth = true;
+    }
+}
+
+fn auth_account_id_suffix(auth_path: &Path) -> Option<String> {
+    let auth: serde_json::Value = serde_json::from_slice(&fs::read(auth_path).ok()?).ok()?;
+    let account_id = auth.get("tokens")?.get("account_id")?.as_str()?;
+    let suffix = account_id.chars().rev().take(4).collect::<Vec<_>>();
+    if suffix.len() != 4 {
+        return None;
+    }
+    Some(suffix.into_iter().rev().collect())
 }
 
 pub fn list_cached_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
@@ -532,6 +574,7 @@ pub(crate) fn quota_account(home_root: &Path, profile_id: &str) -> Result<CodexA
         provider_id: None,
         model: None,
         auth_mode: None,
+        is_active_auth: false,
         renewal_date: None,
         note: None,
     })
@@ -735,12 +778,21 @@ pub fn record_pat_metadata(
     profile_id: &str,
     expiration: Option<String>,
 ) -> Result<()> {
+    record_auth_metadata(home_root, profile_id, "personal_token", expiration)
+}
+
+fn record_auth_metadata(
+    home_root: &Path,
+    profile_id: &str,
+    auth_type: &str,
+    expiration: Option<String>,
+) -> Result<()> {
     use crate::services::types::{auth_metadata_dir, auth_metadata_path};
     let profile_id = validate_profile_id(profile_id)?;
 
     let metadata = AuthMetadata {
         profile_id: profile_id.clone(),
-        auth_type: "personal_token".to_string(),
+        auth_type: auth_type.to_string(),
         token_expiration: expiration,
         last_checked: chrono::Utc::now().to_rfc3339(),
     };
@@ -782,29 +834,20 @@ pub fn read_pat_metadata(home_root: &Path, profile_id: &str) -> Result<Option<Au
     Ok(Some(metadata))
 }
 
-/// Transforms uploaded credentials and records metadata
+/// Stores uploaded auth.json in the target profile and records metadata
 pub fn process_uploaded_credentials(
     home_root: &Path,
     profile_id: &str,
     creds: &UploadedCredentials,
 ) -> Result<()> {
-    if creds.access_token.is_empty() {
-        return Err(AppError::new(
-            "INVALID_CREDENTIALS",
-            "access_token is required",
-        ));
-    }
+    let profile_id = validate_existing_profile_id(home_root, profile_id)?;
+    let auth_content = build_pat_auth_json(creds, None)?;
+    let auth_path = codex_home_path(home_root, &profile_id).join("auth.json");
+    write_file_private(&auth_path, &auth_content)?;
 
-    // Validate expiration date format
-    if chrono::DateTime::parse_from_rfc3339(&creds.expired).is_err() {
-        return Err(AppError::new(
-            "INVALID_EXPIRATION",
-            "expired field must be valid ISO 8601 date",
-        ));
-    }
-
-    // Record metadata in Lam's config
-    record_pat_metadata(home_root, profile_id, Some(creds.expired.clone()))?;
+    let expiration = parse_auth_expiration(creds)?;
+    let auth_type = infer_uploaded_auth_type(creds, None);
+    record_auth_metadata(home_root, &profile_id, &auth_type, expiration)?;
 
     Ok(())
 }
@@ -851,7 +894,7 @@ pub fn add_pat_account(
     home_root: &Path,
     req: &AddPatAccountRequest,
 ) -> Result<AddPatAccountResult> {
-    let account_id = &req.credentials.account_id;
+    let account_id = &req.account_id;
 
     // 1. Validate account_id
     if account_id.trim().is_empty() {
@@ -872,10 +915,14 @@ pub fn add_pat_account(
         ));
     }
 
-    // 3. Extract optional token from headers.authorization
-    let token = extract_bearer_token(&req.credentials)?;
+    if req.auth_json.is_empty() {
+        return Err(AppError::new(
+            "INVALID_AUTH_JSON",
+            "auth.json cannot be empty",
+        ));
+    }
 
-    // 4. Create directory structure
+    // 3. Create directory structure
     std::fs::create_dir_all(&codex_dir).map_err(|e| {
         AppError::new(
             "CREATE_DIR_FAILED",
@@ -891,57 +938,78 @@ pub fn add_pat_account(
         )
     })?;
 
-    // 5. Save uploaded auth.json with optional personal_access_token
+    let mut auth_json = req.auth_json.clone();
+    if let Some(token) = req
+        .personal_access_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    {
+        auth_json.insert("OPENAI_API_KEY".to_string(), serde_json::Value::Null);
+        auth_json.insert(
+            "personal_access_token".to_string(),
+            serde_json::Value::String(token.to_string()),
+        );
+    }
+    let expiration = parse_optional_expiration(req.token_expiration.as_deref())?;
+
+    // 4. Save the uploaded auth.json without rebuilding its schema
     let auth_path = codex_dir.join("auth.json");
-    let auth_content = build_pat_auth_json(&req.credentials, token.as_deref())?;
+    let auth_content = serde_json::to_string_pretty(&auth_json).map_err(|e| {
+        AppError::new(
+            "SERIALIZE_AUTH_FAILED",
+            format!("Failed to serialize auth.json: {e}"),
+        )
+    })?;
     write_file_private(&auth_path, &auth_content)?;
 
-    // 6. Create minimal config.toml
+    // 5. Create minimal config.toml
     let config_path = codex_dir.join("config.toml");
     let config_content = r#"# PAT account configuration
 # This file is managed by LAM
 "#;
     write_file_private(&config_path, config_content)?;
 
-    // 7. Mark directory as managed
+    // 6. Mark directory as managed
     let marker_path = codex_dir.join(NEW_MARKER);
     write_file_private(&marker_path, "{}")?;
 
-    record_pat_metadata(
-        home_root,
-        &validated_id,
-        Some(req.credentials.expired.clone()),
-    )?;
+    record_auth_metadata(home_root, &validated_id, "uploaded", expiration.clone())?;
 
     Ok(AddPatAccountResult {
         account_id: validated_id,
-        email: req.credentials.email.clone(),
-        expired: req.credentials.expired.clone(),
+        email: req
+            .auth_json
+            .get("email")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        expired: expiration.unwrap_or_default(),
     })
 }
 
 /// Builds auth.json content from uploaded credentials and optional PAT
 fn build_pat_auth_json(creds: &UploadedCredentials, token: Option<&str>) -> Result<String> {
-    // Start with uploaded credentials as base
-    let mut auth_json = serde_json::json!({
-        "access_token": creds.access_token,
-        "account_id": creds.account_id,
-        "email": creds.email,
-        "expired": creds.expired,
-        "id_token": creds.id_token,
-        "last_refresh": creds.last_refresh,
-        "refresh_token": creds.refresh_token,
-        "type": creds.credential_type,
-        "websockets": creds.websockets,
-        "disabled": creds.disabled,
-    });
+    let mut auth_json = match &creds.raw_auth_json {
+        Some(raw) => serde_json::Value::Object(raw.clone()),
+        None => serde_json::json!({
+            "access_token": creds.access_token,
+            "account_id": creds.account_id,
+            "email": creds.email,
+            "expired": creds.expired,
+            "id_token": creds.id_token,
+            "last_refresh": creds.last_refresh,
+            "refresh_token": creds.refresh_token,
+            "type": creds.credential_type,
+            "websockets": creds.websockets,
+            "disabled": creds.disabled,
+        }),
+    };
 
-    // Add headers if present
     if let Some(headers) = &creds.headers {
         auth_json["headers"] = serde_json::to_value(headers).unwrap();
     }
 
-    // Add personal_access_token if provided
     if let Some(pat) = token {
         auth_json["personal_access_token"] = serde_json::Value::String(pat.to_string());
     }
@@ -954,25 +1022,63 @@ fn build_pat_auth_json(creds: &UploadedCredentials, token: Option<&str>) -> Resu
     })
 }
 
-fn extract_bearer_token(creds: &UploadedCredentials) -> Result<Option<String>> {
-    let headers = match creds.headers.as_ref() {
-        Some(h) => h,
-        None => return Ok(None), // No headers = no token (optional)
-    };
-
-    let auth_value = match headers.get("authorization").and_then(|v| v.as_str()) {
-        Some(v) => v,
-        None => return Ok(None), // No authorization header = no token (optional)
-    };
-
-    if let Some(token) = auth_value.strip_prefix("Bearer ") {
-        Ok(Some(token.to_string()))
-    } else {
-        Err(AppError::new(
-            "INVALID_AUTH_FORMAT",
-            "Authorization must be 'Bearer <token>'",
-        ))
+fn parse_auth_expiration(creds: &UploadedCredentials) -> Result<Option<String>> {
+    if creds.expired.trim().is_empty() {
+        return Ok(None);
     }
+    chrono::DateTime::parse_from_rfc3339(&creds.expired).map_err(|_| {
+        AppError::new(
+            "INVALID_EXPIRATION",
+            "expired field must be valid ISO 8601 date",
+        )
+    })?;
+    Ok(Some(creds.expired.clone()))
+}
+
+fn parse_optional_expiration(expiration: Option<&str>) -> Result<Option<String>> {
+    let Some(expiration) = expiration.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    chrono::DateTime::parse_from_rfc3339(expiration).map_err(|_| {
+        AppError::new(
+            "INVALID_EXPIRATION",
+            "token expiration must be valid ISO 8601 date",
+        )
+    })?;
+    Ok(Some(expiration.to_string()))
+}
+
+fn infer_uploaded_auth_type(creds: &UploadedCredentials, token: Option<&str>) -> String {
+    if token.is_some() {
+        return "personal_token".to_string();
+    }
+    if let Some(raw) = &creds.raw_auth_json {
+        return infer_auth_type(raw);
+    }
+    if !creds.access_token.is_empty() || creds.id_token.is_some() || creds.refresh_token.is_some() {
+        return "oauth".to_string();
+    }
+    "personal_token".to_string()
+}
+
+fn infer_auth_type(auth_json: &serde_json::Map<String, serde_json::Value>) -> String {
+    if auth_json.contains_key("personal_access_token") {
+        return "personal_token".to_string();
+    }
+    if auth_json
+        .get("OPENAI_API_KEY")
+        .is_some_and(|value| !value.is_null())
+    {
+        return "api_key".to_string();
+    }
+    if auth_json.contains_key("tokens")
+        || auth_json.contains_key("access_token")
+        || auth_json.contains_key("id_token")
+        || auth_json.contains_key("refresh_token")
+    {
+        return "oauth".to_string();
+    }
+    "personal_token".to_string()
 }
 
 /// Switches to an account based on the configured auth mode
@@ -980,6 +1086,12 @@ fn extract_bearer_token(creds: &UploadedCredentials) -> Result<Option<String>> {
 /// - PAT mode: copies only auth.json
 pub fn switch_to_pat_account(home_root: &Path, account_id: &str) -> Result<()> {
     let account_id = validate_profile_id(account_id)?;
+    if account_id == "main" {
+        return Err(AppError::new(
+            "MAIN_AUTH_SLOT",
+            "The main profile is the active auth slot and cannot be switched",
+        ));
+    }
 
     // 1. Verify account exists
     let codex_dir = codex_home_path(home_root, &account_id);
@@ -1000,10 +1112,6 @@ pub fn switch_to_pat_account(home_root: &Path, account_id: &str) -> Result<()> {
 
     let target_codex = home_root.join(".codex");
 
-    if codex_dir == target_codex {
-        return Ok(());
-    }
-
     std::fs::create_dir_all(&target_codex).map_err(|e| {
         AppError::new(
             "CREATE_DIR_FAILED",
@@ -1011,11 +1119,44 @@ pub fn switch_to_pat_account(home_root: &Path, account_id: &str) -> Result<()> {
         )
     })?;
 
-    let target_auth = target_codex.join("auth.json");
-    std::fs::copy(&source_auth, &target_auth)
-        .map_err(|e| AppError::new("COPY_FAILED", format!("Failed to copy auth.json: {}", e)))?;
+    let source_content = fs::read(&source_auth)
+        .map_err(|e| AppError::new("READ_FAILED", format!("Failed to read auth.json: {e}")))?;
+    let parsed: serde_json::Value = serde_json::from_slice(&source_content)
+        .map_err(|e| AppError::new("INVALID_AUTH_JSON", format!("Invalid auth.json: {e}")))?;
+    if !parsed.is_object() {
+        return Err(AppError::new(
+            "INVALID_AUTH_JSON",
+            "auth.json must contain a JSON object",
+        ));
+    }
 
-    set_file_private(&target_auth)?;
+    let target_auth = target_codex.join("auth.json");
+    let temp_auth = target_codex.join(format!(".auth.json.lam-{}.tmp", std::process::id()));
+    let write_result = (|| -> Result<()> {
+        let mut temp_file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_auth)?;
+        temp_file.write_all(&source_content)?;
+        temp_file.sync_all()?;
+        set_file_private(&temp_auth)?;
+        fs::rename(&temp_auth, &target_auth)?;
+        set_file_private(&target_auth)?;
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temp_auth);
+    }
+    write_result?;
+
+    let active_content = fs::read(&target_auth)
+        .map_err(|e| AppError::new("VERIFY_FAILED", format!("Failed to verify auth.json: {e}")))?;
+    if active_content != source_content {
+        return Err(AppError::new(
+            "VERIFY_FAILED",
+            "Active auth.json does not match the selected profile",
+        ));
+    }
 
     Ok(())
 }
@@ -1027,11 +1168,9 @@ fn detect_auth_mode(
     codex_home: &Path,
     config: &CodexConfigBinding,
 ) -> Option<String> {
-    // Priority 1: Check if Lam has recorded PAT metadata
+    // Priority 1: Use Lam metadata for accounts managed by this app
     if let Ok(Some(metadata)) = read_pat_metadata(home_root, profile_id) {
-        if metadata.auth_type == "personal_token" {
-            return Some("personal_token".to_string());
-        }
+        return Some(metadata.auth_type);
     }
 
     // Priority 2: Check Codex auth.json structure (read-only inspection)
@@ -1097,12 +1236,15 @@ mod pat_tests {
             refresh_token: None,
             credential_type: "codex".to_string(),
             websockets: true,
+            raw_auth_json: None,
         };
 
+        std::fs::create_dir_all(temp.path().join(".codex-test/sessions")).unwrap();
         process_uploaded_credentials(temp.path(), "test", &creds).unwrap();
 
         let metadata = read_pat_metadata(temp.path(), "test").unwrap().unwrap();
-        assert_eq!(metadata.auth_type, "personal_token");
+        assert_eq!(metadata.auth_type, "oauth");
+        assert!(temp.path().join(".codex-test/auth.json").exists());
     }
 
     #[test]
@@ -1120,6 +1262,7 @@ mod pat_tests {
             refresh_token: None,
             credential_type: "codex".to_string(),
             websockets: true,
+            raw_auth_json: None,
         };
         assert!(process_uploaded_credentials(temp.path(), "test", &creds).is_err());
     }

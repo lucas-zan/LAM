@@ -28,6 +28,7 @@ export type CodexAccount = {
   providerId?: string | null;
   model?: string | null;
   authMode?: string | null;
+  isActiveAuth?: boolean;
   renewalDate?: string | null;
   note?: string | null;
 };
@@ -261,11 +262,12 @@ export type UploadedCredentials = {
   refreshToken?: string | null;
   type: string;
   websockets: boolean;
+  rawAuthJson?: Record<string, unknown> | null;
 };
 
 export type AuthMetadata = {
   profileId: string;
-  authType: string; // "personal_token" | "oauth" | "api_key"
+  authType: string; // "personal_token" | "oauth" | "api_key" | "uploaded"
   tokenExpiration?: string | null; // ISO 8601
   lastChecked: string; // ISO 8601
 };
@@ -279,7 +281,10 @@ export type TokenExpirationStatus = {
 };
 
 export type AddPatAccountRequest = {
-  credentials: UploadedCredentials;
+  accountId: string;
+  authJson: Record<string, unknown>;
+  personalAccessToken?: string | null;
+  tokenExpiration?: string | null;
 };
 
 export type AddPatAccountResult = {

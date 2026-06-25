@@ -1,5 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { uploadPatCredentials, getPatMetadata, checkProfileTokenExpiration } from './api';
+import {
+  addPatAccount,
+  uploadPatCredentials,
+  getPatMetadata,
+  checkProfileTokenExpiration,
+} from './api';
 import type { UploadedCredentials, AuthMetadata, TokenExpirationStatus } from './types';
 
 // Mock Tauri invoke
@@ -18,6 +23,41 @@ beforeEach(() => {
 });
 
 describe('PAT API functions', () => {
+  describe('addPatAccount', () => {
+    it('passes the uploaded auth.json without transforming it', async () => {
+      const authJson = {
+        auth_mode: 'chatgpt',
+        OPENAI_API_KEY: null,
+        tokens: {
+          access_token: 'at-test',
+          refresh_token: 'rt-test',
+        },
+      };
+
+      mockInvoke.mockResolvedValue({
+        accountId: 'test-profile',
+        email: '',
+        expired: '',
+      });
+
+      await addPatAccount({
+        accountId: 'test-profile',
+        authJson,
+        personalAccessToken: 'pat-test',
+        tokenExpiration: '2030-12-31T23:59:59.000Z',
+      });
+
+      expect(mockInvoke).toHaveBeenCalledWith('add_pat_account', {
+        req: {
+          accountId: 'test-profile',
+          authJson,
+          personalAccessToken: 'pat-test',
+          tokenExpiration: '2030-12-31T23:59:59.000Z',
+        },
+      });
+    });
+  });
+
   describe('uploadPatCredentials', () => {
     it('should call upload_pat_credentials command with correct parameters', async () => {
       const profileId = 'test-profile';

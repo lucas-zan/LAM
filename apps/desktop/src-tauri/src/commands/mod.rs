@@ -294,3 +294,25 @@ pub fn get_auth_mode() -> Result<String, AppError> {
 pub fn set_auth_mode(mode: String) -> Result<(), AppError> {
     localagentmanager_core::types::set_auth_mode(&home_root()?, &mode)
 }
+
+#[tauri::command]
+pub fn get_hide_dock_icon() -> Result<bool, AppError> {
+    Ok(localagentmanager_core::types::get_hide_dock_icon(&home_root()?))
+}
+
+#[tauri::command]
+pub fn set_hide_dock_icon(app_handle: tauri::AppHandle, hide: bool) -> Result<(), AppError> {
+    localagentmanager_core::types::set_hide_dock_icon(&home_root()?, hide)?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let policy = if hide {
+            tauri::ActivationPolicy::Accessory
+        } else {
+            tauri::ActivationPolicy::Regular
+        };
+        let _ = app_handle.set_activation_policy(policy);
+    }
+
+    Ok(())
+}
