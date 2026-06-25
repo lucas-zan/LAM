@@ -226,3 +226,8 @@ export async function setHideDockIcon(hide: boolean): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>("set_hide_dock_icon", { hide });
 }
+
+export async function restartCodex(): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("restart_codex");
+}

@@ -316,3 +316,25 @@ pub fn set_hide_dock_icon(app_handle: tauri::AppHandle, hide: bool) -> Result<()
 
     Ok(())
 }
+
+#[tauri::command]
+pub async fn restart_codex() -> Result<(), AppError> {
+    run_blocking(|| {
+        // Force kill any running Codex process
+        let _ = std::process::Command::new("pkill")
+            .args(["-f", "/Applications/Codex.app/Contents/MacOS/Codex"])
+            .output();
+
+        // Wait briefly for the process to fully terminate
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        // Reopen Codex
+        std::process::Command::new("open")
+            .arg("/Applications/Codex.app")
+            .spawn()
+            .map_err(|e| AppError::new("RESTART_CODEX_FAILED", e.to_string()))?;
+
+        Ok(())
+    })
+    .await
+}

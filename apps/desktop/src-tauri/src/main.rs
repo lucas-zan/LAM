@@ -86,6 +86,7 @@ fn main() {
             commands::set_auth_mode,
             commands::get_hide_dock_icon,
             commands::set_hide_dock_icon,
+            commands::restart_codex,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LAM");

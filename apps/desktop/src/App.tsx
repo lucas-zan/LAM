@@ -319,13 +319,19 @@ export function App() {
         refreshAccountQuota('main');
         useAppStore
           .getState()
-          .setStatus(`Switched auth.json to '${account.id}'. Restart running Codex clients.`);
+          .setStatus(`Switched auth.json to '${account.id}'. Restarting Codex…`);
+        await api.restartCodex();
       } catch (err) {
         useAppStore.getState().setStatus('Failed to switch auth.json');
         useAppStore.getState().setError(err instanceof Error ? err.message : String(err));
       }
     } else {
       login(account);
+      try {
+        await api.restartCodex();
+      } catch {
+        // Non-critical: Codex restart is best-effort
+      }
     }
   }
 
