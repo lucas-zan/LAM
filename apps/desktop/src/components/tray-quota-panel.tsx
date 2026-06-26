@@ -382,7 +382,7 @@ interface TrayPopoverFooterProps {
   onOpen: () => void;
 }
 
-function TrayPopoverFooter({ onClose, onOpen }: TrayPopoverFooterProps) {
+function TrayPopoverFooter({ onClose: _onClose, onOpen }: TrayPopoverFooterProps) {
   return (
     <footer className="trayPopoverFoot">
       <div className="trayPopoverActions">
@@ -392,11 +392,11 @@ function TrayPopoverFooter({ onClose, onOpen }: TrayPopoverFooterProps) {
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            onClose();
+            void invoke('quit_app');
           }}
         >
           <IconClose size={13} />
-          Close
+          Quit
         </UIButton>
         <span />
         <UIButton

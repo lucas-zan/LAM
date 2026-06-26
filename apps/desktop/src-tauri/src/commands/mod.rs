@@ -297,7 +297,9 @@ pub fn set_auth_mode(mode: String) -> Result<(), AppError> {
 
 #[tauri::command]
 pub fn get_hide_dock_icon() -> Result<bool, AppError> {
-    Ok(localagentmanager_core::types::get_hide_dock_icon(&home_root()?))
+    Ok(localagentmanager_core::types::get_hide_dock_icon(
+        &home_root()?,
+    ))
 }
 
 #[tauri::command]
@@ -337,4 +339,9 @@ pub async fn restart_codex() -> Result<(), AppError> {
         Ok(())
     })
     .await
+}
+
+#[tauri::command]
+pub fn quit_app(app_handle: tauri::AppHandle) {
+    app_handle.exit(0);
 }
