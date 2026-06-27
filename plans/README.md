@@ -2,7 +2,7 @@
 
 **Base commit:** `6e4471e`  
 **Generated:** 2026-06-24  
-**Last updated:** 2026-06-26 (added Plan 005)
+**Last updated:** 2026-06-27 (added Plan 006)
 
 ## Plan Index
 
@@ -12,6 +12,7 @@
 | 001-addendum | Account Switching with Backup | TODO | M | M | +3 tests (integrated) |
 | 001-patches | Critical 5% Patches | TODO | S | L | +1 test (integrated) |
 | 005 | Split PAT runtime auth from quota refresh auth | DONE | M | M | 5 focused regressions |
+| 006 | Prevent Codex restart and quit from leaving orphan helper processes | DONE | S | L | 1 focused command test |
 
 ## Dependencies
 
@@ -20,6 +21,23 @@
 - All three documents form one complete implementation
 - **005** is an independent delta plan against the implemented PAT account flow
   at commit `9d9f9ae`; it does not require re-executing Plans 001-004.
+- **006** is an independent bugfix for the Codex restart and Quit commands; it
+  can execute after the current worktree is clean enough for the executor to
+  avoid unrelated changes.
+
+## Plan 006 execution note
+
+Read `plans/006-prevent-codex-restart-orphans.md` as a self-contained plan. It
+keeps frontend switch/Quit behavior unchanged and narrows the fix to backend
+commands: make `restart_codex` and `quit_app` share one stop-Codex routine,
+wait for all `/Applications/Codex.app/Contents/` processes to exit, escalate
+only if needed, then either reopen Codex or exit LAM.
+
+**Execution completed 2026-06-27**: executor implemented the in-scope backend
+change. The quota test failure was fixed by making the fake Codex script match
+the production pretty-printed staged auth JSON, and `.fake-home` fixtures were
+restored. Focused quota tests, focused command tests, `cargo fmt -- --check`,
+`cargo clippy --all-targets -- -D warnings`, and `make check` all pass.
 
 ## Plan 005 execution note
 

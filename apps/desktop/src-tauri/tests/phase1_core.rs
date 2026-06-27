@@ -1068,7 +1068,7 @@ fn quota_prefers_auth_f_json_when_present() {
         r#"#!/bin/sh
 if [ "$1" = "app-server" ]; then
   printf '%s' "$CODEX_HOME" > "$LAM_TEST_CODEX_HOME_LOG"
-  /usr/bin/grep '"source":"uploaded"' "$CODEX_HOME/auth.json" >/dev/null || exit 4
+  /usr/bin/grep '"source"[[:space:]]*:[[:space:]]*"uploaded"' "$CODEX_HOME/auth.json" >/dev/null || exit 4
   read _line1 || exit 1
   read _line2 || exit 1
   echo '{"id":2,"result":{"rateLimits":{"planType":"plus","primary":{"usedPercent":29,"resetsAt":1781678412},"secondary":null}}}'

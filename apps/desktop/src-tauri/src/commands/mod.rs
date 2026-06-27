@@ -46,6 +46,13 @@ fn home_root() -> Result<std::path::PathBuf, AppError> {
 }
 
 #[cfg(target_os = "macos")]
+const CODEX_APP_PATH: &str = "/Applications/Codex.app";
+#[cfg(all(test, target_os = "macos"))]
+const CODEX_BUNDLE_PATH_PREFIX: &str = "/Applications/Codex.app/Contents/";
+#[cfg(target_os = "macos")]
+const CODEX_BUNDLE_PROCESS_PATTERN: &str = "/Applications/Codex[.]app/Contents/";
+
+#[cfg(target_os = "macos")]
 #[derive(Clone, Copy)]
 struct WindowBounds {
     x: i32,
@@ -115,6 +122,73 @@ end tell"#,
     let _ = std::process::Command::new("osascript")
         .args(["-e", &script])
         .output();
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn codex_bundle_path_matches(path: &str) -> bool {
+    path.starts_with(CODEX_BUNDLE_PATH_PREFIX)
+}
+
+#[cfg(target_os = "macos")]
+fn codex_bundle_processes_running() -> bool {
+    std::process::Command::new("pgrep")
+        .args(["-f", CODEX_BUNDLE_PROCESS_PATTERN])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_codex_exit(timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if !codex_bundle_processes_running() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn stop_codex_app_processes() -> Result<(), AppError> {
+    let _ = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            r#"tell application "System Events"
+if exists process "Codex" then
+  tell application "Codex" to quit
+end if
+end tell"#,
+        ])
+        .output();
+
+    if wait_for_codex_exit(std::time::Duration::from_secs(2)) {
+        return Ok(());
+    }
+
+    let _ = std::process::Command::new("pkill")
+        .args(["-TERM", "-f", CODEX_BUNDLE_PROCESS_PATTERN])
+        .output();
+
+    if wait_for_codex_exit(std::time::Duration::from_secs(2)) {
+        return Ok(());
+    }
+
+    let _ = std::process::Command::new("pkill")
+        .args(["-KILL", "-f", CODEX_BUNDLE_PROCESS_PATTERN])
+        .output();
+
+    if wait_for_codex_exit(std::time::Duration::from_millis(500)) {
+        return Ok(());
+    }
+
+    Err(AppError::new(
+        "STOP_CODEX_FAILED",
+        "Codex processes did not exit",
+    ))
 }
 
 #[derive(serde::Serialize)]
@@ -410,40 +484,48 @@ pub fn set_hide_dock_icon(app_handle: tauri::AppHandle, hide: bool) -> Result<()
 pub async fn restart_codex() -> Result<(), AppError> {
     run_blocking(|| {
         #[cfg(target_os = "macos")]
-        let bounds = codex_window_bounds();
+        {
+            let bounds = codex_window_bounds();
+            stop_codex_app_processes()?;
 
-        // Force kill any running Codex process
-        let _ = std::process::Command::new("pkill")
-            .args(["-f", "/Applications/Codex.app/Contents/MacOS/Codex"])
-            .output();
+            std::process::Command::new("open")
+                .arg(CODEX_APP_PATH)
+                .spawn()
+                .map_err(|e| AppError::new("RESTART_CODEX_FAILED", e.to_string()))?;
 
-        // Wait briefly for the process to fully terminate
-        std::thread::sleep(std::time::Duration::from_millis(500));
+            if let Some(bounds) = bounds {
+                restore_codex_window_bounds(bounds);
+            }
 
-        // Reopen Codex
-        std::process::Command::new("open")
-            .arg("/Applications/Codex.app")
-            .spawn()
-            .map_err(|e| AppError::new("RESTART_CODEX_FAILED", e.to_string()))?;
-
-        #[cfg(target_os = "macos")]
-        if let Some(bounds) = bounds {
-            restore_codex_window_bounds(bounds);
+            Ok(())
         }
 
-        Ok(())
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(AppError::new(
+                "RESTART_CODEX_UNSUPPORTED",
+                "Codex restart is only supported on macOS",
+            ))
+        }
     })
     .await
 }
 
 #[tauri::command]
-pub fn quit_app(app_handle: tauri::AppHandle) {
+pub async fn quit_app(app_handle: tauri::AppHandle) -> Result<(), AppError> {
+    #[cfg(target_os = "macos")]
+    run_blocking(stop_codex_app_processes).await?;
+
     app_handle.exit(0);
+    Ok(())
 }
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-    use super::parse_window_bounds;
+    use super::{
+        codex_bundle_path_matches, parse_window_bounds, CODEX_BUNDLE_PATH_PREFIX,
+        CODEX_BUNDLE_PROCESS_PATTERN,
+    };
 
     #[test]
     fn parses_osascript_window_bounds() {
@@ -452,5 +534,31 @@ mod tests {
         assert_eq!(bounds.y, 80);
         assert_eq!(bounds.width, 1280);
         assert_eq!(bounds.height, 820);
+    }
+
+    #[test]
+    fn codex_process_matcher_covers_bundle_helpers_only() {
+        assert_eq!(
+            CODEX_BUNDLE_PROCESS_PATTERN,
+            "/Applications/Codex[.]app/Contents/"
+        );
+        assert!(CODEX_BUNDLE_PROCESS_PATTERN.contains("Codex[.]app"));
+        assert!(!CODEX_BUNDLE_PROCESS_PATTERN.contains("Codex.app"));
+
+        assert_eq!(
+            CODEX_BUNDLE_PATH_PREFIX,
+            "/Applications/Codex.app/Contents/"
+        );
+        assert!(codex_bundle_path_matches(
+            "/Applications/Codex.app/Contents/MacOS/Codex"
+        ));
+        assert!(codex_bundle_path_matches("/Applications/Codex.app/Contents/Frameworks/Codex Framework.framework/Versions/149.0.7827.197/Helpers/browser_crashpad_handler"));
+        assert!(codex_bundle_path_matches(
+            "/Applications/Codex.app/Contents/Resources/native/bare-modifier-monitor"
+        ));
+        assert!(!codex_bundle_path_matches("./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"));
+        assert!(!codex_bundle_path_matches(
+            "/Applications/CodexXapp/Contents/MacOS/Codex"
+        ));
     }
 }
