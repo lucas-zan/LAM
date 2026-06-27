@@ -93,6 +93,8 @@ function overviewProps() {
     openSync: vi.fn(),
     rename: vi.fn(),
     login: vi.fn(),
+    switchAccount: vi.fn(),
+    exportCpa: vi.fn(),
     openHandoff: vi.fn(),
     relayLatest: vi.fn(),
     currentSession: sessions[0],
@@ -119,14 +121,16 @@ describe('handoff navigation and entry points', () => {
     expect(screen.getAllByRole('button', { name: /relay latest/i })).toHaveLength(accounts.length);
   });
 
-  it('disables Relay, Handoff, and Sync on every account card in PAT mode', () => {
+  it('disables Relay and Handoff, and shows Export CPA in PAT mode', () => {
     render(<Overview {...overviewProps()} authMode="pat" />);
 
-    for (const name of [/relay latest/i, /handoff/i, /sync sessions/i]) {
+    for (const name of [/relay latest/i, /handoff/i]) {
       for (const button of screen.getAllByRole('button', { name })) {
         expect(button).toHaveProperty('disabled', true);
       }
     }
+    expect(screen.getAllByRole('button', { name: /export cpa/i })).toHaveLength(accounts.length);
+    expect(screen.queryByRole('button', { name: /sync sessions/i })).toBeNull();
   });
 
   it('uses backend auth identity for PAT switch availability', () => {

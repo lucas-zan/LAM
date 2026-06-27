@@ -292,13 +292,17 @@ pub fn set_auth_mode(home_root: &Path, mode: &str) -> Result<()> {
     // Incremental merge to settings.json
     let mut settings = if settings_path.exists() {
         let content = fs::read_to_string(&settings_path).unwrap_or_default();
-        serde_json::from_str::<serde_json::Value>(&content).unwrap_or_else(|_| serde_json::json!({}))
+        serde_json::from_str::<serde_json::Value>(&content)
+            .unwrap_or_else(|_| serde_json::json!({}))
     } else {
         serde_json::json!({})
     };
 
     if let Some(obj) = settings.as_object_mut() {
-        obj.insert("authMode".to_string(), serde_json::Value::String(mode.to_string()));
+        obj.insert(
+            "authMode".to_string(),
+            serde_json::Value::String(mode.to_string()),
+        );
     }
 
     write_file_private(&settings_path, &settings.to_string())?;
@@ -346,7 +350,8 @@ pub fn set_hide_dock_icon(home_root: &Path, hide: bool) -> Result<()> {
     // Incremental merge to settings.json
     let mut settings = if settings_path.exists() {
         let content = fs::read_to_string(&settings_path).unwrap_or_default();
-        serde_json::from_str::<serde_json::Value>(&content).unwrap_or_else(|_| serde_json::json!({}))
+        serde_json::from_str::<serde_json::Value>(&content)
+            .unwrap_or_else(|_| serde_json::json!({}))
     } else {
         serde_json::json!({})
     };

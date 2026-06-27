@@ -33,8 +33,11 @@ vi.mock('../lib/api', () => ({
   openTerminalWithResume: vi.fn(),
   relayResumeSession: vi.fn(),
   getProfileQuota: vi.fn(),
+  getAuthMode: vi.fn(),
   inTauri: vi.fn(() => true),
+  restartCodex: vi.fn(),
   setQuotaPopoverOpacity: vi.fn(),
+  switchToPatAccount: vi.fn(),
   getAntigravityQuota: vi.fn(),
 }));
 
@@ -131,6 +134,9 @@ beforeEach(() => {
     },
   ]);
   vi.mocked(api.getProfileQuota).mockResolvedValue(freshQuota);
+  vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
+  vi.mocked(api.restartCodex).mockResolvedValue();
+  vi.mocked(api.switchToPatAccount).mockResolvedValue();
   vi.mocked(api.getAntigravityQuota).mockResolvedValue({ ok: true, models: [] });
   vi.mocked(listen).mockResolvedValue(vi.fn());
 });
@@ -194,5 +200,31 @@ describe('TrayQuotaPanel', () => {
     expect(screen.getAllByText('89%').length).toBeGreaterThan(0);
     expect(screen.queryByText('weekly')).toBeNull();
     expect(screen.queryByText('5h')).toBeNull();
+  });
+
+  it('shows PAT switch actions in PAT mode', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listAccounts).mockResolvedValue([
+      { ...account, id: 'main', displayName: 'main', isActiveAuth: true, authMode: 'config' },
+      {
+        ...account,
+        id: 'codex-pat',
+        displayName: 'codex-pat',
+        isActiveAuth: false,
+        authMode: 'personal_token',
+      },
+    ]);
+    vi.mocked(api.listCachedAccounts).mockResolvedValue([]);
+    vi.mocked(api.listCachedQuotas).mockResolvedValue([]);
+
+    render(<TrayQuotaPanel />);
+
+    await waitFor(() => expect(screen.getByText('codex-pat')).toBeTruthy());
+    expect(screen.getAllByText('PAT').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch' }));
+
+    await waitFor(() => expect(api.switchToPatAccount).toHaveBeenCalledWith('codex-pat'));
+    expect(api.relayResumeSession).not.toHaveBeenCalled();
   });
 });

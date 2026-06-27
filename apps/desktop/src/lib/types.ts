@@ -29,6 +29,7 @@ export type CodexAccount = {
   model?: string | null;
   authMode?: string | null;
   isActiveAuth?: boolean;
+  hasPersonalAccessToken?: boolean;
   renewalDate?: string | null;
   note?: string | null;
 };
@@ -100,6 +101,11 @@ export type AccountNoteUpdate = {
   profileId: string;
   renewalDate?: string | null;
   note?: string | null;
+};
+
+export type CpaExport = {
+  fileName: string;
+  content: Record<string, unknown>;
 };
 
 export type SyncRequest = {

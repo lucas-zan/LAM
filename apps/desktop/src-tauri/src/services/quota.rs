@@ -6,11 +6,27 @@ use serde_json::Value;
 use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::SystemTime;
 
 const CODEX_APP_SERVER_QUOTA_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+struct QuotaAuthHome {
+    path: PathBuf,
+}
+
+impl QuotaAuthHome {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for QuotaAuthHome {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -240,33 +256,62 @@ fn try_codex_app_server_quota(
     home_root: &Path,
     account: &CodexAccount,
 ) -> Result<UsageQuotaSnapshot> {
-    let mut child = spawn_codex_app_server(home_root, account)?;
+    if let Some(snapshot) = try_chatgpt_usage_quota(account)? {
+        return Ok(snapshot);
+    }
+    let quota_auth_home = prepare_quota_auth_home(account)?;
+    let codex_home = quota_auth_home
+        .as_ref()
+        .map(QuotaAuthHome::path)
+        .unwrap_or(&account.codex_home);
+    let mut child = spawn_codex_app_server(home_root, codex_home)?;
     if let Some(stdin) = child.stdin.as_mut() {
-        stdin
-            .write_all(
-                b"{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"lam\",\"version\":\"0.1\"},\"capabilities\":{\"experimentalApi\":true}}}\n",
-            )
-            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
-        stdin
-            .write_all(b"{\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":null}\n")
-            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
-        stdin
-            .flush()
-            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
+        if let Err(err) = stdin.write_all(
+            b"{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"lam\",\"version\":\"0.1\"},\"capabilities\":{\"experimentalApi\":true}}}\n",
+        ) {
+            terminate_child(&mut child);
+            return Err(AppError::new(
+                "CODEX_APP_SERVER_WRITE_FAILED",
+                err.to_string(),
+            ));
+        }
+        if let Err(err) =
+            stdin.write_all(b"{\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":null}\n")
+        {
+            terminate_child(&mut child);
+            return Err(AppError::new(
+                "CODEX_APP_SERVER_WRITE_FAILED",
+                err.to_string(),
+            ));
+        }
+        if let Err(err) = stdin.flush() {
+            terminate_child(&mut child);
+            return Err(AppError::new(
+                "CODEX_APP_SERVER_WRITE_FAILED",
+                err.to_string(),
+            ));
+        }
     } else {
+        terminate_child(&mut child);
         return Err(AppError::new(
             "CODEX_APP_SERVER_NO_STDIN",
             "stdin not available",
         ));
     }
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| AppError::new("CODEX_APP_SERVER_NO_STDOUT", "stdout not available"))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| AppError::new("CODEX_APP_SERVER_NO_STDERR", "stderr not available"))?;
+    let Some(stdout) = child.stdout.take() else {
+        terminate_child(&mut child);
+        return Err(AppError::new(
+            "CODEX_APP_SERVER_NO_STDOUT",
+            "stdout not available",
+        ));
+    };
+    let Some(stderr) = child.stderr.take() else {
+        terminate_child(&mut child);
+        return Err(AppError::new(
+            "CODEX_APP_SERVER_NO_STDERR",
+            "stderr not available",
+        ));
+    };
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     let (tx_err, rx_err) = std::sync::mpsc::channel::<String>();
     std::thread::spawn(move || {
@@ -318,14 +363,14 @@ fn try_codex_app_server_quota(
             }
         }
         if let Some(snapshot) = parsed.clone() {
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate_child(&mut child);
             return Ok(snapshot);
         }
         if let Some(status) = child
             .try_wait()
             .map_err(|err| AppError::new("CODEX_APP_SERVER_WAIT_FAILED", err.to_string()))?
         {
+            let _ = child.wait();
             let stderr_hint = last_stderr
                 .as_deref()
                 .map(|line| format!(" ({line})"))
@@ -349,8 +394,7 @@ fn try_codex_app_server_quota(
             });
         }
         if std::time::Instant::now() > deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate_child(&mut child);
             let stderr_hint = last_stderr
                 .as_deref()
                 .map(|line| format!(" ({line})"))
@@ -364,7 +408,197 @@ fn try_codex_app_server_quota(
     }
 }
 
-fn spawn_codex_app_server(home_root: &Path, account: &CodexAccount) -> Result<Child> {
+fn try_chatgpt_usage_quota(account: &CodexAccount) -> Result<Option<UsageQuotaSnapshot>> {
+    let auth_f_path = account.codex_home.join("auth-f.json");
+    if !auth_f_path.exists() {
+        return Ok(None);
+    }
+    let auth_content = fs::read_to_string(&auth_f_path).map_err(|err| {
+        AppError::new(
+            "QUOTA_AUTH_READ_FAILED",
+            format!("Failed to read auth-f.json: {err}"),
+        )
+    })?;
+    let auth_json: Value = serde_json::from_str(&auth_content).map_err(|err| {
+        AppError::new("QUOTA_AUTH_INVALID", format!("Invalid auth-f.json: {err}"))
+    })?;
+    let Some(access_token) = auth_string_alias(&auth_json, &["access_token", "accessToken"]) else {
+        return Ok(None);
+    };
+    let curl_config =
+        std::env::temp_dir().join(format!("lam-chatgpt-usage-{}.curl", uuid::Uuid::new_v4()));
+    write_file_private(
+        &curl_config,
+        &format!(
+            "header = \"Authorization: Bearer {}\"\n",
+            access_token.replace('"', "\\\"")
+        ),
+    )?;
+    let output = Command::new("curl")
+        .args([
+            "-sS",
+            "--fail",
+            "--max-time",
+            "12",
+            "--config",
+            &curl_config.to_string_lossy(),
+            "https://chatgpt.com/backend-api/wham/usage",
+        ])
+        .output();
+    let _ = fs::remove_file(&curl_config);
+    let output =
+        output.map_err(|err| AppError::new("CHATGPT_USAGE_UNAVAILABLE", err.to_string()))?;
+    if !output.status.success() {
+        return Err(AppError::new(
+            "CHATGPT_USAGE_FAILED",
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    let value: Value = serde_json::from_slice(&output.stdout).map_err(|err| {
+        AppError::new(
+            "CHATGPT_USAGE_INVALID",
+            format!("Invalid ChatGPT usage response: {err}"),
+        )
+    })?;
+    Ok(Some(parse_chatgpt_usage_snapshot(&value, &account.id)?))
+}
+
+fn parse_chatgpt_usage_snapshot(value: &Value, profile_id: &str) -> Result<UsageQuotaSnapshot> {
+    let rate_limit = value
+        .get("rate_limit")
+        .or_else(|| value.get("rateLimit"))
+        .ok_or_else(|| AppError::new("CHATGPT_USAGE_INVALID", "missing rate_limit"))?;
+    let primary = find_window(rate_limit, &["primary", "primary_window"])
+        .ok_or_else(|| AppError::new("CHATGPT_USAGE_INVALID", "missing primary rate limit"))?;
+    let primary_used = extract_percent(primary)
+        .ok_or_else(|| AppError::new("CHATGPT_USAGE_INVALID", "missing primary used percent"))?;
+    let secondary = find_window(rate_limit, &["secondary", "secondary_window"]);
+    let secondary_used = secondary.and_then(extract_percent);
+    let plan_type = extract_string(value, &["plan_type", "planType"]);
+
+    Ok(UsageQuotaSnapshot {
+        profile_id: profile_id.to_string(),
+        source: "chatgpt_wham_usage".into(),
+        fetched_at: system_secs(SystemTime::now()),
+        staleness: "fresh".into(),
+        plan_type,
+        activity_tokens: None,
+        primary_used_percent: Some(primary_used),
+        primary_window_duration_mins: extract_window_duration_mins(primary),
+        secondary_used_percent: secondary_used,
+        secondary_window_duration_mins: secondary.and_then(extract_window_duration_mins),
+        remaining_percent: Some(100_u8.saturating_sub(primary_used)),
+        reset_at: extract_reset(primary),
+        secondary_reset_at: secondary.and_then(extract_reset),
+        alerts: Vec::new(),
+        suggested_actions: if primary_used >= 90 {
+            vec!["Session quota is high; switch profile or use relay.".into()]
+        } else {
+            Vec::new()
+        },
+    })
+}
+
+fn prepare_quota_auth_home(account: &CodexAccount) -> Result<Option<QuotaAuthHome>> {
+    let auth_f_path = account.codex_home.join("auth-f.json");
+    match auth_f_path.try_exists() {
+        Ok(false) => return Ok(None),
+        Ok(true) => {}
+        Err(err) => {
+            return Err(AppError::new(
+                "QUOTA_AUTH_METADATA_FAILED",
+                format!("Failed to inspect auth-f.json: {err}"),
+            ));
+        }
+    }
+
+    let auth_content = fs::read_to_string(&auth_f_path).map_err(|err| {
+        AppError::new(
+            "QUOTA_AUTH_READ_FAILED",
+            format!("Failed to read auth-f.json: {err}"),
+        )
+    })?;
+    let auth_json: Value = serde_json::from_str(&auth_content).map_err(|err| {
+        AppError::new("QUOTA_AUTH_INVALID", format!("Invalid auth-f.json: {err}"))
+    })?;
+    if !auth_json.is_object() {
+        return Err(AppError::new(
+            "QUOTA_AUTH_INVALID",
+            "auth-f.json must contain a JSON object",
+        ));
+    }
+
+    let path = std::env::temp_dir().join(format!(
+        "lam-quota-auth-{}-{}",
+        account.id,
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir(&path).map_err(|err| {
+        AppError::new(
+            "QUOTA_AUTH_STAGE_FAILED",
+            format!("Failed to create quota auth home: {err}"),
+        )
+    })?;
+    set_dir_private(&path)?;
+    let staged_auth = normalize_quota_auth_json(auth_json)?;
+    write_file_private(&path.join("auth.json"), &staged_auth)?;
+    Ok(Some(QuotaAuthHome { path }))
+}
+
+fn normalize_quota_auth_json(mut auth_json: Value) -> Result<String> {
+    if auth_json.get("tokens").is_none() {
+        let mut tokens = serde_json::Map::new();
+        for (target, aliases) in [
+            ("id_token", &["id_token", "idToken"][..]),
+            ("access_token", &["access_token", "accessToken"][..]),
+            ("refresh_token", &["refresh_token", "refreshToken"][..]),
+            (
+                "account_id",
+                &["account_id", "accountId", "chatgpt_account_id"][..],
+            ),
+        ] {
+            if let Some(value) = auth_string_alias(&auth_json, aliases) {
+                tokens.insert(target.to_string(), Value::String(value));
+            }
+        }
+        if !tokens.is_empty() {
+            auth_json["tokens"] = Value::Object(tokens);
+        }
+    }
+    if auth_json.get("last_refresh").is_none() {
+        if let Some(value) = auth_string_alias(&auth_json, &["lastRefresh"]) {
+            auth_json["last_refresh"] = Value::String(value);
+        }
+    }
+    if auth_json.get("OPENAI_API_KEY").is_none() {
+        auth_json["OPENAI_API_KEY"] = Value::Null;
+    }
+    if auth_json.get("auth_mode").is_none() {
+        auth_json["auth_mode"] = Value::String("chatgpt".to_string());
+    }
+    serde_json::to_string_pretty(&auth_json).map_err(|err| {
+        AppError::new(
+            "QUOTA_AUTH_INVALID",
+            format!("Failed to serialize quota auth: {err}"),
+        )
+    })
+}
+
+fn auth_string_alias(auth: &Value, aliases: &[&str]) -> Option<String> {
+    aliases
+        .iter()
+        .find_map(|alias| auth.get(*alias))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn terminate_child(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn spawn_codex_app_server(home_root: &Path, codex_home: &Path) -> Result<Child> {
     // Always launch codex via login shell so that the user's full PATH (including
     // node, bun, etc.) is available.  DMG-installed apps inherit only a minimal
     // PATH from macOS (/usr/bin:/bin:/usr/sbin:/sbin) which lacks the node runtime
@@ -390,7 +624,7 @@ fn spawn_codex_app_server(home_root: &Path, account: &CodexAccount) -> Result<Ch
 
     command
         .env("PATH", path_env)
-        .env("CODEX_HOME", &account.codex_home)
+        .env("CODEX_HOME", codex_home)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -488,12 +722,19 @@ fn extract_window_duration_mins(value: &Value) -> Option<u64> {
         .get("windowDurationMins")
         .or_else(|| value.get("window_duration_mins"))
         .or_else(|| value.get("windowDurationMinutes"))
+        .or_else(|| value.get("limit_window_seconds"))
         .and_then(|v| {
             if let Some(raw) = v.as_u64() {
+                if value.get("limit_window_seconds").is_some() {
+                    return Some(raw / 60);
+                }
                 return Some(raw);
             }
             if let Some(raw) = v.as_f64() {
                 if raw.is_finite() && raw >= 0.0 {
+                    if value.get("limit_window_seconds").is_some() {
+                        return Some((raw / 60.0).round() as u64);
+                    }
                     return Some(raw.round() as u64);
                 }
             }
@@ -562,9 +803,81 @@ fn read_quota_cache(home_root: &Path, profile_id: &str) -> Result<Option<UsageQu
     let body = fs::read_to_string(path)?;
     let mut snapshot: UsageQuotaSnapshot = serde_json::from_str(&body)
         .map_err(|err| AppError::new("QUOTA_CACHE_INVALID", err.to_string()))?;
-    if snapshot.source != "app_server_rate_limits" {
+    if snapshot.source != "app_server_rate_limits" && snapshot.source != "chatgpt_wham_usage" {
         return Ok(None);
     }
     snapshot.staleness = "cached".into();
     Ok(Some(snapshot))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quota_auth_normalizes_chatgpt_session_tokens() {
+        let auth = serde_json::json!({
+            "accessToken": "at-session",
+            "idToken": "id-session",
+            "refreshToken": "rt-session",
+            "accountId": "account-session",
+            "lastRefresh": "2026-06-24T00:00:00+00:00",
+            "user": {"email": "yas@example.com"}
+        });
+
+        let normalized: Value =
+            serde_json::from_str(&normalize_quota_auth_json(auth).unwrap()).unwrap();
+
+        assert_eq!(normalized["tokens"]["access_token"], "at-session");
+        assert_eq!(normalized["tokens"]["id_token"], "id-session");
+        assert_eq!(normalized["tokens"]["refresh_token"], "rt-session");
+        assert_eq!(normalized["tokens"]["account_id"], "account-session");
+        assert_eq!(normalized["last_refresh"], "2026-06-24T00:00:00+00:00");
+        assert_eq!(normalized["OPENAI_API_KEY"], Value::Null);
+        assert_eq!(normalized["auth_mode"], "chatgpt");
+        assert_eq!(normalized["accessToken"], "at-session");
+    }
+
+    #[test]
+    fn quota_auth_preserves_existing_tokens() {
+        let auth = serde_json::json!({
+            "tokens": {"access_token": "at-existing"},
+            "accessToken": "at-session"
+        });
+
+        let normalized: Value =
+            serde_json::from_str(&normalize_quota_auth_json(auth).unwrap()).unwrap();
+
+        assert_eq!(normalized["tokens"]["access_token"], "at-existing");
+    }
+
+    #[test]
+    fn parses_chatgpt_wham_usage_quota() {
+        let usage = serde_json::json!({
+            "plan_type": "plus",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 72,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1782553772
+                },
+                "secondary_window": {
+                    "used_percent": 28,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1782847747
+                }
+            }
+        });
+
+        let snapshot = parse_chatgpt_usage_snapshot(&usage, "Yas").unwrap();
+
+        assert_eq!(snapshot.source, "chatgpt_wham_usage");
+        assert_eq!(snapshot.staleness, "fresh");
+        assert_eq!(snapshot.plan_type.as_deref(), Some("plus"));
+        assert_eq!(snapshot.primary_used_percent, Some(72));
+        assert_eq!(snapshot.primary_window_duration_mins, Some(300));
+        assert_eq!(snapshot.secondary_used_percent, Some(28));
+        assert_eq!(snapshot.secondary_window_duration_mins, Some(10080));
+        assert_eq!(snapshot.remaining_percent, Some(28));
+    }
 }

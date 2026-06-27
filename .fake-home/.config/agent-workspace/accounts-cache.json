@@ -1,6 +1,6 @@
 {
   "homeRoot": "/Users/micro/Documents/Code/Rust/LAM/apps/desktop/src-tauri/../../../.fake-home",
-  "fetchedAt": 1782294053,
+  "fetchedAt": 1782530111,
   "accounts": [
     {
       "id": "a",
@@ -19,6 +19,7 @@
       "providerId": "openai",
       "model": "gpt-5-codex",
       "authMode": "oauth",
+      "isActiveAuth": false,
       "renewalDate": null,
       "note": null
     },
@@ -39,6 +40,7 @@
       "providerId": "company-proxy",
       "model": "gpt-5.4",
       "authMode": "oauth",
+      "isActiveAuth": false,
       "renewalDate": null,
       "note": null
     },
@@ -59,6 +61,7 @@
       "providerId": null,
       "model": null,
       "authMode": null,
+      "isActiveAuth": false,
       "renewalDate": null,
       "note": null
     },
@@ -79,6 +82,7 @@
       "providerId": "openai",
       "model": "gpt-5-codex",
       "authMode": "oauth",
+      "isActiveAuth": false,
       "renewalDate": null,
       "note": null
     }

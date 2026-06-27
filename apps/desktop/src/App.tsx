@@ -47,6 +47,19 @@ const emptyProviderReq: CreateProviderRequest = {
   secret: { kind: 'env', envKey: 'COMPANY_PROXY_API_KEY' },
 };
 
+function chatgptPlanTypeFromIdToken(idToken: unknown) {
+  if (typeof idToken !== 'string') return '';
+  const payload = idToken.split('.')[1];
+  if (!payload) return '';
+  try {
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const json = JSON.parse(atob(base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')));
+    return String(json['https://api.openai.com/auth']?.chatgpt_plan_type ?? '').trim();
+  } catch {
+    return '';
+  }
+}
+
 export function App() {
   const {
     route,
@@ -115,6 +128,11 @@ export function App() {
   const [handoffSessions, setHandoffSessions] = useState<CodexSession[]>([]);
   const [handoffLoading, setHandoffLoading] = useState(false);
   const selectedHandoffSession = handoffSessions.find((s) => s.id === handoffSessionId);
+  const [updatePatAccount, setUpdatePatAccount] = useState<CodexAccount | null>(null);
+  const [updatePatSessionJson, setUpdatePatSessionJson] = useState('');
+  const [newPatToken, setNewPatToken] = useState('');
+  const [newPatSessionOpen, setNewPatSessionOpen] = useState(false);
+  const [newPatSessionJson, setNewPatSessionJson] = useState('');
   const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
   const [createMode, setCreateMode] = useState<'oauth' | 'pat'>('oauth');
@@ -267,6 +285,13 @@ export function App() {
     openModal('handoff');
   }
 
+  function openAccountModal() {
+    setNewPatToken('');
+    setNewPatSessionOpen(false);
+    setNewPatSessionJson('');
+    openModal('account');
+  }
+
   async function openSyncModal(from = selectedAccount?.id) {
     const target = accounts.find((a) => a.id !== from)?.id ?? '';
     setSyncReq({
@@ -298,6 +323,26 @@ export function App() {
     });
     setPlan(null);
     openModal('renameAccount');
+  }
+
+  function openUpdatePatSessionModal(account: CodexAccount) {
+    setUpdatePatAccount(account);
+    setUpdatePatSessionJson('');
+    openModal('updatePatSession');
+  }
+
+  async function updatePatSessionAuth() {
+    if (!updatePatAccount) return;
+    try {
+      const authJson = JSON.parse(updatePatSessionJson);
+      await api.updatePatSessionAuth(updatePatAccount.id, authJson);
+      closeModal();
+      await refresh();
+      refreshAccountQuota(updatePatAccount.id);
+      useAppStore.getState().setStatus(`Updated session auth for '${updatePatAccount.id}'`);
+    } catch (err) {
+      useAppStore.getState().setError(err instanceof Error ? err.message : 'Invalid session JSON');
+    }
   }
 
   async function renameAccount() {
@@ -332,6 +377,39 @@ export function App() {
       } catch {
         // Non-critical: Codex restart is best-effort
       }
+    }
+  }
+
+  async function exportCpa(account: CodexAccount) {
+    try {
+      const result = await api.exportCpaCredentials(account.id);
+      const content = { ...result.content };
+      if (!content.type) content.type = 'codex';
+      if (content.websockets === undefined) content.websockets = true;
+      if (!content.id_token) {
+        content.id_token = '';
+        content.id_token_synthetic = true;
+      }
+      const planType =
+        chatgptPlanTypeFromIdToken(content.id_token) ||
+        String(content.plan_type ?? content.chatgpt_plan_type ?? '').trim() ||
+        quotas.find((quota) => quota.profileId === account.id)?.planType?.trim();
+      if (planType) {
+        content.plan_type = planType;
+        content.chatgpt_plan_type = planType;
+      }
+      const blob = new Blob([JSON.stringify(content, null, 2) + '\n'], {
+        type: 'application/json',
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = result.fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+      useAppStore.getState().setStatus(`Exported CPA auth for '${account.id}'`);
+    } catch (err) {
+      useAppStore.getState().setError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -488,7 +566,7 @@ export function App() {
             >
               <IconRefresh size={14} /> Refresh
             </UIButton>
-            <UIButton size="sm" className="toolbarBtn" onClick={() => openModal('account')}>
+            <UIButton size="sm" className="toolbarBtn" onClick={openAccountModal}>
               <IconPlus size={14} /> New Account
             </UIButton>
             <UIButton size="sm" className="toolbarBtn" onClick={() => openModal('provider')}>
@@ -509,7 +587,13 @@ export function App() {
             select={setSelectedAccountId}
             openSync={openSyncModal}
             rename={openRenameAccountModal}
-            login={handleSwitchAccount}
+            login={(account) =>
+              authMode === 'pat' && account.hasPersonalAccessToken
+                ? openUpdatePatSessionModal(account)
+                : login(account)
+            }
+            switchAccount={handleSwitchAccount}
+            exportCpa={exportCpa}
             openHandoff={(account) => openHandoffModal({ targetAccountId: account.id })}
             relayLatest={relayResumeTo}
             currentSession={activeSession}
@@ -682,32 +766,26 @@ export function App() {
             </>
           ) : (
             <div>
-              <p className="modalHint">
-                Upload your auth.json file from ~/.codex/:
-              </p>
+              <p className="modalHint">Upload auth.json, or paste a ChatGPT session when using PAT.</p>
               <form onSubmit={async (e) => {
                 e.preventDefault();
                 const formData = new FormData(e.currentTarget);
                 const accountName = (formData.get('accountName') as string || '').trim();
-                const file = formData.get('authFile') as File;
                 const personalAccessToken =
                   (formData.get('personalAccessToken') as string || '').trim();
                 const expirationInput = (formData.get('tokenExpiration') as string || '').trim();
-                
+
                 if (!accountName) {
                   useAppStore.getState().setError('Please provide an account name');
                   return;
                 }
-                
-                if (!file) {
-                  useAppStore.getState().setError('Please select an auth.json file');
-                  return;
-                }
-                
+
                 try {
-                  const fileContent = await file.text();
-                  const authJson = JSON.parse(fileContent);
-                  
+                  const file = formData.get('authFile') as File | null;
+                  const authJson = personalAccessToken
+                    ? JSON.parse(newPatSessionJson)
+                    : JSON.parse(await file!.text());
+
                   const result = await api.addPatAccount({
                     accountId: accountName,
                     authJson,
@@ -730,24 +808,10 @@ export function App() {
                 <div className="uploadPatForm">
                   <label>
                     Account name *
-                    <input
-                      name="accountName"
-                      type="text"
-                      placeholder="luna"
-                      required
-                    />
+                    <input name="accountName" type="text" placeholder="luna" required />
                     <span className="inputHint">
                       This will create ~/.codex-{'{'}name{'}'}/
                     </span>
-                  </label>
-                  <label className="fileUploadLabel">
-                    Select auth.json file *
-                    <input
-                      name="authFile"
-                      type="file"
-                      accept=".json,application/json"
-                      required
-                    />
                   </label>
                   <label>
                     Personal Access Token (optional)
@@ -756,8 +820,36 @@ export function App() {
                       type="password"
                       placeholder="Enter token"
                       autoComplete="off"
+                      onChange={(e) => setNewPatToken((e.target as HTMLInputElement).value)}
+                      onInput={(e) => setNewPatToken((e.target as HTMLInputElement).value)}
                     />
                   </label>
+                  {newPatToken.trim() ? (
+                    <label>
+                      Paste Session *
+                      {newPatSessionOpen ? (
+                        <textarea
+                          value={newPatSessionJson}
+                          onChange={(e) => setNewPatSessionJson(e.target.value)}
+                          rows={12}
+                          placeholder='{"accessToken":"...","idToken":"..."}'
+                          required
+                        />
+                      ) : (
+                        <>
+                          <span className="inputHint">Paste the JSON returned by https://chatgpt.com/api/auth/session</span>
+                          <UIButton type="button" onClick={() => setNewPatSessionOpen(true)}>
+                            Paste Session
+                          </UIButton>
+                        </>
+                      )}
+                    </label>
+                  ) : (
+                    <label className="fileUploadLabel">
+                      Select auth.json file *
+                      <input name="authFile" type="file" accept=".json,application/json" required />
+                    </label>
+                  )}
                   <label>
                     Token expiration (optional)
                     <input name="tokenExpiration" type="datetime-local" />
@@ -769,13 +861,45 @@ export function App() {
                   </UIButton>
                   <div className="modalFootPrimary">
                     <UIButton type="submit" variant="primary">
-                      <IconSync size={14} /> Upload
+                      <IconSync size={14} /> {newPatToken.trim() ? 'Save' : 'Upload'}
                     </UIButton>
                   </div>
                 </div>
               </form>
             </div>
           )}
+        </Shell.Modal>
+      ) : null}
+
+      {modal === 'updatePatSession' && updatePatAccount ? (
+        <Shell.Modal title="Update Session Auth" close={closeModal}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void updatePatSessionAuth();
+            }}
+          >
+            <label>
+              Session JSON
+              <textarea
+                value={updatePatSessionJson}
+                onChange={(e) => setUpdatePatSessionJson(e.target.value)}
+                rows={12}
+                placeholder='{"user":{"email":"you@example.com"},"accessToken":"...","idToken":"..."}'
+                required
+              />
+            </label>
+            <div className="modalFoot">
+              <UIButton type="button" variant="ghost" onClick={closeModal}>
+                Cancel
+              </UIButton>
+              <div className="modalFootPrimary">
+                <UIButton type="submit" variant="primary">
+                  Update
+                </UIButton>
+              </div>
+            </div>
+          </form>
         </Shell.Modal>
       ) : null}
 

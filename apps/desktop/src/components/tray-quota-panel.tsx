@@ -13,8 +13,11 @@ import {
   openTerminalWithResume,
   relayResumeSession,
   getProfileQuota,
+  getAuthMode,
   inTauri,
+  restartCodex,
   setQuotaPopoverOpacity,
+  switchToPatAccount,
   getAntigravityQuota,
 } from '../lib/api';
 import {
@@ -584,12 +587,14 @@ interface TrayAccountListProps {
   providerGroups: ProviderGroup[];
   activeProviderId: string;
   setActiveProviderId: (id: string) => void;
+  authMode: 'oauth' | 'pat';
   quotas: UsageQuotaSnapshot[];
   activeSession?: CodexSession;
   relayingAccountId: string;
   refreshingQuotaIds: string[];
   onRefreshAccount: (account: CodexAccount) => void;
   onRelayTo: (account: CodexAccount) => void;
+  onSwitchTo: (account: CodexAccount) => void;
   isDark: boolean;
   antigravityQuota: AntigravityQuotaResponse | null;
 }
@@ -598,12 +603,14 @@ function TrayAccountList({
   providerGroups,
   activeProviderId,
   setActiveProviderId,
+  authMode,
   quotas,
   activeSession,
   relayingAccountId,
   refreshingQuotaIds,
   onRefreshAccount,
   onRelayTo,
+  onSwitchTo,
   isDark,
   antigravityQuota,
 }: TrayAccountListProps) {
@@ -669,8 +676,15 @@ function TrayAccountList({
             {activeGroup.accounts.map((account, index) => {
               const quota = quotas.find((q) => q.profileId === account.id);
               const title = account.displayName.trim() || account.id;
-              const isActiveAccount = activeSession?.accountId === account.id;
+              const isActiveAccount =
+                authMode === 'pat'
+                  ? account.isActiveAuth === true
+                  : activeSession?.accountId === account.id;
               const isRefreshingQuota = refreshingQuotaIds.includes(account.id);
+              const authTag =
+                account.authMode === 'personal_token' || account.authMode === 'uploaded'
+                  ? 'PAT'
+                  : 'Auth';
 
               const accountTheme = getAccountTheme(account.id, index, isDark);
               const quotaWindows = quotaDisplayWindows(quota);
@@ -706,6 +720,9 @@ function TrayAccountList({
                       />
                       <div className="trayAccountNameWrap">
                         <strong title={title}>{title}</strong>
+                        <span className="badge badge--authMode" title={`Auth mode: ${authTag}`}>
+                          {authTag}
+                        </span>
                         <PlanTypeBadge planType={quota?.planType} />
                       </div>
                     </div>
@@ -724,10 +741,20 @@ function TrayAccountList({
                         type="button"
                         className="trayRelayButton"
                         style={btnStyle}
-                        disabled={!activeSession || relayingAccountId === account.id}
-                        onClick={() => onRelayTo(account)}
+                        disabled={
+                          authMode === 'pat'
+                            ? isActiveAccount || relayingAccountId === account.id
+                            : !activeSession || relayingAccountId === account.id
+                        }
+                        onClick={() => (authMode === 'pat' ? onSwitchTo(account) : onRelayTo(account))}
                       >
-                        {activeSession?.accountId === account.id ? 'Resume' : 'Relay'}
+                        {authMode === 'pat'
+                          ? isActiveAccount
+                            ? 'Active'
+                            : 'Switch'
+                          : activeSession?.accountId === account.id
+                            ? 'Resume'
+                            : 'Relay'}
                       </button>
                     </div>
                   </div>
@@ -791,6 +818,7 @@ export function TrayQuotaPanel() {
   const [refreshingQuotaIds, setRefreshingQuotaIds] = useState<string[]>([]);
   const [relayingAccountId, setRelayingAccountId] = useState<string>('');
   const [activeProviderId, setActiveProviderId] = useState('codex');
+  const [authMode, setAuthMode] = useState<'oauth' | 'pat'>('oauth');
   const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>(() => readResolvedTheme());
@@ -895,6 +923,8 @@ export function TrayQuotaPanel() {
         }
 
         const accountData = await listAccounts();
+        const mode = await getAuthMode();
+        setAuthMode(mode === 'pat' ? 'pat' : 'oauth');
         setAccounts(accountData);
         void loadActiveSession(accountData);
         const ids = accountData.map((a) => a.id);
@@ -1027,6 +1057,22 @@ export function TrayQuotaPanel() {
     }
   }
 
+  async function switchTo(account: CodexAccount) {
+    setRelayingAccountId(account.id);
+    setStatus(`Switching to ${account.displayName}...`);
+    try {
+      await switchToPatAccount(account.id);
+      await load(false);
+      await refreshAccountQuota(accounts.find((a) => a.id === 'main') ?? account);
+      setStatus(`Switched to ${account.displayName}. Restarting Codex...`);
+      await restartCodex();
+    } catch (err) {
+      setStatus(formatError(err));
+    } finally {
+      setRelayingAccountId('');
+    }
+  }
+
   const isAntigravityActive = activeProviderId === 'antigravity';
 
   const accountsWithQuotaData = countAccountsWithQuotaData(accounts, quotas);
@@ -1042,9 +1088,12 @@ export function TrayQuotaPanel() {
     return Math.round((total / antigravityQuota.models.length) * 100);
   }, [antigravityQuota]);
 
-  const activeAccount = activeSession
-    ? accounts.find((account) => account.id === activeSession.accountId)
-    : undefined;
+  const activeAccount =
+    authMode === 'pat'
+      ? accounts.find((account) => account.isActiveAuth)
+      : activeSession
+        ? accounts.find((account) => account.id === activeSession.accountId)
+        : undefined;
   const orderedAccounts = sortByLatestActivity(accounts);
 
   const providerGroups = useMemo<ProviderGroup[]>(() => {
@@ -1129,12 +1178,14 @@ export function TrayQuotaPanel() {
         providerGroups={providerGroups}
         activeProviderId={activeProviderId}
         setActiveProviderId={setActiveProviderId}
+        authMode={authMode}
         quotas={quotas}
         activeSession={activeSession}
         relayingAccountId={relayingAccountId}
         refreshingQuotaIds={refreshingQuotaIds}
         onRefreshAccount={(account) => void refreshAccountQuota(account)}
         onRelayTo={(account) => void relayTo(account)}
+        onSwitchTo={(account) => void switchTo(account)}
         isDark={resolvedTheme === 'dark'}
         antigravityQuota={antigravityQuota}
       />

@@ -82,6 +82,8 @@ fn main() {
             commands::check_profile_token_expiration,
             commands::add_pat_account,
             commands::switch_to_pat_account,
+            commands::export_cpa_credentials,
+            commands::update_pat_session_auth,
             commands::get_auth_mode,
             commands::set_auth_mode,
             commands::get_hide_dock_icon,

@@ -30,6 +30,7 @@ import type {
   TokenExpirationStatus,
   AddPatAccountRequest,
   AddPatAccountResult,
+  CpaExport,
 } from "./types";
 
 export const inTauri = () => "__TAURI_INTERNALS__" in window;
@@ -205,6 +206,17 @@ export async function addPatAccount(
 
 export async function switchToPatAccount(accountId: string): Promise<void> {
   return invoke<void>("switch_to_pat_account", { accountId });
+}
+
+export async function exportCpaCredentials(profileId: string): Promise<CpaExport> {
+  return invoke<CpaExport>("export_cpa_credentials", { profileId });
+}
+
+export async function updatePatSessionAuth(
+  profileId: string,
+  authJson: Record<string, unknown>
+): Promise<void> {
+  return invoke<void>("update_pat_session_auth", { profileId, authJson });
 }
 
 export async function getAuthMode(): Promise<string> {

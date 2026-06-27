@@ -24,9 +24,13 @@ vi.mock('./lib/api', () => ({
   openTerminalForLogin: vi.fn(),
   buildLoginCommand: vi.fn(),
   switchToPatAccount: vi.fn(),
+  exportCpaCredentials: vi.fn(),
+  updatePatSessionAuth: vi.fn(),
   addPatAccount: vi.fn(),
   setAuthMode: vi.fn(),
   getAuthMode: vi.fn(() => Promise.resolve('oauth')),
+  getHideDockIcon: vi.fn(() => Promise.resolve(false)),
+  setHideDockIcon: vi.fn(),
   getAntigravityQuota: vi.fn(() => Promise.resolve({ ok: true, models: [] })),
 }));
 
@@ -187,6 +191,11 @@ beforeEach(() => {
   vi.mocked(api.openTerminalWithCommand).mockResolvedValue();
   vi.mocked(api.openTerminalForLogin).mockResolvedValue();
   vi.mocked(api.switchToPatAccount).mockResolvedValue();
+  vi.mocked(api.updatePatSessionAuth).mockResolvedValue();
+  vi.mocked(api.exportCpaCredentials).mockResolvedValue({
+    fileName: 'codex-c-cpa.json',
+    content: { access_token: 'at-test' },
+  });
   vi.mocked(api.addPatAccount).mockResolvedValue({
     accountId: 'codex-nova',
     email: 'nova@example.com',
@@ -194,6 +203,15 @@ beforeEach(() => {
   });
   vi.mocked(api.setAuthMode).mockResolvedValue();
   vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
+  Object.defineProperty(URL, 'createObjectURL', {
+    configurable: true,
+    value: vi.fn(() => 'blob:lam-cpa'),
+  });
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    configurable: true,
+    value: vi.fn(),
+  });
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
 });
 
 describe('App handoff modal', () => {
@@ -209,6 +227,7 @@ describe('App handoff modal', () => {
     );
 
     render(<App />);
+    await waitFor(() => expect(screen.getByLabelText(/pat mode/i)).toHaveProperty('checked', true));
     const accountCard = (await screen.findByText('codex-c')).closest('article');
     expect(accountCard).not.toBeNull();
 
@@ -230,6 +249,7 @@ describe('App handoff modal', () => {
     vi.mocked(api.listSessions).mockResolvedValue([]);
 
     render(<App />);
+    await waitFor(() => expect(screen.getByLabelText(/pat mode/i)).toHaveProperty('checked', true));
     const accountCard = (await screen.findByText('codex-c')).closest('article');
     expect(accountCard).not.toBeNull();
 
@@ -248,7 +268,7 @@ describe('App handoff modal', () => {
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: /new account/i }));
     fireEvent.click(screen.getByRole('button', { name: /pat/i }));
-    await screen.findByText(/upload your auth\.json file/i);
+    await screen.findByText(/upload auth\.json/i);
     const authFile = new File([JSON.stringify({ tokens: { account_id: 'account-test-6789' } })], 'auth.json', {
       type: 'application/json',
     });
@@ -274,6 +294,111 @@ describe('App handoff modal', () => {
     await waitFor(() => expect(refreshAccountQuota).toHaveBeenCalledWith('codex-nova'));
   });
 
+  it('creates a PAT token account from pasted ChatGPT session JSON', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /new account/i }));
+    fireEvent.click(screen.getByRole('button', { name: /pat/i }));
+    const patInput = screen.getByPlaceholderText(/enter token/i);
+    fireEvent.change(patInput, { target: { value: 'pat-new' } });
+    await screen.findByText('Paste the JSON returned by https://chatgpt.com/api/auth/session');
+    const sessionButton = await screen.findByRole('button', { name: /paste session/i });
+    fireEvent.click(sessionButton);
+    fireEvent.change(screen.getByLabelText(/paste session/i), {
+      target: { value: '{"accessToken":"at-new","idToken":"id-new"}' },
+    });
+    vi.stubGlobal(
+      'FormData',
+      class {
+        get(name: string) {
+          if (name === 'accountName') return 'nova';
+          if (name === 'personalAccessToken') return 'pat-new';
+          if (name === 'tokenExpiration') return '';
+          return null;
+        }
+      },
+    );
+
+    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+    await waitFor(() =>
+      expect(api.addPatAccount).toHaveBeenCalledWith({
+        accountId: 'nova',
+        authJson: { accessToken: 'at-new', idToken: 'id-new' },
+        personalAccessToken: 'pat-new',
+        tokenExpiration: null,
+      }),
+    );
+  });
+
+  it('uses codex login for the Login button in PAT mode', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByLabelText(/pat mode/i)).toHaveProperty('checked', true));
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /^login$/i }));
+
+    await waitFor(() => expect(api.openTerminalForLogin).toHaveBeenCalledWith('codex-c'));
+    expect(api.switchToPatAccount).not.toHaveBeenCalled();
+  });
+
+  it('exports CPA auth from the PAT mode account action', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    useQuotaStore.setState({
+      quotas: [
+        {
+          profileId: 'codex-c',
+          source: 'app_server_rate_limits',
+          fetchedAt: 1,
+          staleness: 'fresh',
+          planType: 'team',
+          activityTokens: null,
+          primaryUsedPercent: null,
+          secondaryUsedPercent: null,
+          remainingPercent: null,
+          resetAt: null,
+          secondaryResetAt: null,
+          alerts: [],
+          suggestedActions: [],
+        },
+      ],
+    });
+    vi.mocked(api.exportCpaCredentials).mockResolvedValue({
+      fileName: 'codex-c-cpa.json',
+      content: {
+        access_token: 'at-test',
+        id_token:
+          'header.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9wbGFuX3R5cGUiOiJlbnRlcnByaXNlIn19.sig',
+      },
+    });
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByLabelText(/pat mode/i)).toHaveProperty('checked', true));
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /export cpa/i }));
+
+    await waitFor(() => expect(api.exportCpaCredentials).toHaveBeenCalledWith('codex-c'));
+    const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
+    const exported = JSON.parse(await blob.text());
+    expect(exported).toMatchObject({
+      access_token: 'at-test',
+      type: 'codex',
+      websockets: true,
+      plan_type: 'enterprise',
+      chatgpt_plan_type: 'enterprise',
+    });
+    expect(exported.id_token_synthetic).toBeUndefined();
+  });
+
   it('uses login switching for every account in Auth mode', async () => {
     vi.mocked(api.listSessions).mockResolvedValue([]);
 
@@ -285,6 +410,38 @@ describe('App handoff modal', () => {
 
     await waitFor(() => expect(api.openTerminalForLogin).toHaveBeenCalledWith('codex-c'));
     expect(api.switchToPatAccount).not.toHaveBeenCalled();
+  });
+
+  it('uses the Login action as session auth update for PAT token accounts', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    vi.mocked(api.listAccounts).mockResolvedValue(
+      accounts.map((account) =>
+        account.id === 'codex-c' ? { ...account, hasPersonalAccessToken: true } : account,
+      ),
+    );
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByLabelText(/pat mode/i)).toHaveProperty('checked', true));
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /^update$/i }));
+    const textarea = await screen.findByLabelText(/session json/i);
+    fireEvent.change(textarea, {
+      target: { value: '{"accessToken":"at-new","idToken":"id-new","user":{"email":"u@example.com"}}' },
+    });
+    const updateButtons = screen.getAllByRole('button', { name: /^update$/i });
+    fireEvent.click(updateButtons[updateButtons.length - 1]);
+
+    await waitFor(() =>
+      expect(api.updatePatSessionAuth).toHaveBeenCalledWith('codex-c', {
+        accessToken: 'at-new',
+        idToken: 'id-new',
+        user: { email: 'u@example.com' },
+      }),
+    );
+    expect(api.openTerminalForLogin).not.toHaveBeenCalled();
   });
 
   it('relays the selected source session and does not fall back to latest active session', async () => {

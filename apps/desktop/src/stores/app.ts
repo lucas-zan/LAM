@@ -8,6 +8,7 @@ import * as api from '../lib/api';
 type Modal =
   | 'account'
   | 'renameAccount'
+  | 'updatePatSession'
   | 'handoff'
   | 'sync'
   | 'provider'

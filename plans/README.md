@@ -2,7 +2,7 @@
 
 **Base commit:** `6e4471e`  
 **Generated:** 2026-06-24  
-**Last updated:** 2026-06-24 (added critical patches)
+**Last updated:** 2026-06-26 (added Plan 005)
 
 ## Plan Index
 
@@ -11,12 +11,30 @@
 | 001 | Personal Access Token Authentication Mode (Base) | TODO | L | M | 9 unit + 2 integration |
 | 001-addendum | Account Switching with Backup | TODO | M | M | +3 tests (integrated) |
 | 001-patches | Critical 5% Patches | TODO | S | L | +1 test (integrated) |
+| 005 | Split PAT runtime auth from quota refresh auth | DONE | M | M | 5 focused regressions |
 
 ## Dependencies
 
 - **001-patches** must be applied to **001** during execution
 - **001-addendum** steps (3A-3C) inserted after base Step 3
 - All three documents form one complete implementation
+- **005** is an independent delta plan against the implemented PAT account flow
+  at commit `9d9f9ae`; it does not require re-executing Plans 001-004.
+
+## Plan 005 execution note
+
+Read `plans/005-split-pat-auth-and-quota-source.md` as a self-contained plan.
+It preserves Switch behavior, splits uploaded credentials into `auth-f.json`
+and a minimal PAT `auth.json`, and makes realtime quota refresh prefer
+`auth-f.json` through an isolated temporary `CODEX_HOME`.
+
+**Execution completed 2026-06-26**: initial isolated execution blocked at Step
+5 because `cargo fmt -- --check` needed formatting-only changes in
+`apps/desktop/src-tauri/src/services/types.rs` and
+`apps/desktop/src-tauri/src/commands/mod.rs`, outside Plan 005 scope. Scope was
+then explicitly expanded for those formatting-only changes. Focused PAT tests,
+focused quota tests, `cargo fmt -- --check`, `cargo clippy --all-targets -- -D
+warnings`, and `make check` all pass.
 
 ## Execution Notes
 

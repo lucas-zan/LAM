@@ -28,6 +28,8 @@ pub struct CodexAccount {
     pub auth_mode: Option<String>,
     #[serde(default)]
     pub is_active_auth: bool,
+    #[serde(default)]
+    pub has_personal_access_token: bool,
     pub renewal_date: Option<String>,
     pub note: Option<String>,
 }
@@ -67,6 +69,13 @@ pub struct AddPatAccountResult {
     pub account_id: String,
     pub email: String,
     pub expired: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CpaExport {
+    pub file_name: String,
+    pub content: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -213,6 +222,9 @@ pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
             model: config.model,
             auth_mode,
             is_active_auth: false,
+            has_personal_access_token: auth_has_personal_access_token(
+                &entry.path().join("auth.json"),
+            ),
             renewal_date: note.and_then(|metadata| metadata.renewal_date.clone()),
             note: note.and_then(|metadata| metadata.note.clone()),
         });
@@ -225,19 +237,32 @@ pub fn list_accounts(home_root: &Path) -> Result<Vec<CodexAccount>> {
 }
 
 fn mark_active_auth_account(home_root: &Path, accounts: &mut [CodexAccount]) {
-    let Some(active_suffix) = auth_account_id_suffix(&home_root.join(".codex/auth.json")) else {
-        return;
+    let active_auth_path = home_root.join(".codex/auth.json");
+    let matches = if let Some(active_suffix) = auth_account_id_suffix(&active_auth_path) {
+        accounts
+            .iter()
+            .enumerate()
+            .filter(|(_, account)| account.id != "main")
+            .filter(|(_, account)| {
+                auth_account_id_suffix(&account.codex_home.join("auth.json")).as_deref()
+                    == Some(active_suffix.as_str())
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>()
+    } else {
+        let Some(active_auth) = fs::read(&active_auth_path).ok() else {
+            return;
+        };
+        accounts
+            .iter()
+            .enumerate()
+            .filter(|(_, account)| account.id != "main")
+            .filter(|(_, account)| {
+                fs::read(account.codex_home.join("auth.json")).is_ok_and(|auth| auth == active_auth)
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>()
     };
-    let matches = accounts
-        .iter()
-        .enumerate()
-        .filter(|(_, account)| account.id != "main")
-        .filter(|(_, account)| {
-            auth_account_id_suffix(&account.codex_home.join("auth.json")).as_deref()
-                == Some(active_suffix.as_str())
-        })
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
 
     if let [index] = matches.as_slice() {
         accounts[*index].is_active_auth = true;
@@ -553,6 +578,7 @@ pub(crate) fn quota_account(home_root: &Path, profile_id: &str) -> Result<CodexA
     if !codex_home.exists() || !has_codex_signal(&codex_home) {
         return Err(AppError::new("ACCOUNT_NOT_FOUND", profile_id));
     }
+    let has_personal_access_token = auth_has_personal_access_token(&codex_home.join("auth.json"));
     Ok(CodexAccount {
         id: profile_id.to_string(),
         display_name: if profile_id == "main" {
@@ -575,6 +601,7 @@ pub(crate) fn quota_account(home_root: &Path, profile_id: &str) -> Result<CodexA
         model: None,
         auth_mode: None,
         is_active_auth: false,
+        has_personal_access_token,
         renewal_date: None,
         note: None,
     })
@@ -938,30 +965,37 @@ pub fn add_pat_account(
         )
     })?;
 
-    let mut auth_json = req.auth_json.clone();
-    if let Some(token) = req
+    let personal_access_token = req
         .personal_access_token
         .as_deref()
         .map(str::trim)
-        .filter(|token| !token.is_empty())
-    {
-        auth_json.insert("OPENAI_API_KEY".to_string(), serde_json::Value::Null);
-        auth_json.insert(
-            "personal_access_token".to_string(),
-            serde_json::Value::String(token.to_string()),
-        );
-    }
+        .filter(|token| !token.is_empty());
     let expiration = parse_optional_expiration(req.token_expiration.as_deref())?;
 
     // 4. Save the uploaded auth.json without rebuilding its schema
     let auth_path = codex_dir.join("auth.json");
-    let auth_content = serde_json::to_string_pretty(&auth_json).map_err(|e| {
+    let uploaded_auth_content = serde_json::to_string_pretty(&req.auth_json).map_err(|e| {
         AppError::new(
             "SERIALIZE_AUTH_FAILED",
             format!("Failed to serialize auth.json: {e}"),
         )
     })?;
-    write_file_private(&auth_path, &auth_content)?;
+    if let Some(token) = personal_access_token {
+        write_file_private(&codex_dir.join("auth-f.json"), &uploaded_auth_content)?;
+        let auth_content = serde_json::to_string_pretty(&serde_json::json!({
+            "OPENAI_API_KEY": null,
+            "personal_access_token": token,
+        }))
+        .map_err(|e| {
+            AppError::new(
+                "SERIALIZE_AUTH_FAILED",
+                format!("Failed to serialize auth.json: {e}"),
+            )
+        })?;
+        write_file_private(&auth_path, &auth_content)?;
+    } else {
+        write_file_private(&auth_path, &uploaded_auth_content)?;
+    }
 
     // 5. Create minimal config.toml
     let config_path = codex_dir.join("config.toml");
@@ -1159,6 +1193,152 @@ pub fn switch_to_pat_account(home_root: &Path, account_id: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn update_pat_session_auth(
+    home_root: &Path,
+    profile_id: &str,
+    auth_json: serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    if auth_json.is_empty() {
+        return Err(AppError::new(
+            "INVALID_AUTH_JSON",
+            "session JSON cannot be empty",
+        ));
+    }
+    let account = find_account(home_root, profile_id)?;
+    let auth = read_auth_object(&account.codex_home.join("auth.json"), "auth.json")?;
+    if auth_string(&auth, "personal_access_token").is_none() {
+        return Err(AppError::new(
+            "PAT_REQUIRED",
+            "This account does not use personal_access_token",
+        ));
+    }
+    let content = serde_json::to_string_pretty(&auth_json).map_err(|err| {
+        AppError::new(
+            "SERIALIZE_AUTH_FAILED",
+            format!("Failed to serialize session JSON: {err}"),
+        )
+    })?;
+    write_file_private(&account.codex_home.join("auth-f.json"), &content)
+}
+
+pub fn export_cpa_credentials(home_root: &Path, profile_id: &str) -> Result<CpaExport> {
+    let account = find_account(home_root, profile_id)?;
+    let auth_json = read_auth_object(&account.codex_home.join("auth.json"), "auth.json")?;
+    let auth_f_path = account.codex_home.join("auth-f.json");
+    let auth_f_json = if auth_f_path.exists() {
+        Some(read_auth_object(&auth_f_path, "auth-f.json")?)
+    } else {
+        None
+    };
+
+    let token_source = auth_f_json.as_ref().unwrap_or(&auth_json);
+    let mut out = serde_json::Map::new();
+    for key in [
+        "id_token",
+        "access_token",
+        "refresh_token",
+        "account_id",
+        "last_refresh",
+    ] {
+        out.insert(
+            key.to_string(),
+            serde_json::Value::String(auth_string(token_source, key).unwrap_or_default()),
+        );
+    }
+
+    for (key, value) in [
+        ("email", auth_string(token_source, "email")),
+        ("expired", auth_string(token_source, "expired")),
+        ("plan_type", auth_string(token_source, "plan_type")),
+        (
+            "chatgpt_plan_type",
+            auth_string(token_source, "chatgpt_plan_type"),
+        ),
+    ] {
+        if let Some(value) = value {
+            out.insert(key.to_string(), serde_json::Value::String(value));
+        }
+    }
+    out.entry("type".to_string())
+        .or_insert_with(|| serde_json::Value::String("codex".to_string()));
+    out.entry("websockets".to_string())
+        .or_insert(serde_json::Value::Bool(true));
+
+    if let Some(auth_f_json) = &auth_f_json {
+        for key in ["email", "expired", "headers", "type", "websockets"] {
+            if let Some(value) = auth_f_json.get(key) {
+                out.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+
+    if let Some(token) = auth_string(&auth_json, "personal_access_token") {
+        let headers = out
+            .entry("headers".to_string())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if let Some(headers) = headers.as_object_mut() {
+            headers.insert(
+                "authorization".to_string(),
+                serde_json::Value::String(format!("Bearer {token}")),
+            );
+        }
+    }
+
+    Ok(CpaExport {
+        file_name: format!("{}-cpa.json", account.id),
+        content: serde_json::Value::Object(out),
+    })
+}
+
+fn read_auth_object(
+    path: &Path,
+    label: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>> {
+    let content = fs::read_to_string(path).map_err(|err| {
+        AppError::new("AUTH_READ_FAILED", format!("Failed to read {label}: {err}"))
+    })?;
+    match serde_json::from_str::<serde_json::Value>(&content)
+        .map_err(|err| AppError::new("INVALID_AUTH_JSON", format!("Invalid {label}: {err}")))?
+    {
+        serde_json::Value::Object(obj) => Ok(obj),
+        _ => Err(AppError::new(
+            "INVALID_AUTH_JSON",
+            format!("{label} must contain a JSON object"),
+        )),
+    }
+}
+
+fn auth_string(auth: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+    let aliases = match key {
+        "id_token" => &["id_token", "idToken"][..],
+        "access_token" => &["access_token", "accessToken"][..],
+        "refresh_token" => &["refresh_token", "refreshToken"][..],
+        "account_id" => &["account_id", "accountId", "chatgpt_account_id"][..],
+        "last_refresh" => &["last_refresh", "lastRefresh"][..],
+        "expired" => &["expired", "expires"][..],
+        "plan_type" => &["plan_type", "planType"][..],
+        "chatgpt_plan_type" => &["chatgpt_plan_type", "chatgptPlanType"][..],
+        _ => std::slice::from_ref(&key),
+    };
+    aliases
+        .iter()
+        .find_map(|alias| {
+            auth.get(*alias)
+                .or_else(|| auth.get("tokens").and_then(|tokens| tokens.get(*alias)))
+                .or_else(|| auth.get("user").and_then(|user| user.get(*alias)))
+        })
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn auth_has_personal_access_token(path: &Path) -> bool {
+    read_auth_object(path, "auth.json")
+        .ok()
+        .and_then(|auth| auth_string(&auth, "personal_access_token"))
+        .is_some()
 }
 
 /// Detects auth mode by checking both Lam metadata and Codex auth.json

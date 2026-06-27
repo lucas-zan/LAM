@@ -145,6 +145,8 @@ export function Overview({
   openSync,
   rename,
   login,
+  switchAccount,
+  exportCpa,
   openHandoff,
   relayLatest,
   currentSession,
@@ -163,6 +165,8 @@ export function Overview({
   openSync: (id: string) => void;
   rename: (account: CodexAccount) => void;
   login: (account: CodexAccount) => void;
+  switchAccount: (account: CodexAccount) => void;
+  exportCpa: (account: CodexAccount) => void;
   openHandoff: (targetAccount: CodexAccount) => void;
   relayLatest: (targetAccount: CodexAccount) => void;
   currentSession?: CodexSession;
@@ -236,6 +240,8 @@ export function Overview({
           openSync={openSync}
           rename={rename}
           login={login}
+          switchAccount={switchAccount}
+          exportCpa={exportCpa}
           openHandoff={openHandoff}
           relayLatest={relayLatest}
           currentSession={currentSession}
@@ -315,6 +321,8 @@ export function Accounts({
   openSync,
   rename,
   login,
+  switchAccount,
+  exportCpa,
   openHandoff,
   relayLatest,
   currentSession,
@@ -330,6 +338,8 @@ export function Accounts({
   openSync: (id: string) => void;
   rename: (account: CodexAccount) => void;
   login: (account: CodexAccount) => void;
+  switchAccount: (account: CodexAccount) => void;
+  exportCpa: (account: CodexAccount) => void;
   openHandoff: (targetAccount: CodexAccount) => void;
   relayLatest: (targetAccount: CodexAccount) => void;
   currentSession?: CodexSession;
@@ -509,15 +519,18 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
-                  disabled={authMode === 'pat'}
-                  title={authMode === 'pat' ? 'Not available in PAT mode' : 'Sync sessions'}
+                  title={authMode === 'pat' ? 'Export CPA auth JSON' : 'Sync sessions'}
                   onClick={(e) => {
                     e.stopPropagation();
-                    openSync(account.id);
+                    if (authMode === 'pat') {
+                      exportCpa(account);
+                    } else {
+                      openSync(account.id);
+                    }
                   }}
                 >
                   <IconCloud size={13} />
-                  Sync Sessions...
+                  {authMode === 'pat' ? 'Export CPA' : 'Sync Sessions...'}
                 </UIButton>
                 <UIButton
                   size="sm"
@@ -541,14 +554,18 @@ export function Accounts({
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
-                  title="Login to this account"
+                  title={
+                    authMode === 'pat' && account.hasPersonalAccessToken
+                      ? 'Update session auth JSON'
+                      : 'Login to this account'
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
                     login(account);
                   }}
                 >
                   <IconKey size={13} />
-                  Login
+                  {authMode === 'pat' && account.hasPersonalAccessToken ? 'Update' : 'Login'}
                 </UIButton>
                 <UIButton
                   size="sm"
@@ -564,7 +581,7 @@ export function Accounts({
                   }
                   onClick={(e) => {
                     e.stopPropagation();
-                    login(account);
+                    switchAccount(account);
                   }}
                 >
                   <IconSync size={13} />

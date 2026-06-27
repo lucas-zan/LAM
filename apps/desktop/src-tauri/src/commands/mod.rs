@@ -9,6 +9,7 @@ use localagentmanager_core::{
     execute_create_account as core_execute_create_account,
     execute_create_relay as core_execute_create_relay,
     execute_rename_account as core_execute_rename_account, execute_sync as core_execute_sync,
+    export_cpa_credentials as core_export_cpa_credentials,
     get_profile_quota as core_get_profile_quota, list_accounts as core_list_accounts,
     list_cached_accounts as core_list_cached_accounts,
     list_cached_quotas as core_list_cached_quotas, list_providers as core_list_providers,
@@ -20,13 +21,14 @@ use localagentmanager_core::{
     relay_resume_session as core_relay_resume_session,
     rename_account_plan as core_rename_account_plan, resolve_home_root,
     switch_to_pat_account as core_switch_to_pat_account, sync_plan as core_sync_plan,
-    test_provider as core_test_provider, update_provider as core_update_provider,
-    AccountNoteUpdate, AddPatAccountRequest, AddPatAccountResult, AppError, AttachProviderRequest,
-    AttachProviderResult, AuthMetadata, CodexAccount, CodexSession, CreateAccountRequest,
-    CreateProviderRequest, CreateRelayRequest, CreateResult, OperationPlan, ProviderProfile,
-    QuotaRefreshResult, RelayResumeRequest, RelayResumeResult, RenameAccountRequest,
-    RenameAccountResult, ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult,
-    TokenExpirationStatus, UpdateProviderRequest, UploadedCredentials, UsageQuotaSnapshot,
+    test_provider as core_test_provider, update_pat_session_auth as core_update_pat_session_auth,
+    update_provider as core_update_provider, AccountNoteUpdate, AddPatAccountRequest,
+    AddPatAccountResult, AppError, AttachProviderRequest, AttachProviderResult, AuthMetadata,
+    CodexAccount, CodexSession, CpaExport, CreateAccountRequest, CreateProviderRequest,
+    CreateRelayRequest, CreateResult, OperationPlan, ProviderProfile, QuotaRefreshResult,
+    RelayResumeRequest, RelayResumeResult, RenameAccountRequest, RenameAccountResult,
+    ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult, TokenExpirationStatus,
+    UpdateProviderRequest, UploadedCredentials, UsageQuotaSnapshot,
 };
 
 async fn run_blocking<T, F>(task: F) -> Result<T, AppError>
@@ -41,6 +43,78 @@ where
 
 fn home_root() -> Result<std::path::PathBuf, AppError> {
     resolve_home_root()
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+struct WindowBounds {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+#[cfg(target_os = "macos")]
+fn parse_window_bounds(output: &str) -> Option<WindowBounds> {
+    let nums: Vec<i32> = output
+        .split(|c: char| !(c == '-' || c.is_ascii_digit()))
+        .filter(|s| !s.is_empty() && *s != "-")
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    if nums.len() < 4 {
+        return None;
+    }
+    Some(WindowBounds {
+        x: nums[0],
+        y: nums[1],
+        width: nums[2],
+        height: nums[3],
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn codex_window_bounds() -> Option<WindowBounds> {
+    let output = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            r#"tell application "System Events"
+if exists process "Codex" then
+  tell process "Codex"
+    if exists window 1 then return (position of window 1 as list) & (size of window 1 as list)
+  end tell
+end if
+end tell"#,
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_window_bounds(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(target_os = "macos")]
+fn restore_codex_window_bounds(bounds: WindowBounds) {
+    let script = format!(
+        r#"tell application "System Events"
+repeat 20 times
+  if exists process "Codex" then
+    tell process "Codex"
+      if exists window 1 then
+        set position of window 1 to {{{}, {}}}
+        set size of window 1 to {{{}, {}}}
+        return
+      end if
+    end tell
+  end if
+  delay 0.1
+end repeat
+end tell"#,
+        bounds.x, bounds.y, bounds.width, bounds.height
+    );
+    let _ = std::process::Command::new("osascript")
+        .args(["-e", &script])
+        .output();
 }
 
 #[derive(serde::Serialize)]
@@ -286,6 +360,19 @@ pub fn switch_to_pat_account(account_id: String) -> Result<(), AppError> {
 }
 
 #[tauri::command]
+pub fn export_cpa_credentials(profile_id: String) -> Result<CpaExport, AppError> {
+    core_export_cpa_credentials(&home_root()?, &profile_id)
+}
+
+#[tauri::command]
+pub fn update_pat_session_auth(
+    profile_id: String,
+    auth_json: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), AppError> {
+    core_update_pat_session_auth(&home_root()?, &profile_id, auth_json)
+}
+
+#[tauri::command]
 pub fn get_auth_mode() -> Result<String, AppError> {
     localagentmanager_core::types::get_auth_mode(&home_root()?)
 }
@@ -322,6 +409,9 @@ pub fn set_hide_dock_icon(app_handle: tauri::AppHandle, hide: bool) -> Result<()
 #[tauri::command]
 pub async fn restart_codex() -> Result<(), AppError> {
     run_blocking(|| {
+        #[cfg(target_os = "macos")]
+        let bounds = codex_window_bounds();
+
         // Force kill any running Codex process
         let _ = std::process::Command::new("pkill")
             .args(["-f", "/Applications/Codex.app/Contents/MacOS/Codex"])
@@ -336,6 +426,11 @@ pub async fn restart_codex() -> Result<(), AppError> {
             .spawn()
             .map_err(|e| AppError::new("RESTART_CODEX_FAILED", e.to_string()))?;
 
+        #[cfg(target_os = "macos")]
+        if let Some(bounds) = bounds {
+            restore_codex_window_bounds(bounds);
+        }
+
         Ok(())
     })
     .await
@@ -344,4 +439,18 @@ pub async fn restart_codex() -> Result<(), AppError> {
 #[tauri::command]
 pub fn quit_app(app_handle: tauri::AppHandle) {
     app_handle.exit(0);
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::parse_window_bounds;
+
+    #[test]
+    fn parses_osascript_window_bounds() {
+        let bounds = parse_window_bounds("100, 80, 1280, 820").unwrap();
+        assert_eq!(bounds.x, 100);
+        assert_eq!(bounds.y, 80);
+        assert_eq!(bounds.width, 1280);
+        assert_eq!(bounds.height, 820);
+    }
 }

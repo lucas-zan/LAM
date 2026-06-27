@@ -1017,8 +1017,10 @@ exit 1
 fn quota_app_server_uses_each_profile_codex_home() {
     let _guard = env_lock().lock().unwrap();
     let home = temp_home("quota-profile-codex-home");
-    seed_codex_home(&home, "main");
-    seed_codex_home(&home, "b");
+    let main_home = seed_codex_home(&home, "main");
+    let b_home = seed_codex_home(&home, "b");
+    assert!(!main_home.join("auth-f.json").exists());
+    assert!(!b_home.join("auth-f.json").exists());
     let bin = home.join("fake-codex.sh");
     write_executable(
         &bin,
@@ -1048,6 +1050,152 @@ exit 1
     std::env::remove_var("LAM_CODEX_BIN");
     assert_eq!(first.primary_used_percent, Some(21));
     assert_eq!(second.primary_used_percent, Some(64));
+}
+
+#[test]
+fn quota_prefers_auth_f_json_when_present() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-auth-f-priority");
+    let account_home = seed_codex_home(&home, "a");
+    let runtime_auth = r#"{"source":"runtime"}"#;
+    let uploaded_auth = r#"{"source":"uploaded"}"#;
+    write(&account_home.join("auth.json"), runtime_auth);
+    write(&account_home.join("auth-f.json"), uploaded_auth);
+    let codex_home_log = home.join("codex-home.log");
+    let bin = home.join("fake-codex.sh");
+    write_executable(
+        &bin,
+        r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  printf '%s' "$CODEX_HOME" > "$LAM_TEST_CODEX_HOME_LOG"
+  /usr/bin/grep '"source":"uploaded"' "$CODEX_HOME/auth.json" >/dev/null || exit 4
+  read _line1 || exit 1
+  read _line2 || exit 1
+  echo '{"id":2,"result":{"rateLimits":{"planType":"plus","primary":{"usedPercent":29,"resetsAt":1781678412},"secondary":null}}}'
+  /bin/sleep 1
+  exit 0
+fi
+exit 1
+"#,
+    );
+    let original_enable = std::env::var_os("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+    let original_bin = std::env::var_os("LAM_CODEX_BIN");
+    let original_log = std::env::var_os("LAM_TEST_CODEX_HOME_LOG");
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::set_var("LAM_CODEX_BIN", bin.to_string_lossy().to_string());
+    std::env::set_var("LAM_TEST_CODEX_HOME_LOG", &codex_home_log);
+
+    let snapshot = get_profile_quota(&home, "a", true).unwrap();
+
+    restore_env_var("LAM_TEST_CODEX_HOME_LOG", original_log);
+    restore_env_var("LAM_CODEX_BIN", original_bin);
+    restore_env_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", original_enable);
+    assert_eq!(snapshot.source, "app_server_rate_limits");
+    assert_eq!(snapshot.staleness, "fresh");
+    assert_eq!(snapshot.primary_used_percent, Some(29));
+    let staged_home = PathBuf::from(fs::read_to_string(&codex_home_log).unwrap());
+    assert_ne!(staged_home, account_home);
+    assert!(!staged_home.exists());
+    assert_eq!(
+        fs::read_to_string(account_home.join("auth.json")).unwrap(),
+        runtime_auth
+    );
+    assert_eq!(
+        fs::read_to_string(account_home.join("auth-f.json")).unwrap(),
+        uploaded_auth
+    );
+}
+
+#[test]
+fn quota_rejects_unusable_auth_f_without_runtime_fallback() {
+    for (name, auth_f, auth_f_is_dir) in [
+        ("malformed", "{", false),
+        ("non-object", "[]", false),
+        ("read-failure", "", true),
+    ] {
+        let _guard = env_lock().lock().unwrap();
+        let home = temp_home(&format!("quota-auth-f-invalid-{name}"));
+        let account_home = seed_codex_home(&home, "a");
+        write(&account_home.join("auth.json"), r#"{"source":"runtime"}"#);
+        if auth_f_is_dir {
+            fs::create_dir_all(account_home.join("auth-f.json")).unwrap();
+        } else {
+            write(&account_home.join("auth-f.json"), auth_f);
+        }
+        let launch_marker = home.join("codex-launched");
+        let bin = home.join("fake-codex.sh");
+        write_executable(
+            &bin,
+            r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  printf launched > "$LAM_TEST_LAUNCH_MARKER"
+  /usr/bin/grep '"source":"runtime"' "$CODEX_HOME/auth.json" >/dev/null || exit 4
+  echo '{"id":2,"result":{"rateLimits":{"planType":"plus","primary":{"usedPercent":1,"resetsAt":1781678412},"secondary":null}}}'
+  exit 0
+fi
+exit 1
+"#,
+        );
+        let original_enable = std::env::var_os("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+        let original_bin = std::env::var_os("LAM_CODEX_BIN");
+        let original_marker = std::env::var_os("LAM_TEST_LAUNCH_MARKER");
+        std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+        std::env::set_var("LAM_CODEX_BIN", bin.to_string_lossy().to_string());
+        std::env::set_var("LAM_TEST_LAUNCH_MARKER", &launch_marker);
+
+        let snapshot = get_profile_quota(&home, "a", true).unwrap();
+
+        restore_env_var("LAM_TEST_LAUNCH_MARKER", original_marker);
+        restore_env_var("LAM_CODEX_BIN", original_bin);
+        restore_env_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", original_enable);
+        assert_eq!(snapshot.source, "usage_unavailable");
+        assert_eq!(snapshot.staleness, "unavailable");
+        assert!(!launch_marker.exists());
+        assert!(snapshot
+            .alerts
+            .iter()
+            .any(|alert| alert.contains("app-server quota unavailable")));
+    }
+}
+
+#[test]
+fn quota_removes_staging_home_after_app_server_failure() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-auth-f-failure-cleanup");
+    let account_home = seed_codex_home(&home, "a");
+    write(&account_home.join("auth.json"), r#"{"source":"runtime"}"#);
+    write(
+        &account_home.join("auth-f.json"),
+        r#"{"source":"uploaded"}"#,
+    );
+    let codex_home_log = home.join("codex-home.log");
+    let bin = home.join("fake-codex.sh");
+    write_executable(
+        &bin,
+        r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  printf '%s' "$CODEX_HOME" > "$LAM_TEST_CODEX_HOME_LOG"
+  exit 7
+fi
+exit 1
+"#,
+    );
+    let original_enable = std::env::var_os("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+    let original_bin = std::env::var_os("LAM_CODEX_BIN");
+    let original_log = std::env::var_os("LAM_TEST_CODEX_HOME_LOG");
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::set_var("LAM_CODEX_BIN", bin.to_string_lossy().to_string());
+    std::env::set_var("LAM_TEST_CODEX_HOME_LOG", &codex_home_log);
+
+    let snapshot = get_profile_quota(&home, "a", true).unwrap();
+
+    restore_env_var("LAM_TEST_CODEX_HOME_LOG", original_log);
+    restore_env_var("LAM_CODEX_BIN", original_bin);
+    restore_env_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", original_enable);
+    assert_eq!(snapshot.source, "usage_unavailable");
+    let staged_home = PathBuf::from(fs::read_to_string(&codex_home_log).unwrap());
+    assert_ne!(staged_home, account_home);
+    assert!(!staged_home.exists());
 }
 
 #[test]
