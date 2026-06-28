@@ -220,6 +220,17 @@ export async function showUsageStats(): Promise<void> {
   return invoke<void>("show_usage_stats");
 }
 
+export interface CallRawContents {
+  request: string;
+  assistant: string;
+  toolOutput: string;
+}
+
+export async function getCallRawContents(sourceFile: string, lineNumber: number): Promise<CallRawContents> {
+  if (!inTauri()) return { request: "", assistant: "", toolOutput: "" };
+  return invoke<CallRawContents>("get_call_raw_contents", { sourceFile, lineNumber });
+}
+
 export async function takePendingRoute(): Promise<string | null> {
   if (!inTauri()) return null;
   return invoke<string | null>("take_pending_route");

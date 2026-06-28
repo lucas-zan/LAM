@@ -291,7 +291,6 @@ struct UsageRate {
 
 struct UsageCostEstimate {
     estimated_cost_usd: f64,
-    priced_tokens: i64,
     pricing_model: String,
     pricing_estimated: bool,
 }
@@ -1652,7 +1651,9 @@ fn query_top_threads(
                 SUM(output_tokens), SUM(reasoning_output_tokens), MAX(event_timestamp),
                 MAX(is_archived), MAX(context_window_percent),
                 SUM(CASE WHEN is_archived != 0 THEN 1 ELSE 0 END),
-                MAX(call_initiator)
+                MAX(call_initiator),
+                COALESCE(SUM(estimated_cost_usd), 0.0),
+                COALESCE(SUM(usage_credits), 0.0)
              FROM usage_events
              WHERE (?1 OR is_archived = 0)
                AND (?2 IS NULL OR event_timestamp >= ?2)
@@ -1712,8 +1713,8 @@ fn query_top_threads(
                     call_initiator_summary: row.get(15)?,
                     archived_call_count: row.get::<_, i64>(14)? as usize,
                     updated_at: None,
-                    estimated_cost_usd: 0.0,
-                    usage_credits: 0.0,
+                    estimated_cost_usd: row.get(16)?,
+                    usage_credits: row.get(17)?,
                     cache_ratio,
                     is_archived: row.get::<_, i64>(12)? != 0,
                 })
@@ -1801,9 +1802,9 @@ fn read_call_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UsageCallRow> {
 struct ModelTokenTotals {
     model: Option<String>,
     input_tokens: i64,
-    cached_input_tokens: i64,
     output_tokens: i64,
     total_tokens: i64,
+    estimated_cost_usd: f64,
 }
 
 fn model_totals(
@@ -1813,8 +1814,9 @@ fn model_totals(
 ) -> Result<Vec<ModelTokenTotals>> {
     let mut stmt = conn
         .prepare(
-            "SELECT model, COALESCE(SUM(input_tokens),0), COALESCE(SUM(cached_input_tokens),0),
-                COALESCE(SUM(output_tokens),0), COALESCE(SUM(total_tokens),0)
+            "SELECT model, COALESCE(SUM(input_tokens),0),
+                COALESCE(SUM(output_tokens),0), COALESCE(SUM(total_tokens),0),
+                COALESCE(SUM(estimated_cost_usd),0.0)
              FROM usage_events
              WHERE (?1 OR is_archived = 0)
                AND (?2 IS NULL OR event_timestamp >= ?2)
@@ -1833,9 +1835,9 @@ fn model_totals(
                 Ok(ModelTokenTotals {
                     model: row.get(0)?,
                     input_tokens: row.get(1)?,
-                    cached_input_tokens: row.get(2)?,
-                    output_tokens: row.get(3)?,
-                    total_tokens: row.get(4)?,
+                    output_tokens: row.get(2)?,
+                    total_tokens: row.get(3)?,
+                    estimated_cost_usd: row.get(4)?,
                 })
             },
         )
@@ -1851,14 +1853,14 @@ fn estimate_summary_cost(totals: &[ModelTokenTotals]) -> (f64, UsagePricingCover
     let mut unpriced_tokens = 0;
     let mut unknown_models = Vec::new();
     for item in totals {
-        if let Some(estimate) = estimate_cost(
-            item.model.as_deref(),
-            item.input_tokens,
-            item.cached_input_tokens,
-            item.output_tokens,
-        ) {
-            cost += estimate.estimated_cost_usd;
-            priced_tokens += estimate.priced_tokens;
+        if item
+            .model
+            .as_deref()
+            .and_then(|m| rate_for_model(m, 0))
+            .is_some()
+        {
+            cost += item.estimated_cost_usd;
+            priced_tokens += item.input_tokens + item.output_tokens;
         } else {
             unpriced_tokens += item.total_tokens;
             unknown_models.push(item.model.clone().unwrap_or_else(|| "unknown".to_string()));
@@ -1888,7 +1890,7 @@ fn estimate_cost(
     cached_input_tokens: i64,
     output_tokens: i64,
 ) -> Option<UsageCostEstimate> {
-    let rate = rate_for_model(model?)?;
+    let rate = rate_for_model(model?, input_tokens)?;
     let uncached = (input_tokens - cached_input_tokens).max(0);
     let cost = (uncached as f64 * rate.input_per_million
         + cached_input_tokens as f64 * rate.cached_input_per_million
@@ -1896,13 +1898,12 @@ fn estimate_cost(
         / 1_000_000.0;
     Some(UsageCostEstimate {
         estimated_cost_usd: cost,
-        priced_tokens: input_tokens + output_tokens,
         pricing_model: rate.pricing_model.to_string(),
         pricing_estimated: rate.estimated,
     })
 }
 
-fn rate_for_model(model: &str) -> Option<UsageRate> {
+fn rate_for_model(model: &str, input_tokens: i64) -> Option<UsageRate> {
     let normalized = model.to_ascii_lowercase();
     let estimated = normalized == "codex-auto-review";
     let model = if estimated {
@@ -1910,48 +1911,73 @@ fn rate_for_model(model: &str) -> Option<UsageRate> {
     } else {
         normalized.as_str()
     };
+
+    // Short context is <= 128k (128,000) tokens, Long context is > 128k
+    let is_long_context = input_tokens > 128_000;
+
     match model {
         "gpt-5.5" => Some(UsageRate {
             pricing_model: "gpt-5.5",
             estimated,
-            input_per_million: 125.0,
-            cached_input_per_million: 12.5,
-            output_per_million: 750.0,
+            input_per_million: if is_long_context { 10.0 } else { 5.0 },
+            cached_input_per_million: if is_long_context { 1.0 } else { 0.5 },
+            output_per_million: if is_long_context { 45.0 } else { 30.0 },
+        }),
+        "gpt-5.5-pro" => Some(UsageRate {
+            pricing_model: "gpt-5.5-pro",
+            estimated,
+            input_per_million: if is_long_context { 60.0 } else { 30.0 },
+            cached_input_per_million: if is_long_context { 60.0 } else { 30.0 },
+            output_per_million: if is_long_context { 270.0 } else { 180.0 },
         }),
         "gpt-5.4" => Some(UsageRate {
             pricing_model: "gpt-5.4",
             estimated,
-            input_per_million: 62.5,
-            cached_input_per_million: 6.25,
-            output_per_million: 375.0,
+            input_per_million: if is_long_context { 5.0 } else { 2.5 },
+            cached_input_per_million: if is_long_context { 0.5 } else { 0.25 },
+            output_per_million: if is_long_context { 22.5 } else { 15.0 },
         }),
         "gpt-5.4-mini" => Some(UsageRate {
             pricing_model: "gpt-5.4-mini",
             estimated,
-            input_per_million: 18.75,
-            cached_input_per_million: 1.875,
-            output_per_million: 113.0,
+            input_per_million: 0.75,
+            cached_input_per_million: 0.075,
+            output_per_million: 4.50,
+        }),
+        "gpt-5.4-nano" => Some(UsageRate {
+            pricing_model: "gpt-5.4-nano",
+            estimated,
+            input_per_million: 0.20,
+            cached_input_per_million: 0.02,
+            output_per_million: 1.25,
+        }),
+        "gpt-5.4-pro" => Some(UsageRate {
+            pricing_model: "gpt-5.4-pro",
+            estimated,
+            input_per_million: if is_long_context { 60.0 } else { 30.0 },
+            cached_input_per_million: if is_long_context { 60.0 } else { 30.0 },
+            output_per_million: if is_long_context { 270.0 } else { 180.0 },
         }),
         "gpt-5.3-codex" => Some(UsageRate {
             pricing_model: "gpt-5.3-codex",
             estimated,
-            input_per_million: 43.75,
-            cached_input_per_million: 4.375,
-            output_per_million: 350.0,
+            input_per_million: 4.375,
+            cached_input_per_million: 0.4375,
+            output_per_million: 35.0,
         }),
         "gpt-5.2" => Some(UsageRate {
             pricing_model: "gpt-5.2",
             estimated,
-            input_per_million: 43.75,
-            cached_input_per_million: 4.375,
-            output_per_million: 350.0,
+            input_per_million: 4.375,
+            cached_input_per_million: 0.4375,
+            output_per_million: 35.0,
         }),
         "gpt-5" => Some(UsageRate {
             pricing_model: "gpt-5",
             estimated,
-            input_per_million: 43.75,
-            cached_input_per_million: 4.375,
-            output_per_million: 350.0,
+            input_per_million: 4.375,
+            cached_input_per_million: 0.4375,
+            output_per_million: 35.0,
         }),
         _ => None,
     }
@@ -1965,8 +1991,9 @@ fn estimate_thread_cost(
 ) -> Result<f64> {
     let mut stmt = conn
         .prepare(
-            "SELECT model, COALESCE(SUM(input_tokens),0), COALESCE(SUM(cached_input_tokens),0),
-                COALESCE(SUM(output_tokens),0), COALESCE(SUM(total_tokens),0)
+            "SELECT model, COALESCE(SUM(input_tokens),0),
+                COALESCE(SUM(output_tokens),0), COALESCE(SUM(total_tokens),0),
+                COALESCE(SUM(estimated_cost_usd),0.0)
              FROM usage_events
              WHERE (?1 OR is_archived = 0)
                AND (?2 IS NULL OR event_timestamp >= ?2)
@@ -1987,9 +2014,9 @@ fn estimate_thread_cost(
                 Ok(ModelTokenTotals {
                     model: row.get(0)?,
                     input_tokens: row.get(1)?,
-                    cached_input_tokens: row.get(2)?,
-                    output_tokens: row.get(3)?,
-                    total_tokens: row.get(4)?,
+                    output_tokens: row.get(2)?,
+                    total_tokens: row.get(3)?,
+                    estimated_cost_usd: row.get(4)?,
                 })
             },
         )

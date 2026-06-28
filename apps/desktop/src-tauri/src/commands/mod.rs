@@ -367,6 +367,127 @@ pub async fn compact_usage_db() -> Result<(), AppError> {
     run_blocking(move || core_compact_usage_db(&home)).await
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallRawContents {
+    pub request: String,
+    pub assistant: String,
+    pub tool_output: String,
+}
+
+#[tauri::command]
+pub async fn get_call_raw_contents(
+    source_file: String,
+    line_number: i64,
+) -> Result<CallRawContents, AppError> {
+    run_blocking(move || {
+        let file = std::fs::File::open(&source_file)
+            .map_err(|err| AppError::new("FILE_OPEN_FAILED", err.to_string()))?;
+        call_raw_contents_from_reader(std::io::BufReader::new(file), line_number)
+    })
+    .await
+}
+
+fn call_raw_contents_from_reader<R: std::io::BufRead>(
+    reader: R,
+    line_number: i64,
+) -> Result<CallRawContents, AppError> {
+    let mut request = Vec::new();
+    let mut assistant = Vec::new();
+    let mut tool_output = Vec::new();
+
+    for (index, line_res) in reader.lines().enumerate() {
+        let current_line = (index + 1) as i64;
+        let line = line_res.map_err(|err| AppError::new("FILE_READ_FAILED", err.to_string()))?;
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let entry_type = value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let payload = value.get("payload").unwrap_or(&serde_json::Value::Null);
+        let payload_type = payload
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+
+        if entry_type == "turn_context"
+            || (entry_type == "event_msg" && payload_type == "token_count")
+        {
+            if entry_type == "event_msg"
+                && payload_type == "token_count"
+                && current_line == line_number
+            {
+                return Ok(CallRawContents {
+                    request: request.join("\n\n"),
+                    assistant: assistant.join("\n\n"),
+                    tool_output: tool_output.join("\n\n"),
+                });
+            }
+            request.clear();
+            assistant.clear();
+            tool_output.clear();
+            continue;
+        }
+
+        if entry_type == "response_item" {
+            match payload_type {
+                "message" => {
+                    let text = content_text(payload);
+                    let role = payload
+                        .get("role")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    if !text.is_empty() && role == "user" {
+                        request.push(text);
+                    } else if !text.is_empty() && role == "assistant" {
+                        assistant.push(text);
+                    }
+                }
+                "function_call" => {
+                    let name = payload
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("tool");
+                    let args = payload
+                        .get("arguments")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    tool_output.push(format!("$ {name}\n{args}"));
+                }
+                "function_call_output" => {
+                    if let Some(output) = payload.get("output").and_then(serde_json::Value::as_str)
+                    {
+                        tool_output.push(output.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(CallRawContents {
+        request: String::new(),
+        assistant: String::new(),
+        tool_output: String::new(),
+    })
+}
+
+fn content_text(payload: &serde_json::Value) -> String {
+    payload
+        .get("content")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub fn sync_tray_quota(app: tauri::AppHandle) -> Result<(), AppError> {
     crate::tray::refresh_tray_menu_background(app, false);
@@ -579,9 +700,11 @@ pub async fn quit_app(app_handle: tauri::AppHandle) -> Result<(), AppError> {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::{
-        codex_bundle_path_matches, parse_window_bounds, CODEX_BUNDLE_PATH_PREFIX,
-        CODEX_BUNDLE_PROCESS_PATTERN,
+        call_raw_contents_from_reader, codex_bundle_path_matches, parse_window_bounds,
+        CODEX_BUNDLE_PATH_PREFIX, CODEX_BUNDLE_PROCESS_PATTERN,
     };
+    use serde_json::json;
+    use std::io::Cursor;
 
     #[test]
     fn parses_osascript_window_bounds() {
@@ -616,5 +739,24 @@ mod tests {
         assert!(!codex_bundle_path_matches(
             "/Applications/CodexXapp/Contents/MacOS/Codex"
         ));
+    }
+
+    #[test]
+    fn call_raw_contents_splits_request_assistant_and_tool_output() {
+        let body = [
+            json!({"type":"turn_context"}).to_string(),
+            json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"user request"}]}}).to_string(),
+            json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"assistant reply"}]}}).to_string(),
+            json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"date\"}"}}).to_string(),
+            json!({"type":"response_item","payload":{"type":"function_call_output","output":"tool result"}}).to_string(),
+            json!({"type":"event_msg","payload":{"type":"token_count"}}).to_string(),
+        ]
+        .join("\n");
+
+        let raw = call_raw_contents_from_reader(Cursor::new(body), 6).unwrap();
+        assert_eq!(raw.request, "user request");
+        assert_eq!(raw.assistant, "assistant reply");
+        assert!(raw.tool_output.contains("exec_command"));
+        assert!(raw.tool_output.contains("tool result"));
     }
 }

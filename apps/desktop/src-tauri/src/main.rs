@@ -69,6 +69,7 @@ fn main() {
             commands::get_usage_dashboard,
             commands::reset_usage_index,
             commands::compact_usage_db,
+            commands::get_call_raw_contents,
             commands::sync_tray_quota,
             commands::show_main_window,
             commands::show_usage_stats,

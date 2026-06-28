@@ -3,9 +3,10 @@ import { IconRefresh, IconUsage } from '../components/icons';
 import { UIButton } from '../components/ui-button';
 import type { UsageCallRow, UsageDashboard, UsageWindow, UsageWindowPreset } from '../lib/types';
 import { lowCacheThreads, sortThreads, sortedThreadCalls } from '../lib/usage-dashboard-analysis';
-import { formatCompactNumber, formatPercent, formatTimestamp } from '../lib/usage-dashboard-format';
+import { formatCompactNumber, formatPercent, formatTimestamp, formatNumber } from '../lib/usage-dashboard-format';
 import { summarizeUsageDiagnostics } from '../lib/usage-diagnostics';
 import { formatCost } from '../lib/usage-pricing';
+import { getCallRawContents, type CallRawContents } from '../lib/api';
 
 type UsageTab = 'insights' | 'calls' | 'threads' | 'diagnostics';
 type LoadLimit = 5000 | 10000 | 20000 | 'all';
@@ -127,6 +128,9 @@ export function UsagePage({
   const [sortKey, setSortKey] = useState('time');
   const [loadLimit, setLoadLimit] = useState<LoadLimit>(5000);
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
+  const [activeDetailCall, setActiveDetailCall] = useState<UsageCallRow | null>(null);
+  const [rawContents, setRawContents] = useState<CallRawContents | null>(null);
+  const [isLoadingRaw, setIsLoadingRaw] = useState(false);
 
   const calls = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -330,7 +334,7 @@ export function UsagePage({
               <table className="usageTable">
                 <thead>
                   <tr>
-                    <th>Thread</th>
+                    <th className="usageColThread">Thread</th>
                     <th>Calls</th>
                     <th>Total</th>
                     <th>Cache</th>
@@ -342,7 +346,7 @@ export function UsagePage({
                     .slice(0, 3)
                     .map((thread) => (
                       <tr key={thread.threadKey}>
-                        <td>{thread.threadLabel}</td>
+                        <td className="usageColThread" title={thread.threadLabel}>{thread.threadLabel}</td>
                         <td>{thread.callCount}</td>
                         <td>{formatCompactNumber(thread.totalTokens)}</td>
                         <td>{renderCacheRatio(thread.cacheRatio)}</td>
@@ -394,16 +398,21 @@ export function UsagePage({
                     'Reasoning Output',
                     'Cost',
                     'Cache',
-                  ].map((label) => (
-                    <th key={label}>{label}</th>
-                  ))}
+                    'Actions',
+                  ].map((label) => {
+                    let className = '';
+                    if (label === 'Time') className = 'usageColTime';
+                    if (label === 'Thread') className = 'usageColThread';
+                    if (label === 'Actions') className = 'usageColActions';
+                    return <th key={label} className={className}>{label}</th>;
+                  })}
                 </tr>
               </thead>
               <tbody>
                 {calls.map((call) => (
                   <tr key={call.recordId} onClick={() => setSelectedRecordId(call.recordId)}>
-                    <td>{formatTimestamp(call.eventTimestamp)}</td>
-                    <td>{threadName(call)}</td>
+                    <td className="usageColTime">{formatTimestamp(call.eventTimestamp)}</td>
+                    <td className="usageColThread" title={threadName(call)}>{threadName(call)}</td>
                     <td>{durationLabel(call)}</td>
                     <td>{call.previousRecordId ? 'linked' : 'none'}</td>
                     <td>{renderInitiator(call.callInitiator)}</td>
@@ -416,6 +425,28 @@ export function UsagePage({
                     <td>{formatCompactNumber(call.reasoningOutputTokens)}</td>
                     <td>{formatCost(call.estimatedCostUsd)}</td>
                     <td>{renderCacheRatio(call.cacheRatio)}</td>
+                    <td className="usageColActions">
+                      <button
+                        className="usageBtnDots"
+                        title="View details"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          setActiveDetailCall(call);
+                          setRawContents(null);
+                          setIsLoadingRaw(true);
+                          try {
+                            const data = await getCallRawContents(call.sourceFile, call.lineNumber);
+                            setRawContents(data);
+                          } catch (err) {
+                            console.error('Failed to fetch raw call contents:', err);
+                          } finally {
+                            setIsLoadingRaw(false);
+                          }
+                        }}
+                      >
+                        •••
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -448,12 +479,12 @@ export function UsagePage({
           <table className="usageTable">
             <thead>
               <tr>
-                <th>Thread</th>
+                <th className="usageColThread">Thread</th>
                 <th>Calls</th>
                 <th>Sessions</th>
                 <th>Total</th>
                 <th>Cache</th>
-                <th>Latest</th>
+                <th className="usageColTime">Latest</th>
                 <th>Recommendation</th>
                 <th>Cost</th>
               </tr>
@@ -461,12 +492,12 @@ export function UsagePage({
             <tbody>
               {threads.map((thread) => (
                 <tr key={thread.threadKey}>
-                  <td>{thread.threadLabel}</td>
+                  <td className="usageColThread" title={thread.threadLabel}>{thread.threadLabel}</td>
                   <td>{thread.callCount}</td>
                   <td>{thread.sessionCount ?? 1}</td>
                   <td>{formatCompactNumber(thread.totalTokens)}</td>
                   <td>{renderCacheRatio(thread.cacheRatio)}</td>
-                  <td>{formatTimestamp(thread.latestEventTimestamp)}</td>
+                  <td className="usageColTime">{formatTimestamp(thread.latestEventTimestamp)}</td>
                   <td>{thread.primaryRecommendation ?? 'None'}</td>
                   <td>{formatCost(thread.estimatedCostUsd)}</td>
                 </tr>
@@ -513,6 +544,129 @@ export function UsagePage({
           </section>
         </div>
       ) : null}
+
+      {activeDetailCall && (
+        <div className="usageModalOverlay" onClick={() => setActiveDetailCall(null)}>
+          <div className="usageModal" onClick={(e) => e.stopPropagation()}>
+            <div className="usageModalHeader">
+              <h3>Call Details</h3>
+              <button className="usageModalClose" onClick={() => setActiveDetailCall(null)}>&times;</button>
+            </div>
+            <div className="usageModalBody">
+              <div className="usageModalGrid">
+                <div className="usageModalSection">
+                  <h4>Metadata</h4>
+                  <dl>
+                    <dt>Record ID</dt>
+                    <dd className="mono">{activeDetailCall.recordId}</dd>
+                    <dt>Session ID</dt>
+                    <dd className="mono">{activeDetailCall.sessionId}</dd>
+                    <dt>Timestamp</dt>
+                    <dd>{activeDetailCall.eventTimestamp}</dd>
+                    <dt>Source Location</dt>
+                    <dd className="mono">{activeDetailCall.sourceFile}:{activeDetailCall.lineNumber}</dd>
+                    <dt>CWD</dt>
+                    <dd className="mono">{activeDetailCall.cwd ?? '-'}</dd>
+                  </dl>
+                </div>
+                
+                <div className="usageModalSection">
+                  <h4>Model & Cost</h4>
+                  <dl>
+                    <dt>Model</dt>
+                    <dd className="mono">{activeDetailCall.model ?? '-'}</dd>
+                    <dt>Effort</dt>
+                    <dd>{activeDetailCall.effort ?? '-'}</dd>
+                    <dt>Pricing Model</dt>
+                    <dd>{activeDetailCall.pricingModel ?? 'unknown'} ({activeDetailCall.pricingConfidence ?? 'unknown'})</dd>
+                    <dt>Estimated Cost</dt>
+                    <dd className="cost-val">{formatCost(activeDetailCall.estimatedCostUsd)}</dd>
+                    <dt>Context Window</dt>
+                    <dd>{activeDetailCall.modelContextWindow ? `${formatNumber(activeDetailCall.modelContextWindow)} tokens` : '-'}</dd>
+                    <dt>Context Window %</dt>
+                    <dd>{activeDetailCall.contextWindowPercent ? formatPercent(activeDetailCall.contextWindowPercent) : '-'}</dd>
+                  </dl>
+                </div>
+
+                <div className="usageModalSection">
+                  <h4>Tokens</h4>
+                  <dl>
+                    <dt>Total Tokens</dt>
+                    <dd><strong>{formatNumber(activeDetailCall.totalTokens)}</strong></dd>
+                    <dt>Input Tokens</dt>
+                    <dd>{formatNumber(activeDetailCall.inputTokens)}</dd>
+                    <dt>Cached Input</dt>
+                    <dd>{formatNumber(activeDetailCall.cachedInputTokens)}</dd>
+                    <dt>Uncached Input</dt>
+                    <dd>{formatNumber(activeDetailCall.uncachedInputTokens)}</dd>
+                    <dt>Output Tokens</dt>
+                    <dd>{formatNumber(activeDetailCall.outputTokens)}</dd>
+                    <dt>Reasoning Output</dt>
+                    <dd>{formatNumber(activeDetailCall.reasoningOutputTokens)}</dd>
+                  </dl>
+                </div>
+
+                <div className="usageModalSection">
+                  <h4>Initiator & Context</h4>
+                  <dl>
+                    <dt>Initiator</dt>
+                    <dd>{activeDetailCall.callInitiator ?? '-'}</dd>
+                    <dt>Initiator Reason</dt>
+                    <dd>{activeDetailCall.callInitiatorReason ?? '-'}</dd>
+                    <dt>Confidence</dt>
+                    <dd>{activeDetailCall.callInitiatorConfidence ?? '-'}</dd>
+                    <dt>Agent Nickname</dt>
+                    <dd>{activeDetailCall.agentNickname ?? '-'}</dd>
+                    <dt>Agent Role</dt>
+                    <dd>{activeDetailCall.agentRole ?? '-'}</dd>
+                    <dt>Parent Session ID</dt>
+                    <dd className="mono">{activeDetailCall.parentSessionId ?? '-'}</dd>
+                  </dl>
+                </div>
+
+                <div className="usageModalFullSection">
+                  <h4>Request content</h4>
+                  <div className="usageRawContentBox">
+                    {isLoadingRaw ? (
+                      <div className="usageContentLoading">Loading request details...</div>
+                    ) : rawContents?.request ? (
+                      <pre className="usageRawPre">{rawContents.request}</pre>
+                    ) : (
+                      <div className="usageContentEmpty">No request content found in this call window.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="usageModalFullSection">
+                  <h4>Assistant output</h4>
+                  <div className="usageRawContentBox">
+                    {isLoadingRaw ? (
+                      <div className="usageContentLoading">Loading assistant output...</div>
+                    ) : rawContents?.assistant ? (
+                      <pre className="usageRawPre">{rawContents.assistant}</pre>
+                    ) : (
+                      <div className="usageContentEmpty">No assistant output found in this call window.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="usageModalFullSection">
+                  <h4>Tool output</h4>
+                  <div className="usageRawContentBox">
+                    {isLoadingRaw ? (
+                      <div className="usageContentLoading">Loading tool output...</div>
+                    ) : rawContents?.toolOutput ? (
+                      <pre className="usageRawPre">{rawContents.toolOutput}</pre>
+                    ) : (
+                      <div className="usageContentEmpty">No tool output found in this call window.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
     </section>
   );

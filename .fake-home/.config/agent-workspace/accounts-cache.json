@@ -1,6 +1,6 @@
 {
   "homeRoot": "/Users/micro/Documents/Code/Rust/LAM/apps/desktop/src-tauri/../../../.fake-home",
-  "fetchedAt": 1782530111,
+  "fetchedAt": 1782627156,
   "accounts": [
     {
       "id": "a",
@@ -11,7 +11,7 @@
       "hasConfig": true,
       "hasHistory": true,
       "sessionCount": 3,
-      "latestSessionModifiedAt": 1782264332,
+      "latestSessionModifiedAt": 1782550628,
       "managed": true,
       "isRelay": false,
       "relaySource": null,
@@ -20,6 +20,7 @@
       "model": "gpt-5-codex",
       "authMode": "oauth",
       "isActiveAuth": false,
+      "hasPersonalAccessToken": false,
       "renewalDate": null,
       "note": null
     },
@@ -32,7 +33,7 @@
       "hasConfig": true,
       "hasHistory": true,
       "sessionCount": 1,
-      "latestSessionModifiedAt": 1782264332,
+      "latestSessionModifiedAt": 1782550628,
       "managed": true,
       "isRelay": false,
       "relaySource": null,
@@ -41,6 +42,7 @@
       "model": "gpt-5.4",
       "authMode": "oauth",
       "isActiveAuth": false,
+      "hasPersonalAccessToken": false,
       "renewalDate": null,
       "note": null
     },
@@ -53,7 +55,7 @@
       "hasConfig": false,
       "hasHistory": false,
       "sessionCount": 1,
-      "latestSessionModifiedAt": 1782264332,
+      "latestSessionModifiedAt": 1782550628,
       "managed": true,
       "isRelay": true,
       "relaySource": "a",
@@ -62,6 +64,7 @@
       "model": null,
       "authMode": null,
       "isActiveAuth": false,
+      "hasPersonalAccessToken": false,
       "renewalDate": null,
       "note": null
     },
@@ -74,7 +77,7 @@
       "hasConfig": true,
       "hasHistory": true,
       "sessionCount": 1,
-      "latestSessionModifiedAt": 1782264332,
+      "latestSessionModifiedAt": 1782550628,
       "managed": false,
       "isRelay": false,
       "relaySource": null,
@@ -83,6 +86,7 @@
       "model": "gpt-5-codex",
       "authMode": "oauth",
       "isActiveAuth": false,
+      "hasPersonalAccessToken": false,
       "renewalDate": null,
       "note": null
     }

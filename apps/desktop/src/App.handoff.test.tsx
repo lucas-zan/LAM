@@ -28,6 +28,7 @@ vi.mock('./lib/api', () => ({
   refreshUsageIndex: vi.fn(),
   resetUsageIndex: vi.fn(),
   compactUsageDb: vi.fn(),
+  getCallRawContents: vi.fn(),
   takePendingRoute: vi.fn(),
   syncTrayQuota: vi.fn(),
   relayResumeSession: vi.fn(),
@@ -270,6 +271,7 @@ beforeEach(() => {
   });
   vi.mocked(api.resetUsageIndex).mockResolvedValue();
   vi.mocked(api.compactUsageDb).mockResolvedValue();
+  vi.mocked(api.getCallRawContents).mockResolvedValue({ request: '', assistant: '', toolOutput: '' });
   vi.mocked(api.takePendingRoute).mockResolvedValue(null);
   vi.mocked(api.getProfileQuota).mockResolvedValue({
     profileId: 'main',
