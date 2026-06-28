@@ -2405,6 +2405,24 @@ html[data-tray-popover='1'] #root {
   font-size: 22px;
 }
 
+.usageDashboardTitle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.usageDashboardLogo {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--primary);
+}
+
 .usageDashboardHeader p {
   color: var(--muted);
   font-size: 13px;
@@ -2505,11 +2523,6 @@ html[data-tray-popover='1'] #root {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
-}
-
-.usageLoadMore {
-  display: flex;
-  justify-content: center;
 }
 
 .usageEmptyState {

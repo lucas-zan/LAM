@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { IconRefresh } from '../components/icons';
+import { IconRefresh, IconUsage } from '../components/icons';
 import { UIButton } from '../components/ui-button';
 import type { UsageCallRow, UsageDashboard, UsageWindow, UsageWindowPreset } from '../lib/types';
 import { lowCacheThreads, sortThreads, sortedThreadCalls } from '../lib/usage-dashboard-analysis';
@@ -101,6 +101,10 @@ export function UsagePage({
   }, [summary?.recentCalls, search, model, effort, pricingConfidence, sortKey, loadLimit]);
 
   const selectedCall = calls.find((call) => call.recordId === selectedRecordId) ?? calls[0] ?? null;
+  const threads = useMemo(() => {
+    const rows = sortThreads(summary?.topThreads ?? [], 'total', 'desc');
+    return loadLimit === 'all' ? rows : rows.slice(0, loadLimit);
+  }, [summary?.topThreads, loadLimit]);
   const diagnostics = summary?.diagnostics ?? {
     parserDiagnostics: {},
     skippedEvents: 0,
@@ -122,12 +126,17 @@ export function UsagePage({
   return (
     <section className="usageDashboardPage">
       <header className="usageDashboardHeader">
-        <div>
-          <h2>Usage</h2>
+        <div className="usageDashboardTitle">
+          <span className="usageDashboardLogo" aria-hidden>
+            <IconUsage size={20} />
+          </span>
+          <div>
+            <h2>Usage</h2>
           <p>
             Updated {formatTimestamp(summary?.refreshedAt, 'never')} · {summary?.scannedFiles ?? 0} files ·{' '}
             {summary?.totalCalls ?? 0} calls
           </p>
+          </div>
         </div>
         <div className="usageDashboardControls">
           <label>
@@ -410,7 +419,7 @@ export function UsagePage({
               </tr>
             </thead>
             <tbody>
-              {sortThreads(summary?.topThreads ?? [], 'total', 'desc').map((thread) => (
+              {threads.map((thread) => (
                 <tr key={thread.threadKey}>
                   <td>{thread.threadLabel}</td>
                   <td>{thread.callCount}</td>
@@ -465,15 +474,6 @@ export function UsagePage({
         </div>
       ) : null}
 
-      <div className="usageLoadMore">
-        <UIButton
-          type="button"
-          size="sm"
-          onClick={() => setLoadLimit((current) => (current === 5000 ? 10000 : current === 10000 ? 20000 : 'all'))}
-        >
-          Load more
-        </UIButton>
-      </div>
     </section>
   );
 }

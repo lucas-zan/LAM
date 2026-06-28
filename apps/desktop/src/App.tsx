@@ -220,15 +220,20 @@ export function App() {
   useEffect(() => {
     if (!api.inTauri()) return;
     let unlisten: (() => void) | undefined;
-    void api.takePendingRoute().then((route) => {
+    const openPendingRoute = () => void api.takePendingRoute().then((route) => {
       if (route === 'usage') setRoute('usage');
     });
+    openPendingRoute();
+    window.addEventListener('focus', openPendingRoute);
     void listen<string>('lam:navigate', (event) => {
       if (event.payload === 'usage') setRoute('usage');
     }).then((fn) => {
       unlisten = fn;
     });
-    return () => unlisten?.();
+    return () => {
+      window.removeEventListener('focus', openPendingRoute);
+      unlisten?.();
+    };
   }, [setRoute]);
 
   const setUsagePreset = useCallback((preset: UsageWindowPreset) => {

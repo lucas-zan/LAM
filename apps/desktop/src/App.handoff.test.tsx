@@ -640,6 +640,18 @@ describe('App handoff modal', () => {
     expect(api.takePendingRoute).toHaveBeenCalled();
   });
 
+  it('opens the Usage page from tray Stats when the existing window is focused', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.takePendingRoute).mockResolvedValueOnce(null).mockResolvedValueOnce('usage');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+    await screen.findByText('codex-c');
+    window.dispatchEvent(new Event('focus'));
+
+    expect(await screen.findByText('Visible Calls')).not.toBeNull();
+  });
+
   it('renders a Usage empty state in OAuth mode', async () => {
     vi.mocked(api.listSessions).mockResolvedValue([]);
 
