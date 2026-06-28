@@ -28,6 +28,7 @@ vi.mock('./lib/api', () => ({
   refreshUsageIndex: vi.fn(),
   resetUsageIndex: vi.fn(),
   compactUsageDb: vi.fn(),
+  takePendingRoute: vi.fn(),
   syncTrayQuota: vi.fn(),
   relayResumeSession: vi.fn(),
   openTerminalWithCommand: vi.fn(),
@@ -269,6 +270,7 @@ beforeEach(() => {
   });
   vi.mocked(api.resetUsageIndex).mockResolvedValue();
   vi.mocked(api.compactUsageDb).mockResolvedValue();
+  vi.mocked(api.takePendingRoute).mockResolvedValue(null);
   vi.mocked(api.getProfileQuota).mockResolvedValue({
     profileId: 'main',
     source: 'usage_unavailable',
@@ -624,6 +626,18 @@ describe('App handoff modal', () => {
     expect(screen.queryByText('Usage observed')).toBeNull();
     expect(document.querySelector('.modal')).toBeNull();
     expect(api.getUsageDashboard).toHaveBeenCalled();
+  });
+
+  it('opens the Usage page from a pending tray Stats route', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.takePendingRoute).mockResolvedValue('usage');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+
+    expect(await screen.findByText('Visible Calls')).not.toBeNull();
+    expect(await screen.findByText('Estimated Cost')).not.toBeNull();
+    expect(api.takePendingRoute).toHaveBeenCalled();
   });
 
   it('renders a Usage empty state in OAuth mode', async () => {

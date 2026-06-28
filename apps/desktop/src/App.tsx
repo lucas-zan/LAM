@@ -220,6 +220,9 @@ export function App() {
   useEffect(() => {
     if (!api.inTauri()) return;
     let unlisten: (() => void) | undefined;
+    void api.takePendingRoute().then((route) => {
+      if (route === 'usage') setRoute('usage');
+    });
     void listen<string>('lam:navigate', (event) => {
       if (event.payload === 'usage') setRoute('usage');
     }).then((fn) => {

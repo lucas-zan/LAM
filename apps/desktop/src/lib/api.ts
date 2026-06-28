@@ -220,6 +220,11 @@ export async function showUsageStats(): Promise<void> {
   return invoke<void>("show_usage_stats");
 }
 
+export async function takePendingRoute(): Promise<string | null> {
+  if (!inTauri()) return null;
+  return invoke<string | null>("take_pending_route");
+}
+
 export async function setQuotaPopoverOpacity(percent: number): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>("set_quota_popover_opacity", { percent });

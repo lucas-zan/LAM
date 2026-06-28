@@ -35,7 +35,10 @@ use localagentmanager_core::{
     UpdateProviderRequest, UploadedCredentials, UsageDashboard, UsageDashboardRequest,
     UsageQuotaSnapshot, UsageRefreshResult, UsageSummary, UsageSummaryRequest,
 };
+use std::sync::Mutex;
 use tauri::Emitter;
+
+static PENDING_ROUTE: Mutex<Option<String>> = Mutex::new(None);
 
 async fn run_blocking<T, F>(task: F) -> Result<T, AppError>
 where
@@ -379,9 +382,21 @@ pub fn show_main_window(app: tauri::AppHandle) -> Result<(), AppError> {
 #[tauri::command]
 pub fn show_usage_stats(app: tauri::AppHandle) -> Result<(), AppError> {
     crate::tray::show_main_window(&app);
+    let mut route = PENDING_ROUTE
+        .lock()
+        .map_err(|_| AppError::new("PENDING_ROUTE_LOCK", "pending route lock is poisoned"))?;
+    *route = Some("usage".to_string());
     app.emit("lam:navigate", "usage")
         .map_err(|err| AppError::new("NAVIGATE_USAGE_FAILED", err.to_string()))?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn take_pending_route() -> Result<Option<String>, AppError> {
+    let mut route = PENDING_ROUTE
+        .lock()
+        .map_err(|_| AppError::new("PENDING_ROUTE_LOCK", "pending route lock is poisoned"))?;
+    Ok(route.take())
 }
 
 #[tauri::command]

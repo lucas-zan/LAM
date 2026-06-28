@@ -72,6 +72,7 @@ fn main() {
             commands::sync_tray_quota,
             commands::show_main_window,
             commands::show_usage_stats,
+            commands::take_pending_route,
             commands::set_quota_popover_opacity,
             commands::hide_quota_popover,
             commands::list_providers,
