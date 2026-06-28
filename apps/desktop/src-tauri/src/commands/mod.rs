@@ -513,9 +513,6 @@ pub async fn restart_codex() -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn quit_app(app_handle: tauri::AppHandle) -> Result<(), AppError> {
-    #[cfg(target_os = "macos")]
-    run_blocking(stop_codex_app_processes).await?;
-
     app_handle.exit(0);
     Ok(())
 }
