@@ -31,6 +31,11 @@ import type {
   AddPatAccountRequest,
   AddPatAccountResult,
   CpaExport,
+  UsageRefreshResult,
+  UsageDashboard,
+  UsageDashboardRequest,
+  UsageSummary,
+  UsageSummaryRequest,
 } from "./types";
 
 export const inTauri = () => "__TAURI_INTERNALS__" in window;
@@ -130,9 +135,89 @@ export async function listCachedQuotas(profileIds?: string[]): Promise<UsageQuot
   return invoke<UsageQuotaSnapshot[]>("list_cached_quotas", { profileIds });
 }
 
+const emptyUsageSummary = (): UsageSummary => ({
+  refreshedAt: null,
+  scannedFiles: 0,
+  parsedEvents: 0,
+  skippedEvents: 0,
+  totalCalls: 0,
+  totalTokens: 0,
+  inputTokens: 0,
+  cachedInputTokens: 0,
+  uncachedInputTokens: 0,
+  outputTokens: 0,
+  reasoningOutputTokens: 0,
+  estimatedCostUsd: 0,
+  pricingCoverage: {
+    pricedTokens: 0,
+    unpricedTokens: 0,
+    pricedTokenRatio: 0,
+    unknownModels: [],
+  },
+  diagnostics: {
+    parserDiagnostics: {},
+    skippedEvents: 0,
+    unknownModels: [],
+    lowCacheThreads: [],
+    highContextCalls: [],
+    lastRefreshError: null,
+  },
+  topThreads: [],
+  recentCalls: [],
+});
+
+const emptyUsageDashboard = (): UsageDashboard => ({
+  ...emptyUsageSummary(),
+  modelOptions: [],
+  effortOptions: [],
+  pricingConfidenceOptions: [],
+  statusChips: [],
+  investigationPresets: [],
+});
+
+export async function refreshUsageIndex(includeArchived = false): Promise<UsageRefreshResult> {
+  if (!inTauri()) {
+    return {
+      scannedFiles: 0,
+      parsedFiles: 0,
+      parsedEvents: 0,
+      insertedOrUpdatedEvents: 0,
+      skippedEvents: 0,
+      dbPath: '',
+      parserDiagnostics: {},
+    };
+  }
+  return invoke<UsageRefreshResult>("refresh_usage_index", { includeArchived });
+}
+
+export async function getUsageSummary(req: UsageSummaryRequest): Promise<UsageSummary> {
+  if (!inTauri()) return emptyUsageSummary();
+  return invoke<UsageSummary>("get_usage_summary", { req });
+}
+
+export async function getUsageDashboard(req: UsageDashboardRequest): Promise<UsageDashboard> {
+  if (!inTauri()) return emptyUsageDashboard();
+  return invoke<UsageDashboard>("get_usage_dashboard", { req });
+}
+
+export async function resetUsageIndex(): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("reset_usage_index");
+}
+
+export async function compactUsageDb(): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("compact_usage_db");
+}
+
 export async function syncTrayQuota(): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>("sync_tray_quota");
+}
+
+export async function showUsageStats(): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("show_usage_stats");
 }
 
 export async function setQuotaPopoverOpacity(percent: number): Promise<void> {

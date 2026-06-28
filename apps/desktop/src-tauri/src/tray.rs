@@ -1,4 +1,7 @@
-use localagentmanager_core::{list_accounts, refresh_all_quotas, resolve_home_root, AppError};
+use localagentmanager_core::{
+    list_accounts, refresh_all_quotas, resolve_home_root, try_refresh_usage_index_with_options,
+    AppError,
+};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -23,6 +26,8 @@ static POPOVER_OPACITY_PERCENT: AtomicU8 = AtomicU8::new(100);
 static TRAY_CLICK_SUPPRESS_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 
 const TRAY_CLICK_SUPPRESS_AFTER_CLOSE: Duration = Duration::from_millis(650);
+// ponytail: mirrors frontend quota cadence until quota refresh has one Rust-owned cadence.
+const USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(120);
 
 fn suppress_tray_clicks_for(duration: Duration) {
     if let Ok(mut guard) = TRAY_CLICK_SUPPRESS_UNTIL.lock() {
@@ -227,6 +232,19 @@ fn refresh_tray_with_fetch<R: Runtime>(
     Ok(())
 }
 
+fn should_refresh_usage_for_auth_mode(mode: &str) -> bool {
+    mode == "pat"
+}
+
+fn refresh_usage_if_pat_mode() -> Result<(), AppError> {
+    let home = home_root()?;
+    let mode = localagentmanager_core::types::get_auth_mode(&home)?;
+    if should_refresh_usage_for_auth_mode(&mode) {
+        let _ = try_refresh_usage_index_with_options(&home, false)?;
+    }
+    Ok(())
+}
+
 pub fn refresh_tray_menu_background<R: Runtime>(app: AppHandle<R>, force_fetch: bool) {
     let Ok(mut busy) = TRAY_BUSY.lock() else {
         return;
@@ -286,6 +304,11 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), AppError> {
 
     let app_bg = app.clone();
     refresh_tray_menu_background(app_bg.clone(), false);
+    tauri::async_runtime::spawn_blocking(|| {
+        if let Err(err) = refresh_usage_if_pat_mode() {
+            eprintln!("LAM usage refresh failed: {}", err.message);
+        }
+    });
 
     tauri::async_runtime::spawn(async move {
         std::thread::sleep(Duration::from_secs(12));
@@ -296,7 +319,34 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), AppError> {
         }
     });
 
+    tauri::async_runtime::spawn(async move {
+        loop {
+            std::thread::sleep(USAGE_REFRESH_INTERVAL);
+            tauri::async_runtime::spawn_blocking(|| {
+                if let Err(err) = refresh_usage_if_pat_mode() {
+                    eprintln!("LAM usage refresh failed: {}", err.message);
+                }
+            });
+        }
+    });
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_scheduler_gates_on_pat_auth_mode() {
+        assert!(should_refresh_usage_for_auth_mode("pat"));
+        assert!(!should_refresh_usage_for_auth_mode("oauth"));
+    }
+
+    #[test]
+    fn usage_scheduler_uses_quota_cadence() {
+        assert_eq!(USAGE_REFRESH_INTERVAL, Duration::from_secs(120));
+    }
 }
 
 pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) {

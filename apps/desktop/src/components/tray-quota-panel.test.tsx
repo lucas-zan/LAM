@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TrayQuotaPanel } from './tray-quota-panel';
 import * as api from '../lib/api';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock('../lib/api', () => ({
   inTauri: vi.fn(() => true),
   restartCodex: vi.fn(),
   setQuotaPopoverOpacity: vi.fn(),
+  showUsageStats: vi.fn(),
   switchToPatAccount: vi.fn(),
   getAntigravityQuota: vi.fn(),
 }));
@@ -136,6 +138,7 @@ beforeEach(() => {
   vi.mocked(api.getProfileQuota).mockResolvedValue(freshQuota);
   vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
   vi.mocked(api.restartCodex).mockResolvedValue();
+  vi.mocked(api.showUsageStats).mockResolvedValue();
   vi.mocked(api.switchToPatAccount).mockResolvedValue();
   vi.mocked(api.getAntigravityQuota).mockResolvedValue({ ok: true, models: [] });
   vi.mocked(listen).mockResolvedValue(vi.fn());
@@ -226,5 +229,21 @@ describe('TrayQuotaPanel', () => {
 
     await waitFor(() => expect(api.switchToPatAccount).toHaveBeenCalledWith('codex-pat'));
     expect(api.relayResumeSession).not.toHaveBeenCalled();
+  });
+
+  it('shows footer actions in Quit Stats Open order and opens usage stats only from Stats', async () => {
+    render(<TrayQuotaPanel />);
+    await waitFor(() => expect(screen.getAllByText('60%').length).toBeGreaterThan(0));
+
+    const buttons = screen
+      .getAllByRole('button')
+      .filter((button) => ['Quit', 'Stats', 'Open'].includes(button.textContent ?? ''));
+    expect(buttons.map((button) => button.textContent)).toEqual(['Quit', 'Stats', 'Open']);
+
+    fireEvent.click(screen.getByRole('button', { name: /stats/i }));
+
+    await waitFor(() => expect(api.showUsageStats).toHaveBeenCalledTimes(1));
+    expect(api.restartCodex).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalledWith('quit_app');
   });
 });

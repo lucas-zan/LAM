@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { useAppStore } from './stores/app';
 import { useAccountStore } from './stores/accounts';
 import { useSessionStore } from './stores/sessions';
 import { useQuotaStore } from './stores/quota';
+import { useUsageStore } from './stores/usage';
 import { useProviderStore } from './stores/providers';
 import * as api from './lib/api';
 import * as Shell from './components/shell';
@@ -12,11 +14,15 @@ import { ThemeToggle } from './components/theme-toggle';
 import { UIButton } from './components/ui-button';
 import { sessionDisplayName } from './lib/format';
 import { routeTitle as routeTitleFromModule } from './routes/types';
+import { UsagePage } from './routes/usage';
 import type {
   AttachProviderRequest,
   CreateAccountRequest,
   CreateProviderRequest,
   CodexSession,
+  UsageDashboardRequest,
+  UsageWindow,
+  UsageWindowPreset,
   OperationPlan,
   RenameAccountRequest,
   SyncPlan,
@@ -95,6 +101,12 @@ export function App() {
   const { quotas, refreshingQuotaIds, refreshAccountQuota, startAutoRefresh, stopAutoRefresh } =
     useQuotaStore();
   const {
+    summary: usageSummary,
+    refreshing: refreshingUsage,
+    loadUsageSummary,
+    refreshUsage,
+  } = useUsageStore();
+  const {
     providers,
     testProvider: runProviderTest,
     removeProvider,
@@ -137,6 +149,9 @@ export function App() {
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
   const [createMode, setCreateMode] = useState<'oauth' | 'pat'>('oauth');
   const [authMode, setAuthMode] = useState<'oauth' | 'pat'>('oauth');
+  const [usageTab, setUsageTab] = useState<'insights' | 'calls' | 'threads' | 'diagnostics'>('insights');
+  const [usageWindow, setUsageWindow] = useState<UsageWindow>({ preset: 'all', from: null, to: null });
+  const [includeArchivedUsage, setIncludeArchivedUsage] = useState(false);
 
   // Load auth mode and settings on mount
   useEffect(() => {
@@ -186,6 +201,50 @@ export function App() {
     if (accounts.length) startAutoRefresh(accounts.map((a) => a.id));
     return stopAutoRefresh;
   }, [accounts]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const usageRequest = useMemo<UsageDashboardRequest>(
+    () => ({
+      window: usageWindow,
+      includeArchived: includeArchivedUsage,
+      sortKey: 'time',
+      sortDirection: 'desc',
+      limit: null,
+    }),
+    [usageWindow, includeArchivedUsage],
+  );
+
+  useEffect(() => {
+    if (authMode === 'pat') void loadUsageSummary(usageRequest);
+  }, [authMode, loadUsageSummary, usageRequest]);
+
+  useEffect(() => {
+    if (!api.inTauri()) return;
+    let unlisten: (() => void) | undefined;
+    void listen<string>('lam:navigate', (event) => {
+      if (event.payload === 'usage') setRoute('usage');
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, [setRoute]);
+
+  const setUsagePreset = useCallback((preset: UsageWindowPreset) => {
+    setUsageWindow((current) => ({
+      preset,
+      from: preset === 'custom' ? current.from : null,
+      to: preset === 'custom' ? current.to : null,
+    }));
+  }, []);
+
+  const resetUsageStatistics = useCallback(async () => {
+    try {
+      await api.resetUsageIndex();
+      await loadUsageSummary(usageRequest);
+      useAppStore.getState().setStatus('Reset Codex usage statistics');
+    } catch (err) {
+      useAppStore.getState().setError(err instanceof Error ? err.message : 'Failed to reset usage statistics');
+    }
+  }, [loadUsageSummary, usageRequest]);
 
   const loadAntigravity = useCallback(async (forceRefresh = false) => {
     if (!api.inTauri()) return;
@@ -541,15 +600,17 @@ export function App() {
           </div>
         </div>
         <div className="titlebarCenter">
-          <label className="authModeToggle">
-            <span className="authModeLabel">PAT Mode</span>
-            <input
-              type="checkbox"
-              checked={authMode === 'pat'}
-              onChange={(e) => handleSetAuthMode(e.target.checked ? 'pat' : 'oauth')}
-            />
-            <span className="toggleSlider"></span>
-          </label>
+          <div className="titlebarCenterCluster">
+            <label className="authModeToggle">
+              <span className="authModeLabel">PAT Mode</span>
+              <input
+                type="checkbox"
+                checked={authMode === 'pat'}
+                onChange={(e) => handleSetAuthMode(e.target.checked ? 'pat' : 'oauth')}
+              />
+              <span className="toggleSlider"></span>
+            </label>
+          </div>
         </div>
         <div className="titlebarActions">
           <div className="toolbar">
@@ -620,6 +681,21 @@ export function App() {
             openHandoff={(session) => openHandoffModal({ session })}
           />
         ) : null}
+        {appReady && route === 'usage' ? (
+          <UsagePage
+            authMode={authMode}
+            summary={usageSummary}
+            refreshing={refreshingUsage}
+            usageWindow={usageWindow}
+            includeArchivedUsage={includeArchivedUsage}
+            usageTab={usageTab}
+            setUsageTab={setUsageTab}
+            setUsagePreset={setUsagePreset}
+            setUsageWindow={setUsageWindow}
+            setIncludeArchivedUsage={setIncludeArchivedUsage}
+            refreshUsage={() => void refreshUsage(usageRequest)}
+          />
+        ) : null}
         {appReady && route === 'providers' ? (
           <Views.Providers
             accounts={accounts}
@@ -642,6 +718,7 @@ export function App() {
             setDivergedStrategy={setDivergedStrategy}
             hideDockIcon={hideDockIcon}
             setHideDockIcon={setHideDockIcon}
+            resetUsageStatistics={resetUsageStatistics}
           />
         ) : null}
       </section>

@@ -982,6 +982,7 @@ export function Settings({
   setDivergedStrategy,
   hideDockIcon,
   setHideDockIcon,
+  resetUsageStatistics,
 }: {
   health: HealthCheck | null;
   themeMode: 'system' | 'light' | 'dark';
@@ -990,6 +991,7 @@ export function Settings({
   setDivergedStrategy: (strategy: DivergedSessionStrategy) => void;
   hideDockIcon: boolean;
   setHideDockIcon: (hide: boolean) => void;
+  resetUsageStatistics: () => void;
 }) {
   return (
     <section className="panel pagePanel">
@@ -1032,6 +1034,13 @@ export function Settings({
           </select>
           <em>Hide Dock icon on macOS while maintaining the status bar menu tray.</em>
         </label>
+        <div>
+          <span>Usage statistics</span>
+          <strong>LAM-owned tracker state</strong>
+          <UIButton size="sm" onClick={resetUsageStatistics}>
+            Reset Usage Statistics
+          </UIButton>
+        </div>
       </div>
     </section>
   );

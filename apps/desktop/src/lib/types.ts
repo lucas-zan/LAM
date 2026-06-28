@@ -201,6 +201,165 @@ export type QuotaRefreshResult = {
   warnings: string[];
 };
 
+export type UsageRefreshResult = {
+  scannedFiles: number;
+  parsedFiles: number;
+  parsedEvents: number;
+  insertedOrUpdatedEvents: number;
+  skippedEvents: number;
+  dbPath: string;
+  parserDiagnostics: Record<string, number>;
+};
+
+export type UsageWindowPreset = 'all' | 'today' | 'this-week' | 'last-7-days' | 'this-month' | 'custom';
+
+export type UsageWindow = {
+  preset: UsageWindowPreset;
+  from?: string | null;
+  to?: string | null;
+};
+
+export type UsageSummaryRequest = {
+  window: UsageWindow;
+  includeArchived: boolean;
+};
+
+export type UsageDashboardRequest = UsageSummaryRequest & {
+  search?: string | null;
+  model?: string | null;
+  effort?: string | null;
+  pricingConfidence?: string | null;
+  sortKey?: string | null;
+  sortDirection?: 'asc' | 'desc' | null;
+  limit?: number | null;
+};
+
+export type UsagePricingCoverage = {
+  pricedTokens: number;
+  unpricedTokens: number;
+  pricedTokenRatio: number;
+  unknownModels: string[];
+};
+
+export type UsageDiagnostics = {
+  parserDiagnostics: Record<string, number>;
+  skippedEvents: number;
+  unknownModels: string[];
+  lowCacheThreads: UsageThreadSummary[];
+  highContextCalls: UsageCallRow[];
+  lastRefreshError?: string | null;
+};
+
+export type UsageSummary = {
+  refreshedAt?: string | null;
+  scannedFiles: number;
+  parsedEvents: number;
+  skippedEvents: number;
+  totalCalls: number;
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  uncachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  estimatedCostUsd: number;
+  pricingCoverage: UsagePricingCoverage;
+  diagnostics: UsageDiagnostics;
+  topThreads: UsageThreadSummary[];
+  recentCalls: UsageCallRow[];
+};
+
+export type UsageDashboard = UsageSummary & {
+  modelOptions: string[];
+  effortOptions: string[];
+  pricingConfidenceOptions: string[];
+  statusChips: Array<{ label: string; value: string }>;
+  investigationPresets: Array<{ id: string; label: string; description: string }>;
+};
+
+export type UsageThreadSummary = {
+  threadKey: string;
+  isArchivedScope?: boolean;
+  threadLabel: string;
+  firstEventTimestamp?: string | null;
+  callCount: number;
+  sessionCount?: number;
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  uncachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens?: number;
+  latestEventTimestamp?: string | null;
+  avgCacheRatio?: number;
+  maxContextWindowPercent?: number | null;
+  maxRecommendationScore?: number;
+  primaryRecommendation?: string | null;
+  callInitiatorSummary?: string | null;
+  archivedCallCount?: number;
+  updatedAt?: string | null;
+  usageCredits?: number;
+  cacheRatio: number;
+  estimatedCostUsd?: number;
+  isArchived?: boolean;
+};
+
+export type UsageCallRow = {
+  recordId: string;
+  sessionId: string;
+  threadName?: string | null;
+  sessionUpdatedAt?: string | null;
+  eventTimestamp: string;
+  sourceFile: string;
+  lineNumber: number;
+  turnId?: string | null;
+  turnTimestamp?: string | null;
+  cwd?: string | null;
+  model?: string | null;
+  effort?: string | null;
+  currentDate?: string | null;
+  timezone?: string | null;
+  callInitiator?: string | null;
+  callInitiatorReason?: string | null;
+  callInitiatorConfidence?: number | null;
+  inputTokens: number;
+  cachedInputTokens: number;
+  uncachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+  cumulativeTotalTokens: number;
+  cacheRatio: number;
+  isArchived?: boolean;
+  threadKey?: string | null;
+  threadCallIndex?: number | null;
+  previousRecordId?: string | null;
+  nextRecordId?: string | null;
+  threadSource?: string | null;
+  subagentType?: string | null;
+  agentRole?: string | null;
+  agentNickname?: string | null;
+  parentSessionId?: string | null;
+  parentThreadName?: string | null;
+  parentSessionUpdatedAt?: string | null;
+  modelContextWindow?: number | null;
+  contextWindowPercent?: number | null;
+  rateLimitPlanType?: string | null;
+  rateLimitLimitId?: string | null;
+  rateLimitPrimaryUsedPercent?: number | null;
+  rateLimitPrimaryWindowMinutes?: number | null;
+  rateLimitPrimaryResetsAt?: string | null;
+  rateLimitSecondaryUsedPercent?: number | null;
+  rateLimitSecondaryWindowMinutes?: number | null;
+  rateLimitSecondaryResetsAt?: string | null;
+  reasoningOutputRatio?: number;
+  usageCredits?: number;
+  estimatedCostUsd?: number;
+  pricingModel?: string | null;
+  pricingEstimated?: boolean;
+  pricingConfidence?: string;
+};
+
 export type ProviderProfile = {
   id: string;
   name: string;

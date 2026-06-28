@@ -58,6 +58,9 @@ export function IconUsers(props: IconProps) {
 export function IconActivity(props: IconProps) {
   return <Svg {...props}><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></Svg>;
 }
+export function IconUsage(props: IconProps) {
+  return <Svg {...props}><path d="M4 19V5" /><path d="M4 19h16" /><path d="M8 16v-5" /><path d="M12 16V8" /><path d="M16 16v-3" /></Svg>;
+}
 export function IconClock(props: IconProps) {
   return <Svg {...props}><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></Svg>;
 }
@@ -104,10 +107,11 @@ export function IconCloud(props: IconProps) {
   return <Svg {...props}><path d="M17.5 19A3.5 3.5 0 0 0 21 15.5c0-2.79-2.54-4.5-5-4.5-.42-1.04-1.21-1.88-2.22-2.38A5.5 5.5 0 0 0 4 12c0 2.62 1.84 5 4.5 5M12 12v6M9 15l3-3 3 3" /></Svg>;
 }
 
-export type NavIconName = "overview" | "sessions" | "relay" | "providers" | "sync" | "settings";
+export type NavIconName = "overview" | "usage" | "sessions" | "relay" | "providers" | "sync" | "settings";
 
 const navIcons: Record<NavIconName, (p: IconProps) => JSX.Element> = {
   overview: IconOverview,
+  usage: IconUsage,
   sessions: IconSessions,
   relay: IconRelay,
   providers: IconProviders,

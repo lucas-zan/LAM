@@ -3,14 +3,16 @@ use localagentmanager_core::{
     attach_provider_to_profile as core_attach_provider_to_profile,
     build_login_command as core_build_login_command,
     build_resume_command as core_build_resume_command, check_token_expiration,
-    create_account_plan as core_create_account_plan, create_provider as core_create_provider,
-    create_relay_plan as core_create_relay_plan, delete_provider as core_delete_provider,
+    compact_usage_db as core_compact_usage_db, create_account_plan as core_create_account_plan,
+    create_provider as core_create_provider, create_relay_plan as core_create_relay_plan,
+    delete_provider as core_delete_provider,
     execute_attach_provider_to_profile as core_execute_attach_provider_to_profile,
     execute_create_account as core_execute_create_account,
     execute_create_relay as core_execute_create_relay,
     execute_rename_account as core_execute_rename_account, execute_sync as core_execute_sync,
     export_cpa_credentials as core_export_cpa_credentials,
-    get_profile_quota as core_get_profile_quota, list_accounts as core_list_accounts,
+    get_profile_quota as core_get_profile_quota, get_usage_dashboard as core_get_usage_dashboard,
+    get_usage_summary as core_get_usage_summary, list_accounts as core_list_accounts,
     list_cached_accounts as core_list_cached_accounts,
     list_cached_quotas as core_list_cached_quotas, list_providers as core_list_providers,
     list_sessions as core_list_sessions, open_terminal_for_login as core_open_terminal_for_login,
@@ -18,18 +20,22 @@ use localagentmanager_core::{
     open_terminal_with_resume as core_open_terminal_with_resume,
     plan_attach_provider_to_profile as core_plan_attach_provider_to_profile,
     process_uploaded_credentials, read_pat_metadata, refresh_all_quotas as core_refresh_all_quotas,
+    refresh_usage_index_with_options as core_refresh_usage_index,
     relay_resume_session as core_relay_resume_session,
-    rename_account_plan as core_rename_account_plan, resolve_home_root,
-    switch_to_pat_account as core_switch_to_pat_account, sync_plan as core_sync_plan,
-    test_provider as core_test_provider, update_pat_session_auth as core_update_pat_session_auth,
+    rename_account_plan as core_rename_account_plan, reset_usage_index as core_reset_usage_index,
+    resolve_home_root, switch_to_pat_account as core_switch_to_pat_account,
+    sync_plan as core_sync_plan, test_provider as core_test_provider,
+    update_pat_session_auth as core_update_pat_session_auth,
     update_provider as core_update_provider, AccountNoteUpdate, AddPatAccountRequest,
     AddPatAccountResult, AppError, AttachProviderRequest, AttachProviderResult, AuthMetadata,
     CodexAccount, CodexSession, CpaExport, CreateAccountRequest, CreateProviderRequest,
     CreateRelayRequest, CreateResult, OperationPlan, ProviderProfile, QuotaRefreshResult,
     RelayResumeRequest, RelayResumeResult, RenameAccountRequest, RenameAccountResult,
     ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult, TokenExpirationStatus,
-    UpdateProviderRequest, UploadedCredentials, UsageQuotaSnapshot,
+    UpdateProviderRequest, UploadedCredentials, UsageDashboard, UsageDashboardRequest,
+    UsageQuotaSnapshot, UsageRefreshResult, UsageSummary, UsageSummaryRequest,
 };
+use tauri::Emitter;
 
 async fn run_blocking<T, F>(task: F) -> Result<T, AppError>
 where
@@ -329,6 +335,36 @@ pub async fn list_cached_quotas(
 }
 
 #[tauri::command]
+pub async fn refresh_usage_index(include_archived: bool) -> Result<UsageRefreshResult, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_refresh_usage_index(&home, include_archived)).await
+}
+
+#[tauri::command]
+pub async fn get_usage_summary(req: UsageSummaryRequest) -> Result<UsageSummary, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_get_usage_summary(&home, req)).await
+}
+
+#[tauri::command]
+pub async fn get_usage_dashboard(req: UsageDashboardRequest) -> Result<UsageDashboard, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_get_usage_dashboard(&home, req)).await
+}
+
+#[tauri::command]
+pub async fn reset_usage_index() -> Result<(), AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_reset_usage_index(&home)).await
+}
+
+#[tauri::command]
+pub async fn compact_usage_db() -> Result<(), AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_compact_usage_db(&home)).await
+}
+
+#[tauri::command]
 pub fn sync_tray_quota(app: tauri::AppHandle) -> Result<(), AppError> {
     crate::tray::refresh_tray_menu_background(app, false);
     Ok(())
@@ -337,6 +373,14 @@ pub fn sync_tray_quota(app: tauri::AppHandle) -> Result<(), AppError> {
 #[tauri::command]
 pub fn show_main_window(app: tauri::AppHandle) -> Result<(), AppError> {
     crate::tray::show_main_window(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn show_usage_stats(app: tauri::AppHandle) -> Result<(), AppError> {
+    crate::tray::show_main_window(&app);
+    app.emit("lam:navigate", "usage")
+        .map_err(|err| AppError::new("NAVIGATE_USAGE_FAILED", err.to_string()))?;
     Ok(())
 }
 

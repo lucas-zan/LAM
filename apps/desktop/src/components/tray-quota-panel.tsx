@@ -17,6 +17,7 @@ import {
   inTauri,
   restartCodex,
   setQuotaPopoverOpacity,
+  showUsageStats,
   switchToPatAccount,
   getAntigravityQuota,
 } from '../lib/api';
@@ -41,6 +42,7 @@ import type {
 } from '../lib/types';
 import {
   IconClock,
+  IconActivity,
   IconClose,
   IconCopy,
   IconExternalLink,
@@ -401,7 +403,18 @@ function TrayPopoverFooter({ onClose: _onClose, onOpen }: TrayPopoverFooterProps
           <IconClose size={13} />
           Quit
         </UIButton>
-        <span />
+        <UIButton
+          size="sm"
+          variant="ghost"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            void showUsageStats();
+          }}
+        >
+          <IconActivity size={13} />
+          Stats
+        </UIButton>
         <UIButton
           size="sm"
           variant="primary"
