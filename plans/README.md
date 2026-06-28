@@ -2,7 +2,7 @@
 
 **Base commit:** `6e4471e`  
 **Generated:** 2026-06-24  
-**Last updated:** 2026-06-27 (added Plan 006)
+**Last updated:** 2026-06-28 (Plan 008 completed)
 
 ## Plan Index
 
@@ -13,6 +13,8 @@
 | 001-patches | Critical 5% Patches | TODO | S | L | +1 test (integrated) |
 | 005 | Split PAT runtime auth from quota refresh auth | DONE | M | M | 5 focused regressions |
 | 006 | Prevent Codex restart and quit from leaving orphan helper processes | DONE | S | L | 1 focused command test |
+| 007 | PAT-mode Codex usage statistics from JSONL into local SQLite | DONE | L | H | `make check` + real-home smoke + deep audit |
+| 008 | Usage statistics dashboard reference parity and full-page route | DONE | L | H | dashboard parity + tray smoke + installed-app verification |
 
 ## Dependencies
 
@@ -24,6 +26,63 @@
 - **006** is an independent bugfix for the Codex restart and Quit commands; it
   can execute after the current worktree is clean enough for the executor to
   avoid unrelated changes.
+- **007** is an independent feature plan for PAT-mode usage statistics. It adds
+  a LAM-native Rust JSONL ingestion service, local `usage.sqlite3`, incremental
+  refresh on the quota cadence, and a PAT-only statistics modal. It does not
+  require re-executing Plans 001-006.
+- **008** is a follow-up to the Plan 007 implementation. It moves usage
+  statistics from a modal into a full bottom-nav page, adds the tray footer
+  Stats entry, and expands the dashboard to reference-project parity for all
+  aggregate data items except `Usage observed`.
+
+## Plan 008 execution note
+
+Read `plans/008-usage-statistics-dashboard-parity.md` as a self-contained
+follow-up plan. It expects a source tree that already contains Plan 007's usage
+ingestion and the Quit fix from commit `98ef3f0` or an equivalent merge. The
+plan intentionally supersedes Plan 007's first-pass modal and LAM-only dashboard
+styling: reuse/adapt the reference `codex-usage-tracker` dashboard frontend
+assets directly, keep SQLite under `~/.codex/lam/usage/`, omit only `Usage
+observed`, and preserve the rule that Quit quits only LAM while Switch is the
+only path that stops/restarts Codex.
+
+**Execution completed 2026-06-28**: executor continued in the existing Plan 007
+worktree, preserving commits `319823e`, `43ac142`, and `98ef3f0`, and delivered
+Plan 008 on branch `codex/008-usage-dashboard-parity` at commits `d976196` and
+`556c116`. The app version was bumped to `0.1.1` in npm, Cargo, lockfile, and
+Tauri config metadata. Reviewer reran focused dashboard/tray tests, frontend
+build, `npm run test:ui`, `cargo test usage`, `cargo test --lib`, `cargo fmt
+-- --check`, `cargo clippy -- -D warnings`, `make check`, ignored
+`real_home_usage_smoke`, and `env -u CI npx tauri build`; all passed. The
+packaged artifacts were produced at
+`apps/desktop/src-tauri/target/release/bundle/macos/LAM.app` and
+`apps/desktop/src-tauri/target/release/bundle/dmg/LAM_0.1.1_aarch64.dmg`.
+
+## Plan 007 execution note
+
+Read `plans/007-pat-usage-statistics-jsonl-sqlite.md` as a self-contained
+plan. It intentionally borrows semantics and UI shape from
+`/Users/micro/Documents/Code/Rust/GitHub_Project/codex-usage-tracker`, but
+keeps the implementation inside LAM's current Tauri/Rust/React framework:
+aggregate-only SQLite ingestion under `~/.codex/lam/usage/`, reusable
+dashboard helper logic adapted into TypeScript, LAM-owned styling, no raw
+transcript persistence, local pricing/aggregate diagnostics, and no MCP/CLI
+or standalone dashboard shell in this pass.
+
+**Execution completed 2026-06-28**: executor implemented the in-scope Rust
+usage ingestion service, all-history archived incremental refresh,
+tray/background scheduler, guarded SQLite refresh, PAT-only stats modal,
+Settings reset, local pricing, aggregate diagnostics, TypeScript dashboard
+helpers, and usage store on branch `codex/007-pat-usage-statistics` at commit
+`43ac142`. Reviewer fixed deep-review findings for pricing fields, mixed-model
+thread cost, context-window diagnostics, local-date windows, known non-token
+event diagnostics, and date-stable tests. Reviewer reran `npm run build`,
+focused Vitest tests, `npm run test:ui`, `cargo test usage`, `cargo test`,
+`cargo fmt -- --check`, `cargo clippy -- -D warnings`, `make check`, and the
+ignored real-home usage smoke. The real SQLite database was created at
+`~/.codex/lam/usage/usage.sqlite3` with integrity check `ok`; no tracker DB was
+created directly under `.codex`, `.codex/sessions`, `.codex/logs`, or
+`.codex/cache`.
 
 ## Plan 006 execution note
 

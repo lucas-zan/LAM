@@ -69,6 +69,44 @@ function durationLabel(call: UsageCallRow) {
   return prev === 'first' ? 'first call' : 'thread call';
 }
 
+function renderInitiator(initiator: string | null | undefined) {
+  const val = String(initiator || '').toLowerCase();
+  if (val === 'user') {
+    return <span className="initiator-puck initiator-user">User</span>;
+  }
+  if (val === 'codex') {
+    return <span className="initiator-puck initiator-codex">Codex</span>;
+  }
+  return <span className="initiator-puck initiator-unknown">Unknown</span>;
+}
+
+function renderModel(model: string | null | undefined) {
+  const name = model || 'unknown';
+  return <span className="usageModelTag">{name}</span>;
+}
+
+function renderEffort(effort: string | null | undefined) {
+  const val = effort || 'unknown';
+  return (
+    <span className={`usageEffortTag usageEffortTag--${val.toLowerCase()}`}>
+      {val}
+    </span>
+  );
+}
+
+function renderCacheRatio(ratio: number) {
+  const percent = formatPercent(ratio);
+  let className = "usageCacheTag";
+  if (ratio >= 0.8) {
+    className += " usageCacheTag--high";
+  } else if (ratio >= 0.3) {
+    className += " usageCacheTag--medium";
+  } else {
+    className += " usageCacheTag--low";
+  }
+  return <span className={className}>{percent}</span>;
+}
+
 export function UsagePage({
   authMode,
   summary,
@@ -247,13 +285,15 @@ export function UsagePage({
             ))}
           </select>
         </label>
-        <label className="usageArchiveToggle">
-          <input
-            type="checkbox"
-            checked={includeArchivedUsage}
-            onChange={(event) => setIncludeArchivedUsage(event.target.checked)}
-          />
-          All history
+        <label>
+          History
+          <select
+            value={includeArchivedUsage ? 'all' : 'active'}
+            onChange={(event) => setIncludeArchivedUsage(event.target.value === 'all')}
+          >
+            <option value="active">Active sessions only</option>
+            <option value="all">All history</option>
+          </select>
         </label>
       </div>
 
@@ -305,7 +345,7 @@ export function UsagePage({
                         <td>{thread.threadLabel}</td>
                         <td>{thread.callCount}</td>
                         <td>{formatCompactNumber(thread.totalTokens)}</td>
-                        <td>{formatPercent(thread.cacheRatio)}</td>
+                        <td>{renderCacheRatio(thread.cacheRatio)}</td>
                         <td>{formatCost(thread.estimatedCostUsd)}</td>
                       </tr>
                     ))}
@@ -366,16 +406,16 @@ export function UsagePage({
                     <td>{threadName(call)}</td>
                     <td>{durationLabel(call)}</td>
                     <td>{call.previousRecordId ? 'linked' : 'none'}</td>
-                    <td>{call.callInitiator ?? 'codex'}</td>
-                    <td>{call.model ?? 'unknown'}</td>
-                    <td>{call.effort ?? 'unknown'}</td>
+                    <td>{renderInitiator(call.callInitiator)}</td>
+                    <td>{renderModel(call.model)}</td>
+                    <td>{renderEffort(call.effort)}</td>
                     <td>{formatCompactNumber(call.totalTokens)}</td>
                     <td>{formatCompactNumber(call.cachedInputTokens)}</td>
                     <td>{formatCompactNumber(call.uncachedInputTokens)}</td>
                     <td>{formatCompactNumber(call.outputTokens)}</td>
                     <td>{formatCompactNumber(call.reasoningOutputTokens)}</td>
                     <td>{formatCost(call.estimatedCostUsd)}</td>
-                    <td>{formatPercent(call.cacheRatio)}</td>
+                    <td>{renderCacheRatio(call.cacheRatio)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -425,7 +465,7 @@ export function UsagePage({
                   <td>{thread.callCount}</td>
                   <td>{thread.sessionCount ?? 1}</td>
                   <td>{formatCompactNumber(thread.totalTokens)}</td>
-                  <td>{formatPercent(thread.cacheRatio)}</td>
+                  <td>{renderCacheRatio(thread.cacheRatio)}</td>
                   <td>{formatTimestamp(thread.latestEventTimestamp)}</td>
                   <td>{thread.primaryRecommendation ?? 'None'}</td>
                   <td>{formatCost(thread.estimatedCostUsd)}</td>

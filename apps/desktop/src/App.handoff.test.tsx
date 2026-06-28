@@ -684,7 +684,8 @@ describe('App handoff modal', () => {
     render(<App />);
     const nav = await screen.findByRole('navigation', { name: /primary/i });
     fireEvent.click(within(nav).getByRole('button', { name: /usage/i }));
-    fireEvent.click(await screen.findByLabelText(/all history/i));
+    const historySelect = await screen.findByLabelText(/^history$/i);
+    fireEvent.change(historySelect, { target: { value: 'all' } });
 
     await waitFor(() =>
       expect(api.getUsageDashboard).toHaveBeenCalledWith(
