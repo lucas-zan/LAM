@@ -354,6 +354,7 @@ fn is_reset_outcome_unknown(err: &AppError) -> bool {
             | "CODEX_APP_SERVER_WAIT_FAILED"
             | "CODEX_APP_SERVER_UNAVAILABLE"
             | "CODEX_APP_SERVER_PROTOCOL_UNRESOLVED"
+            | "CODEX_APP_SERVER_WRITE_FAILED"
     )
 }
 
@@ -688,11 +689,15 @@ fn consume_reset_credit_with_app_server(
         .unwrap_or(&account.codex_home);
     let mut child = spawn_codex_app_server(home_root, codex_home)?;
     if let Some(stdin) = child.stdin.as_mut() {
-        stdin
-            .write_all(
-                b"{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"lam\",\"version\":\"0.1\"},\"capabilities\":{\"experimentalApi\":true}}}\n",
-            )
-            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
+        if let Err(err) = stdin.write_all(
+            b"{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"lam\",\"version\":\"0.1\"},\"capabilities\":{\"experimentalApi\":true}}}\n",
+        ) {
+            terminate_child(&mut child);
+            return Err(AppError::new(
+                "CODEX_APP_SERVER_WRITE_FAILED",
+                err.to_string(),
+            ));
+        }
         let request = serde_json::json!({
             "id": 2,
             "method": "account/rateLimitResetCredit/consume",
@@ -700,12 +705,20 @@ fn consume_reset_credit_with_app_server(
         });
         let body = serde_json::to_string(&request)
             .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
-        stdin
-            .write_all(format!("{body}\n").as_bytes())
-            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
-        stdin
-            .flush()
-            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
+        if let Err(err) = stdin.write_all(format!("{body}\n").as_bytes()) {
+            terminate_child(&mut child);
+            return Err(AppError::new(
+                "CODEX_APP_SERVER_WRITE_FAILED",
+                err.to_string(),
+            ));
+        }
+        if let Err(err) = stdin.flush() {
+            terminate_child(&mut child);
+            return Err(AppError::new(
+                "CODEX_APP_SERVER_WRITE_FAILED",
+                err.to_string(),
+            ));
+        }
     } else {
         terminate_child(&mut child);
         return Err(AppError::new(
@@ -843,32 +856,15 @@ fn try_chatgpt_usage_quota(
     home_root: &Path,
     account: &CodexAccount,
 ) -> Result<Option<UsageQuotaSnapshot>> {
-    let Some(access_token) = auth_f_access_token(account)? else {
+    let Some(access_token) = account_access_token(account)? else {
         return Ok(None);
     };
-    let curl_config =
-        std::env::temp_dir().join(format!("lam-chatgpt-usage-{}.curl", uuid::Uuid::new_v4()));
-    write_file_private(
-        &curl_config,
-        &format!(
-            "header = \"Authorization: Bearer {}\"\n",
-            access_token.replace('"', "\\\"")
-        ),
-    )?;
-    let output = Command::new("curl")
-        .args([
-            "-sS",
-            "--fail",
-            "--max-time",
-            "12",
-            "--config",
-            &curl_config.to_string_lossy(),
-            "https://chatgpt.com/backend-api/wham/usage",
-        ])
-        .output();
-    let _ = fs::remove_file(&curl_config);
-    let output =
-        output.map_err(|err| AppError::new("CHATGPT_USAGE_UNAVAILABLE", err.to_string()))?;
+    let output = curl_bearer_json(
+        &access_token,
+        "https://chatgpt.com/backend-api/wham/usage",
+        &[],
+    )
+    .map_err(|err| AppError::new("CHATGPT_USAGE_UNAVAILABLE", err.message))?;
     if !output.status.success() {
         return Err(AppError::new(
             "CHATGPT_USAGE_FAILED",
@@ -886,24 +882,36 @@ fn try_chatgpt_usage_quota(
     Ok(Some(snapshot))
 }
 
-fn auth_f_access_token(account: &CodexAccount) -> Result<Option<String>> {
-    let auth_f_path = account.codex_home.join("auth-f.json");
-    if !auth_f_path.exists() {
+fn account_access_token(account: &CodexAccount) -> Result<Option<String>> {
+    if let Some(token) = access_token_from_file(&account.codex_home.join("auth.json"))? {
+        return Ok(Some(token));
+    }
+    access_token_from_file(&account.codex_home.join("auth-f.json"))
+}
+
+fn access_token_from_file(path: &Path) -> Result<Option<String>> {
+    if !path.exists() {
         return Ok(None);
     }
-    let auth_content = fs::read_to_string(&auth_f_path).map_err(|err| {
+    let auth_content = fs::read_to_string(path).map_err(|err| {
         AppError::new(
             "QUOTA_AUTH_READ_FAILED",
-            format!("Failed to read auth-f.json: {err}"),
+            format!("Failed to read auth token file: {err}"),
         )
     })?;
     let auth_json: Value = serde_json::from_str(&auth_content).map_err(|err| {
-        AppError::new("QUOTA_AUTH_INVALID", format!("Invalid auth-f.json: {err}"))
+        AppError::new(
+            "QUOTA_AUTH_INVALID",
+            format!("Invalid auth token file: {err}"),
+        )
     })?;
-    Ok(auth_string_alias(
-        &auth_json,
-        &["access_token", "accessToken"],
-    ))
+    Ok(
+        auth_string_alias(&auth_json, &["access_token", "accessToken"]).or_else(|| {
+            auth_json
+                .get("tokens")
+                .and_then(|tokens| auth_string_alias(tokens, &["access_token", "accessToken"]))
+        }),
+    )
 }
 
 fn enrich_reset_credit_expiry(
@@ -919,7 +927,7 @@ fn enrich_reset_credit_expiry(
     let token = if let Some(access_token) = access_token {
         Some(access_token.to_string())
     } else {
-        match auth_f_access_token(account) {
+        match account_access_token(account) {
             Ok(token) => token,
             Err(err) => {
                 snapshot.alerts.push(format!(
@@ -979,25 +987,16 @@ fn probe_reset_credit_details(
     access_token: &str,
 ) -> Result<Option<(Option<u32>, Vec<ResetCreditDetail>)>> {
     let url = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
-    let curl_config = std::env::temp_dir().join(format!(
-        "lam-reset-credit-details-{}.curl",
-        uuid::Uuid::new_v4()
-    ));
-    write_file_private(
-        &curl_config,
-        &format!(
-            "header = \"Authorization: Bearer {}\"\nheader = \"Accept: application/json\"\nheader = \"OpenAI-Beta: codex-1\"\nheader = \"Originator: Codex Desktop\"\n",
-            access_token.replace('"', "\\\"")
-        ),
-    )?;
-    let output = Command::new("curl")
-        .args(["-sS", "--fail", "--max-time", "12", "--config"])
-        .arg(&curl_config)
-        .arg(url)
-        .output();
-    let _ = fs::remove_file(&curl_config);
-    let output =
-        output.map_err(|err| AppError::new("CODEX_RESET_DETAIL_UNAVAILABLE", err.to_string()))?;
+    let output = curl_bearer_json(
+        access_token,
+        url,
+        &[
+            ("Accept", "application/json"),
+            ("OpenAI-Beta", "codex-1"),
+            ("Originator", "Codex Desktop"),
+        ],
+    )
+    .map_err(|err| AppError::new("CODEX_RESET_DETAIL_UNAVAILABLE", err.message))?;
     if !output.status.success() {
         return Ok(None);
     }
@@ -1064,24 +1063,7 @@ fn probe_reset_credit_expiry_sources(access_token: &str) -> Result<Option<String
         "https://chatgpt.com/backend-api/entitlements",
         "https://chatgpt.com/backend-api/usage_state",
     ] {
-        let curl_config = std::env::temp_dir().join(format!(
-            "lam-reset-credit-probe-{}.curl",
-            uuid::Uuid::new_v4()
-        ));
-        write_file_private(
-            &curl_config,
-            &format!(
-                "header = \"Authorization: Bearer {}\"\n",
-                access_token.replace('"', "\\\"")
-            ),
-        )?;
-        let output = Command::new("curl")
-            .args(["-sS", "--fail", "--max-time", "12", "--config"])
-            .arg(&curl_config)
-            .arg(url)
-            .output();
-        let _ = fs::remove_file(&curl_config);
-        let Ok(output) = output else {
+        let Ok(output) = curl_bearer_json(access_token, url, &[]) else {
             continue;
         };
         if !output.status.success() {
@@ -1194,6 +1176,35 @@ fn auth_string_alias(auth: &Value, aliases: &[&str]) -> Option<String> {
 fn terminate_child(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
+}
+
+fn curl_bearer_json(
+    access_token: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+) -> Result<std::process::Output> {
+    let mut child = Command::new("curl")
+        .args(["-sS", "--fail", "--max-time", "12", "--config", "-", url])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| AppError::new("CURL_UNAVAILABLE", err.to_string()))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        writeln!(
+            stdin,
+            "header = \"Authorization: Bearer {}\"",
+            access_token.replace('"', "\\\"")
+        )
+        .map_err(|err| AppError::new("CURL_WRITE_FAILED", err.to_string()))?;
+        for (name, value) in headers {
+            writeln!(stdin, "header = \"{name}: {}\"", value.replace('"', "\\\""))
+                .map_err(|err| AppError::new("CURL_WRITE_FAILED", err.to_string()))?;
+        }
+    }
+    child
+        .wait_with_output()
+        .map_err(|err| AppError::new("CURL_WAIT_FAILED", err.to_string()))
 }
 
 pub(crate) fn spawn_codex_app_server(home_root: &Path, codex_home: &Path) -> Result<Child> {
@@ -1443,13 +1454,23 @@ fn parse_reset_credit_detail(
     let id = extract_string(value, &["id"]).or_else(|| Some(format!("index-{index}")));
     let status = extract_string(value, &["status"]);
     let expires_at = extract_string(value, &["expiresAt", "expires_at"])
-        .filter(|value| chrono::DateTime::parse_from_rfc3339(value).is_ok());
+        .and_then(|value| normalize_reset_credit_detail_expiry(&value, source));
     Some(ResetCreditDetail {
         id,
         status,
         expires_at,
         source: source.to_string(),
     })
+}
+
+fn normalize_reset_credit_detail_expiry(value: &str, source: &str) -> Option<String> {
+    let parsed = chrono::DateTime::parse_from_rfc3339(value).ok()?;
+    if source == "api" {
+        let shanghai = chrono::FixedOffset::east_opt(8 * 3600)?;
+        Some(parsed.with_timezone(&shanghai).to_rfc3339())
+    } else {
+        Some(value.to_string())
+    }
 }
 
 fn reset_credit_sort_key(detail: &ResetCreditDetail) -> (i64, String) {
@@ -1517,6 +1538,14 @@ fn apply_manual_reset_credit_expiry(
     if chrono::DateTime::parse_from_rfc3339(raw).is_ok() {
         snapshot.reset_credit_expires_at = Some(raw.to_string());
         snapshot.reset_credit_expiry_source = Some("manual_config".to_string());
+        if snapshot.reset_credit_details.is_empty() {
+            snapshot.reset_credit_details.push(ResetCreditDetail {
+                id: Some("manual".to_string()),
+                status: Some("available".to_string()),
+                expires_at: Some(raw.to_string()),
+                source: "manual_config".to_string(),
+            });
+        }
     } else {
         snapshot
             .alerts
@@ -1602,6 +1631,48 @@ mod tests {
     }
 
     #[test]
+    fn account_access_token_prefers_auth_json_over_auth_f_json() {
+        let temp = tempfile::TempDir::new().unwrap();
+        fs::write(
+            temp.path().join("auth.json"),
+            r#"{"tokens":{"access_token":"at-auth-json"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("auth-f.json"),
+            r#"{"access_token":"at-auth-f"}"#,
+        )
+        .unwrap();
+        let account = CodexAccount {
+            id: "a".into(),
+            display_name: "a".into(),
+            codex_home: temp.path().to_path_buf(),
+            wrapper_path: None,
+            has_auth: true,
+            has_config: true,
+            has_history: false,
+            session_count: 0,
+            latest_session_modified_at: None,
+            managed: false,
+            is_relay: false,
+            relay_source: None,
+            relay_identity: None,
+            provider_id: None,
+            model: None,
+            auth_mode: None,
+            is_active_auth: false,
+            has_personal_access_token: false,
+            renewal_date: None,
+            note: None,
+        };
+
+        assert_eq!(
+            account_access_token(&account).unwrap().as_deref(),
+            Some("at-auth-json")
+        );
+    }
+
+    #[test]
     fn parses_chatgpt_wham_usage_quota() {
         let usage = serde_json::json!({
             "plan_type": "plus",
@@ -1655,7 +1726,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_credit_details_sort_by_nearest_expiry_and_preserve_utc() {
+    fn reset_credit_details_sort_by_nearest_expiry_and_convert_api_to_shanghai() {
         let value = serde_json::json!({
             "rateLimitResetCredits": {
                 "availableCount": 3,
@@ -1673,7 +1744,7 @@ mod tests {
         assert_eq!(details[0].id.as_deref(), Some("soon"));
         assert_eq!(
             details[0].expires_at.as_deref(),
-            Some("2026-07-01T00:00:00Z")
+            Some("2026-07-01T08:00:00+08:00")
         );
         assert_eq!(details[1].id.as_deref(), Some("later"));
         assert_eq!(details[2].id.as_deref(), Some("missing"));
@@ -1696,7 +1767,7 @@ mod tests {
         assert_eq!(details[0].id.as_deref(), Some("ok"));
         assert_eq!(
             details[0].expires_at.as_deref(),
-            Some("2026-07-02T00:00:00Z")
+            Some("2026-07-02T08:00:00+08:00")
         );
         assert_eq!(details[1].id.as_deref(), Some("bad"));
         assert_eq!(details[1].expires_at, None);
@@ -1717,6 +1788,10 @@ mod tests {
         let err = parse_reset_consume_line(&error).unwrap_err();
         assert_eq!(err.code, "CODEX_RESET_FAILED");
         assert_eq!(err.message, "nope");
+        assert!(is_reset_outcome_unknown(&AppError::new(
+            "CODEX_APP_SERVER_WRITE_FAILED",
+            "broken pipe"
+        )));
     }
 
     #[test]
@@ -1765,6 +1840,12 @@ mod tests {
             snapshot.reset_credit_expiry_source.as_deref(),
             Some("manual_config")
         );
+        assert_eq!(snapshot.reset_credit_details.len(), 1);
+        assert_eq!(
+            snapshot.reset_credit_details[0].expires_at.as_deref(),
+            Some("2026-07-12T00:00:00Z")
+        );
+        assert_eq!(snapshot.reset_credit_details[0].source, "manual_config");
 
         snapshot.reset_credit_expires_at = Some("2026-08-01T00:00:00Z".into());
         snapshot.reset_credit_expiry_source = Some("api".into());

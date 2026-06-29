@@ -531,7 +531,7 @@ describe('App handoff modal', () => {
     expect(exported.id_token_synthetic).toBeUndefined();
   });
 
-  it('shows manual reset expiry rows in UTC order and confirms before reset', async () => {
+  it('shows reset expiry rows in Shanghai order and confirms before reset', async () => {
     vi.mocked(api.getAuthMode).mockResolvedValue('pat');
     vi.mocked(api.listSessions).mockResolvedValue([]);
     const confirm = vi.fn(() => true);
@@ -568,8 +568,8 @@ describe('App handoff modal', () => {
     expect(accountCard).not.toBeNull();
 
     const rows = within(accountCard!).getByLabelText('Manual reset expiry');
-    expect(within(rows).getByText('Reset 1').nextSibling?.textContent).toBe('2026-07-01T00:00:00Z');
-    expect(within(rows).getByText('Reset 2').nextSibling?.textContent).toBe('2026-07-12T00:00:00Z');
+    expect(within(rows).getByText('Reset 1').nextSibling?.textContent).toBe('2026-07-01T08:00:00+08:00');
+    expect(within(rows).getByText('Reset 2').nextSibling?.textContent).toBe('2026-07-12T08:00:00+08:00');
 
     fireEvent.click(within(accountCard!).getByRole('button', { name: /reset codex-c quota/i }));
 

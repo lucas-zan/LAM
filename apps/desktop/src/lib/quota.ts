@@ -145,12 +145,23 @@ export function resetCreditDisplay(quota?: UsageQuotaSnapshot | null): ResetCred
 }
 
 export function sortedResetCreditDetails(quota?: UsageQuotaSnapshot | null) {
-  return [...(quota?.resetCreditDetails ?? [])].sort((a, b) => {
+  return (quota?.resetCreditDetails ?? []).map((credit) => ({
+    ...credit,
+    expiresAt: credit.source === 'api' ? resetCreditShanghaiTime(credit.expiresAt) : credit.expiresAt,
+  })).sort((a, b) => {
     const aTime = resetCreditTime(a.expiresAt);
     const bTime = resetCreditTime(b.expiresAt);
     if (aTime !== bTime) return aTime - bTime;
     return (a.id ?? '').localeCompare(b.id ?? '');
   });
+}
+
+function resetCreditShanghaiTime(expiresAt?: string | null): string | null | undefined {
+  if (!expiresAt) return expiresAt;
+  const parsed = Date.parse(expiresAt);
+  if (!Number.isFinite(parsed)) return expiresAt;
+  const date = new Date(parsed + 8 * 3_600_000);
+  return `${date.toISOString().slice(0, 19)}+08:00`;
 }
 
 function resetCreditTime(expiresAt?: string | null): number {

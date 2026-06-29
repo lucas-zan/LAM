@@ -156,7 +156,7 @@ describe('resetCreditDisplay', () => {
     expect(display?.title).toContain('manual expiry');
   });
 
-  it('uses nearest per-credit expiry for dot phase without rewriting UTC', () => {
+  it('uses nearest per-credit expiry for dot phase and displays API time in Shanghai', () => {
     const display = resetCreditDisplay({
       ...baseQuota,
       resetCreditCount: 2,
@@ -168,7 +168,7 @@ describe('resetCreditDisplay', () => {
       ],
     });
 
-    expect(display?.title).toContain('2026-07-01T00:00:00Z');
+    expect(display?.title).toContain('2026-07-01T08:00:00+08:00');
   });
 
   it('hides reset dots for zero or absent count', () => {

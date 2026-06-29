@@ -841,8 +841,10 @@ make check
 
 Follow-up execution result on 2026-06-29:
 
-- Implemented per-credit reset expiry details, nearest-expiry ordering, and UTC
-  display preservation.
+- Implemented per-credit reset expiry details and nearest-expiry ordering. Live
+  probe confirmed `GET /backend-api/wham/rate-limit-reset-credits` returns
+  `credits[].expires_at`; API detail expiry displays in Asia/Shanghai, while
+  manual config expiry keeps the operator-provided UTC/RFC3339 text.
 - Implemented `Reset quota` through app-server
   `account/rateLimitResetCredit/consume` with per-account locking, persisted
   idempotency key, unknown-outcome retry reuse, and forced quota refresh.
@@ -980,8 +982,9 @@ Source design note:
   window reset time, manual reset-credit expiry, and subscription expiry.
 - Do not derive manual reset-credit expiry from quota window reset,
   subscription expiry, or grant date.
-- Preserve upstream/manual `expiresAt` as RFC3339/ISO-8601 UTC text for display;
-  do not convert manual reset expiry to GMT+8.
+- API detail expiry from `credits[].expiresAt` / `credits[].expires_at` displays
+  in Asia/Shanghai. Manual reset expiry keeps the original operator-provided
+  UTC/RFC3339 text and is not converted to GMT+8.
 
 Implementation rules:
 
@@ -1015,9 +1018,10 @@ Reset quota rules:
 
 Follow-up verification:
 
-- Rust tests cover per-credit parser wrappers, UTC preservation, invalid expiry,
-  nearest-expiry sorting, detail failure fallback, manual fallback, reset
-  operation UUID reuse, and app-server outcomes.
+- Rust tests cover per-credit parser wrappers, API detail conversion to
+  Asia/Shanghai, manual UTC preservation, invalid expiry, nearest-expiry
+  sorting, detail failure fallback, manual fallback, reset operation UUID reuse,
+  and app-server outcomes.
 - Frontend tests cover manual expiry rows, sorted rows, no-expiry row ordering,
   reset button disabled/hidden state, confirmation, and state replacement from
   fresh snapshots.
