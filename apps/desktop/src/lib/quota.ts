@@ -128,9 +128,9 @@ export function resetCreditDisplay(quota?: UsageQuotaSnapshot | null): ResetCred
   const count = quota?.resetCreditCount ?? 0;
   if (!quota || count <= 0) return null;
   const visible = Math.min(count, 5);
-  const expiresAt = sortedResetCreditDetails(quota)
-    .find((credit) => credit.expiresAt)?.expiresAt ?? quota.resetCreditExpiresAt;
-  const color = resetCreditColor(expiresAt);
+  const details = sortedResetCreditDetails(quota);
+  const expiresAt = details.find((credit) => credit.expiresAt)?.expiresAt ?? quota.resetCreditExpiresAt;
+  const fallbackColor = resetCreditColor(expiresAt);
   const source =
     expiresAt && quota.resetCreditExpirySource === 'manual_config'
       ? `manual expiry ${expiresAt}`
@@ -138,7 +138,10 @@ export function resetCreditDisplay(quota?: UsageQuotaSnapshot | null): ResetCred
         ? `expires ${expiresAt}`
         : 'expiry unknown';
   return {
-    dots: Array.from({ length: visible }, (_, index) => ({ key: `${quota.profileId}-${index}`, color })),
+    dots: Array.from({ length: visible }, (_, index) => ({
+      key: `${quota.profileId}-${index}`,
+      color: details[index]?.expiresAt ? resetCreditColor(details[index].expiresAt) : fallbackColor,
+    })),
     overflow: Math.max(0, count - visible),
     title: `${count} reset credits; ${source}`,
   };

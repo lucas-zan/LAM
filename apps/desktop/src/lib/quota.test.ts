@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { planTypeLabel, quotaDisplayWindows, accountHasAvailableQuota, resetCreditDisplay } from './quota';
 import type { UsageQuotaSnapshot } from './types';
 
@@ -19,6 +19,10 @@ const baseQuota: UsageQuotaSnapshot = {
   alerts: [],
   suggestedActions: [],
 };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('quotaDisplayWindows', () => {
   it('returns 5h and weekly windows for standard quota snapshots', () => {
@@ -169,6 +173,24 @@ describe('resetCreditDisplay', () => {
     });
 
     expect(display?.title).toContain('2026-07-01T08:00:00+08:00');
+  });
+
+  it('colors each reset credit by its own expiry', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-06-29T00:00:00Z'));
+
+    const display = resetCreditDisplay({
+      ...baseQuota,
+      resetCreditCount: 3,
+      resetCreditExpiresAt: null,
+      resetCreditExpirySource: 'api',
+      resetCreditDetails: [
+        { id: 'reset-1', expiresAt: '2026-07-11T23:18:30Z', source: 'api' },
+        { id: 'reset-2', expiresAt: '2026-07-18T00:28:08Z', source: 'api' },
+        { id: 'reset-3', expiresAt: '2026-07-26T23:16:35Z', source: 'api' },
+      ],
+    });
+
+    expect(display?.dots.map((dot) => dot.color)).toEqual(['yellow', 'green', 'blue']);
   });
 
   it('hides reset dots for zero or absent count', () => {
