@@ -41,6 +41,11 @@
   --purple: #7c3aed;
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
   --shadow-md: 0 4px 14px rgba(15, 23, 42, 0.06);
+  --heatmap-bg-0: #ebedf0;
+  --heatmap-bg-1: #fbcfe8;
+  --heatmap-bg-2: #f472b6;
+  --heatmap-bg-3: #ec4899;
+  --heatmap-bg-4: #db2777;
   font-family:
     -apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter, 'Segoe UI', system-ui, sans-serif;
   color: var(--text);
@@ -64,6 +69,11 @@
   --purple-soft: rgba(124, 58, 237, 0.15);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --heatmap-bg-0: #1e293b;
+  --heatmap-bg-1: #4a153b;
+  --heatmap-bg-2: #7c1a60;
+  --heatmap-bg-3: #ae1e88;
+  --heatmap-bg-4: #ec4899;
 }
 
 * {
@@ -648,41 +658,26 @@ p {
 .resetCreditDot::after {
   content: attr(data-tooltip);
   position: absolute;
-  left: 50%;
-  bottom: calc(100% + 8px);
+  left: 0;
+  bottom: calc(100% + 5px);
   z-index: 20;
-  transform: translateX(-50%) translateY(2px);
+  transform: translateY(2px);
   opacity: 0;
   pointer-events: none;
   white-space: nowrap;
-  padding: 4px 7px;
-  border-radius: 5px 5px 5px 1px;
+  padding: 4px 8px;
+  border-radius: 6px 6px 6px 0;
   background: var(--reset-credit-color);
-  color: white;
-  font-size: 11px;
+  color: #ffffff;
+  font-size: 10px;
   font-weight: 600;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.18);
-  transition: opacity 120ms ease, transform 120ms ease;
-}
-.resetCreditDot::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 3px);
-  z-index: 20;
-  transform: translateX(-50%) translateY(2px);
-  opacity: 0;
-  pointer-events: none;
-  border: 5px solid transparent;
-  border-top-color: var(--reset-credit-color);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   transition: opacity 120ms ease, transform 120ms ease;
 }
 .resetCreditDot:hover::after,
-.resetCreditDot:hover::before,
-.resetCreditDot:focus-visible::after,
-.resetCreditDot:focus-visible::before {
+.resetCreditDot:focus-visible::after {
   opacity: 1;
-  transform: translateX(-50%) translateY(0);
+  transform: translateY(0);
 }
 .resetCreditMore {
   color: var(--muted);
@@ -2382,31 +2377,102 @@ html[data-tray-popover='1'] #root {
   color: #64748b;
 }
 
-.usageMetricGrid {
+.usageOverviewCardsGrid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 15px;
+  width: 100%;
 }
 
-.usageMetric {
-  min-width: 0;
+.usageMetricCard {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface2);
-  padding: 10px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.usageMetric span {
-  display: block;
+.usageMetricCard:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.usageMetricCard .cardHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: var(--muted);
-  font-size: 12px;
 }
 
-.usageMetric strong {
-  display: block;
-  margin-top: 4px;
-  font-size: 17px;
-  overflow-wrap: anywhere;
+.usageMetricCard .cardHeader h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.usageMetricCard .cardIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--accent);
+}
+
+.usageMetricCard .cardStats {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.usageMetricCard .statItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.usageMetricCard .statItem span {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.usageMetricCard .statItem strong {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.usageMetricCard .statItem.main {
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.usageMetricCard .statItem.main strong {
+  font-size: 26px;
+  letter-spacing: -0.02em;
+}
+
+.usageMetricCard .statItem.main strong.costAccent {
+  color: var(--purple);
+}
+
+.usageMetricCard .statSubGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.usageMetricCard .statSubGrid--2x1 {
+  grid-template-columns: 1fr;
 }
 
 .usageTabs {
@@ -2458,25 +2524,120 @@ html[data-tray-popover='1'] #root {
 
 .usageHeatmapGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
-  gap: 6px;
+  grid-template-rows: repeat(7, 14px);
+  grid-auto-flow: column;
+  grid-auto-columns: 14px;
+  gap: 3px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  width: 100%;
 }
 
 .usageHeatmapCell {
-  min-height: 28px;
-  border-radius: 6px;
-  border: 1px solid var(--line);
-  display: grid;
-  place-items: center;
-  font-size: 11px;
-  color: var(--muted);
-  background: var(--surface2);
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--heatmap-bg-0);
+  border: none;
+  cursor: pointer;
+  transition: all 0.1s ease;
 }
 
-.usageHeatmapCell--1 { background: #dbeafe; color: #1e3a8a; }
-.usageHeatmapCell--2 { background: #86efac; color: #14532d; }
-.usageHeatmapCell--3 { background: #fde68a; color: #713f12; }
-.usageHeatmapCell--4 { background: #f87171; color: #7f1d1d; }
+.usageHeatmapCell:hover {
+  transform: scale(1.25);
+  z-index: 10;
+}
+
+.usageHeatmapCell--empty {
+  background: transparent;
+  pointer-events: none;
+  border: none;
+}
+
+.usageHeatmapCell--0 { background: var(--heatmap-bg-0); }
+.usageHeatmapCell--1 { background: var(--heatmap-bg-1); }
+.usageHeatmapCell--2 { background: var(--heatmap-bg-2); }
+.usageHeatmapCell--3 { background: var(--heatmap-bg-3); }
+.usageHeatmapCell--4 { background: var(--heatmap-bg-4); }
+
+.usageHeatmapMonths {
+  display: grid;
+  grid-template-columns: repeat(53, 14px);
+  gap: 3px;
+  margin-top: 4px;
+  width: 100%;
+}
+
+.usageHeatmapContent {
+  display: flex;
+  gap: 20px;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.usageHeatmapMain {
+  flex: 0 0 auto;
+  overflow-x: auto;
+}
+
+.usageHeatmapSidebar {
+  flex: 0 0 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  background: var(--surface2);
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+
+.usageHeatmapSidebar .legendLabel {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+  display: block;
+}
+
+.usageHeatmapSidebar .legendColors {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 6px;
+}
+
+.usageHeatmapSidebar .legendColorCell {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+}
+
+.usageHeatmapSidebar .insightItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.usageHeatmapSidebar .insightItem label {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-weight: 500;
+}
+
+.usageHeatmapSidebar .insightItem strong {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.usageHeatmapMonthLabel {
+  font-size: 9px;
+  color: var(--muted);
+  text-align: left;
+  white-space: nowrap;
+}
 
 .usageSection {
   display: grid;

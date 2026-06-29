@@ -144,7 +144,7 @@ export function resetCreditDisplay(quota?: UsageQuotaSnapshot | null): ResetCred
       return {
         key: `${quota.profileId}-${index}`,
         color: dotExpiresAt ? resetCreditColor(dotExpiresAt) : fallbackColor,
-        title: dotExpiresAt ? `Reset ${index + 1}: ${dotExpiresAt}` : `Reset ${index + 1}: expiry unknown`,
+        title: dotExpiresAt ? `Expires: ${dotExpiresAt.replace('T', ' ').slice(0, 16)}` : 'Expiry unknown',
       };
     }),
     overflow: Math.max(0, count - visible),

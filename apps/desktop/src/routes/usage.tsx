@@ -208,11 +208,141 @@ export function UsagePage({
     highContextCalls: [],
     lastRefreshError: null,
   };
-  const heatmapCells = useMemo(
-    () => heatmapBuckets(summary?.activityBuckets ?? [], heatmapMetric, heatmapMode),
-    [summary?.activityBuckets, heatmapMetric, heatmapMode],
-  );
-  const maxHeatmapValue = Math.max(0, ...heatmapCells.map((cell) => cell.value));
+  const heatmapCells = useMemo(() => {
+    const buckets = summary?.activityBuckets ?? [];
+    const endDate = buckets.length > 0
+      ? new Date(`${buckets[buckets.length - 1].date}T00:00:00Z`)
+      : new Date();
+    const startDate = new Date(endDate);
+    startDate.setUTCDate(startDate.getUTCDate() - 364);
+
+    const bucketMap = new Map<string, typeof buckets[number]>();
+    buckets.forEach((b) => bucketMap.set(b.date, b));
+
+    const fullBuckets: Array<{
+      date: string;
+      calls: number;
+      tokens: number;
+      cumulativeCalls: number;
+      cumulativeTokens: number;
+    }> = [];
+
+    let cumCalls = 0;
+    let cumTokens = 0;
+
+    const cur = new Date(startDate);
+    while (cur <= endDate) {
+      const dateStr = cur.toISOString().slice(0, 10);
+      const existing = bucketMap.get(dateStr);
+      if (existing) {
+        cumCalls = existing.cumulativeCalls;
+        cumTokens = existing.cumulativeTokens;
+        fullBuckets.push({
+          date: dateStr,
+          calls: existing.calls,
+          tokens: existing.tokens,
+          cumulativeCalls: cumCalls,
+          cumulativeTokens: cumTokens,
+        });
+      } else {
+        fullBuckets.push({
+          date: dateStr,
+          calls: 0,
+          tokens: 0,
+          cumulativeCalls: cumCalls,
+          cumulativeTokens: cumTokens,
+        });
+      }
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+
+    const firstDay = startDate.getUTCDay();
+    const items = [];
+    for (let i = 0; i < firstDay; i++) {
+      items.push({
+        isEmpty: true,
+        key: `empty-${i}`,
+        value: 0,
+        title: '',
+        label: '',
+      });
+    }
+
+    fullBuckets.forEach((b) => {
+      let value = 0;
+      if (heatmapMode === 'cumulative') {
+        value = heatmapMetric === 'calls' ? b.cumulativeCalls : b.cumulativeTokens;
+      } else if (heatmapMode === 'weekly') {
+        const d = new Date(`${b.date}T00:00:00Z`);
+        const day = d.getUTCDay() || 7;
+        const monday = new Date(d);
+        monday.setUTCDate(monday.getUTCDate() - day + 1);
+        let weekVal = 0;
+        const temp = new Date(monday);
+        for (let j = 0; j < 7; j++) {
+          const tStr = temp.toISOString().slice(0, 10);
+          const tExist = bucketMap.get(tStr);
+          if (tExist) {
+            weekVal += heatmapMetric === 'calls' ? tExist.calls : tExist.tokens;
+          }
+          temp.setUTCDate(temp.getUTCDate() + 1);
+        }
+        value = weekVal;
+      } else {
+        value = heatmapMetric === 'calls' ? b.calls : b.tokens;
+      }
+
+      items.push({
+        isEmpty: false,
+        key: b.date,
+        date: b.date,
+        value,
+        title: `${b.date}: ${formatCompactNumber(value)} ${heatmapMetric === 'calls' ? 'calls' : 'tokens'}`,
+        label: b.date.slice(5),
+      });
+    });
+
+    return items;
+  }, [summary?.activityBuckets, heatmapMetric, heatmapMode]);
+
+  const maxHeatmapValue = useMemo(() => {
+    const vals = heatmapCells.filter((c) => !c.isEmpty).map((c) => c.value);
+    return vals.length > 0 ? Math.max(0, ...vals) : 0;
+  }, [heatmapCells]);
+
+  const monthLabels = useMemo(() => {
+    const labels: Array<{ text: string; colIndex: number }> = [];
+    const buckets = summary?.activityBuckets ?? [];
+    if (!buckets.length) return [];
+
+    const endDate = new Date(`${buckets[buckets.length - 1].date}T00:00:00Z`);
+    const startDate = new Date(endDate);
+    startDate.setUTCDate(startDate.getUTCDate() - 364);
+
+    const firstDay = startDate.getUTCDay();
+    let lastMonth = -1;
+    let lastColIndex = -999;
+
+    for (let col = 0; col < 53; col++) {
+      const dayOffset = col * 7 - firstDay;
+      const colDate = new Date(startDate);
+      colDate.setUTCDate(colDate.getUTCDate() + dayOffset);
+
+      const month = colDate.getUTCMonth();
+      if (month !== lastMonth) {
+        if (col - lastColIndex >= 5) {
+          lastMonth = month;
+          lastColIndex = col;
+          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          labels.push({
+            text: monthNames[month],
+            colIndex: col,
+          });
+        }
+      }
+    }
+    return labels;
+  }, [summary?.activityBuckets]);
   const headlineStats = summary?.headlineStats ?? {
     lifetimeTokens: summary?.totalTokens ?? null,
     peakDailyTokens: null,
@@ -373,31 +503,108 @@ export function UsagePage({
         </label>
       </div>
 
-      <div className="usageMetricGrid">
-        {[
-          ['Lifetime tokens', `${formatCompactNumber(headlineStats.lifetimeTokens)} tok`],
-          ['Peak tokens', `${formatCompactNumber(headlineStats.peakDailyTokens)} tok`],
-          ['Longest task', formatDuration(headlineStats.longestRunningTurnSec)],
-          ['Current streak', `${formatCompactNumber(headlineStats.currentStreakDays)} days`],
-          ['Longest streak', `${formatCompactNumber(headlineStats.longestStreakDays)} days`],
-          ['Visible Calls', formatCompactNumber(calls.length)],
-          ['Total Tokens', `${formatCompactNumber(summary?.totalTokens)} tok`],
-          ['Cached Input', `${formatCompactNumber(summary?.cachedInputTokens)} tok`],
-          ['Uncached Input', `${formatCompactNumber(summary?.uncachedInputTokens)} tok`],
-          ['Reasoning Output', `${formatCompactNumber(summary?.reasoningOutputTokens)} tok`],
-          ['Estimated Cost', formatCost(summary?.estimatedCostUsd)],
-          ['Codex Credits', formatCost(summary?.estimatedCostUsd)],
-        ].map(([label, value]) => (
-          <div className="usageMetric" key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
+      <div className="usageOverviewCardsGrid">
+        <div className="usageMetricCard">
+          <div className="cardHeader">
+            <span className="cardIcon">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="2" width="20" height="8" rx="2" />
+                <rect x="2" y="14" width="20" height="8" rx="2" />
+                <line x1="6" y1="6" x2="6.01" y2="6" />
+                <line x1="6" y1="18" x2="6.01" y2="18" />
+              </svg>
+            </span>
+            <h4>Token Volumes</h4>
           </div>
-        ))}
+          <div className="cardStats">
+            <div className="statItem main">
+              <span>Total Tokens</span>
+              <strong>{formatCompactNumber(summary?.totalTokens)} tok</strong>
+            </div>
+            <div className="statSubGrid">
+              <div className="statItem">
+                <span>Lifetime</span>
+                <strong>{formatCompactNumber(headlineStats.lifetimeTokens)}</strong>
+              </div>
+              <div className="statItem">
+                <span>Cached Input</span>
+                <strong>{formatCompactNumber(summary?.cachedInputTokens)}</strong>
+              </div>
+              <div className="statItem">
+                <span>Uncached</span>
+                <strong>{formatCompactNumber(summary?.uncachedInputTokens)}</strong>
+              </div>
+              <div className="statItem">
+                <span>Reasoning</span>
+                <strong>{formatCompactNumber(summary?.reasoningOutputTokens)}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="usageMetricCard">
+          <div className="cardHeader">
+            <span className="cardIcon">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+              </svg>
+            </span>
+            <h4>Productivity & Streaks</h4>
+          </div>
+          <div className="cardStats">
+            <div className="statItem main">
+              <span>Peak Daily Tokens</span>
+              <strong>{formatCompactNumber(headlineStats.peakDailyTokens)} tok</strong>
+            </div>
+            <div className="statSubGrid">
+              <div className="statItem">
+                <span>Longest Task</span>
+                <strong>{formatDuration(headlineStats.longestRunningTurnSec)}</strong>
+              </div>
+              <div className="statItem">
+                <span>Current Streak</span>
+                <strong>{formatCompactNumber(headlineStats.currentStreakDays)} days</strong>
+              </div>
+              <div className="statItem">
+                <span>Longest Streak</span>
+                <strong>{formatCompactNumber(headlineStats.longestStreakDays)} days</strong>
+              </div>
+              <div className="statItem">
+                <span>Visible Calls</span>
+                <strong>{formatCompactNumber(calls.length)}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="usageMetricCard">
+          <div className="cardHeader">
+            <span className="cardIcon">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="1" x2="12" y2="23" />
+                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+              </svg>
+            </span>
+            <h4>Cost & Credits</h4>
+          </div>
+          <div className="cardStats">
+            <div className="statItem main">
+              <span>Estimated Cost</span>
+              <strong className="costAccent">{formatCost(summary?.estimatedCostUsd)}</strong>
+            </div>
+            <div className="statSubGrid statSubGrid--2x1">
+              <div className="statItem">
+                <span>Codex Credits</span>
+                <strong>{formatCost(summary?.estimatedCostUsd)}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <section className="usagePanel usageHeatmapPanel">
         <div className="usageHeatmapHeader">
-          <h3>Activity</h3>
+          <h3>{heatmapMetric === 'tokens' ? 'Token activity' : 'Call activity'}</h3>
           <div className="usageSegmentedControls">
             <div className="usageTabs usageTabs--compact" role="tablist" aria-label="Activity mode">
               {(['daily', 'weekly', 'cumulative'] as const).map((mode) => (
@@ -415,16 +622,62 @@ export function UsagePage({
             </div>
           </div>
         </div>
-        <div className="usageHeatmapGrid" aria-label="Usage activity heatmap">
-          {heatmapCells.length ? heatmapCells.map((cell) => (
-            <span
-              key={cell.title}
-              className={`usageHeatmapCell usageHeatmapCell--${heatmapLevel(cell.value, maxHeatmapValue)}`}
-              title={cell.title}
-            >
-              {cell.label}
-            </span>
-          )) : <p className="usageEmpty">No activity buckets.</p>}
+        <div className="usageHeatmapContent">
+          <div className="usageHeatmapMain">
+            <div className="usageHeatmapGrid" aria-label="Usage activity heatmap">
+              {heatmapCells.length ? heatmapCells.map((cell) => {
+                if (cell.isEmpty) {
+                  return (
+                    <span
+                      key={cell.key}
+                      className="usageHeatmapCell usageHeatmapCell--empty"
+                    />
+                  );
+                }
+                return (
+                  <span
+                    key={cell.key}
+                    className={`usageHeatmapCell usageHeatmapCell--${heatmapLevel(cell.value, maxHeatmapValue)}`}
+                    title={cell.title}
+                  />
+                );
+              }) : <p className="usageEmpty">No activity buckets.</p>}
+            </div>
+            {monthLabels.length ? (
+              <div className="usageHeatmapMonths" aria-hidden="true">
+                {monthLabels.map((lbl, idx) => (
+                  <span
+                    key={idx}
+                    className="usageHeatmapMonthLabel"
+                    style={{ gridColumnStart: lbl.colIndex + 1 }}
+                  >
+                    {lbl.text}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="usageHeatmapSidebar">
+            <div>
+              <span className="legendLabel">Activity Level</span>
+              <div className="legendColors">
+                <span className="legendColorCell usageHeatmapCell--0" title="No activity" />
+                <span className="legendColorCell usageHeatmapCell--1" title="Low activity" />
+                <span className="legendColorCell usageHeatmapCell--2" title="Medium-low activity" />
+                <span className="legendColorCell usageHeatmapCell--3" title="Medium-high activity" />
+                <span className="legendColorCell usageHeatmapCell--4" title="High activity" />
+              </div>
+            </div>
+            <div className="insightItem">
+              <label>Range Calls</label>
+              <strong>{formatCompactNumber(summary?.totalCalls ?? 0)} calls</strong>
+            </div>
+            <div className="insightItem">
+              <label>Range Tokens</label>
+              <strong>{formatCompactNumber(summary?.totalTokens ?? 0)} tok</strong>
+            </div>
+          </div>
         </div>
       </section>
 

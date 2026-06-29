@@ -568,8 +568,8 @@ describe('App handoff modal', () => {
     expect(accountCard).not.toBeNull();
 
     expect(within(accountCard!).queryByLabelText('Manual reset expiry')).toBeNull();
-    expect(within(accountCard!).getByLabelText('Reset 1: 2026-07-01T08:00:00+08:00')).toBeTruthy();
-    expect(within(accountCard!).getByLabelText('Reset 2: 2026-07-12T08:00:00+08:00')).toBeTruthy();
+    expect(within(accountCard!).getByLabelText('Expires: 2026-07-01 08:00')).toBeTruthy();
+    expect(within(accountCard!).getByLabelText('Expires: 2026-07-12 08:00')).toBeTruthy();
     expect(within(accountCard!).queryByRole('button', { name: 'Handoff' })).toBeNull();
     expect(within(accountCard!).getAllByRole('button', { name: /reset codex-c quota/i })).toHaveLength(1);
 
