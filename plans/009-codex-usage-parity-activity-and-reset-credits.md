@@ -910,7 +910,7 @@ All must hold:
 - [x] If API expiry is absent, `~/.codex/lam/reset-credit-expiry.json` can
   provide a manual expiry override without adding any new UI.
 - [x] All commands in Step 8 pass.
-- [ ] `plans/README.md` marks Plan 009 status appropriately. Skipped by executor override; reviewer maintains the index.
+- [x] `plans/README.md` marks Plan 009 status appropriately. Maintained in the parent workspace index.
 
 ## STOP Conditions
 
