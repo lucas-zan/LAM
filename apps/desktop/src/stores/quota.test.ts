@@ -6,6 +6,7 @@ import * as api from "../lib/api";
 vi.mock("../lib/api", () => ({
   refreshAllQuotas: vi.fn(),
   getProfileQuota: vi.fn(),
+  resetProfileQuota: vi.fn(),
   listCachedQuotas: vi.fn(),
   syncTrayQuota: vi.fn(),
 }));
@@ -53,6 +54,7 @@ beforeEach(() => {
   useQuotaStore.setState({
     quotas: [],
     refreshingQuotaIds: [],
+    resettingQuotaIds: [],
     _timerId: null,
     _intervalId: null,
   });
@@ -120,5 +122,22 @@ describe("useQuotaStore", () => {
       staleness: "fresh",
     });
     expect(useAppStore.getState().error).toBe("");
+  });
+
+  it("resets an account quota and merges the fresh snapshot", async () => {
+    const fresh = { ...snapshot, resetCreditCount: 0, primaryUsedPercent: 3 };
+    vi.mocked(api.resetProfileQuota).mockResolvedValue({
+      snapshot: fresh,
+      outcome: "reset",
+      operationId: "op-1",
+    });
+
+    await useQuotaStore.getState().resetAccountQuota("a");
+
+    expect(api.resetProfileQuota).toHaveBeenCalledWith("a");
+    expect(useQuotaStore.getState().quotas).toEqual([fresh]);
+    expect(useQuotaStore.getState().resettingQuotaIds).toEqual([]);
+    expect(useAppStore.getState().status).toBe("Reset quota: reset");
+    expect(api.syncTrayQuota).toHaveBeenCalled();
   });
 });

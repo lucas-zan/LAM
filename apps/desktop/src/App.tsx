@@ -98,8 +98,15 @@ export function App() {
   } = useAccountStore();
   const { query, setQuery, resume, copyResume, openResume, openSessionDetails, filteredSessions } =
     useSessionStore();
-  const { quotas, refreshingQuotaIds, refreshAccountQuota, startAutoRefresh, stopAutoRefresh } =
-    useQuotaStore();
+  const {
+    quotas,
+    refreshingQuotaIds,
+    resettingQuotaIds,
+    refreshAccountQuota,
+    resetAccountQuota,
+    startAutoRefresh,
+    stopAutoRefresh,
+  } = useQuotaStore();
   const {
     summary: usageSummary,
     refreshing: refreshingUsage,
@@ -667,7 +674,9 @@ export function App() {
             relayLatest={relayResumeTo}
             currentSession={activeSession}
             refreshAccountQuota={refreshAccountQuota}
+            resetAccountQuota={resetAccountQuota}
             refreshingQuotaIds={refreshingQuotaIds}
+            resettingQuotaIds={resettingQuotaIds}
             antigravityQuota={antigravityQuota}
             refreshingAntigravity={refreshingAntigravity}
             onRefreshAntigravity={() => void loadAntigravity(true)}

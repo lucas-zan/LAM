@@ -195,13 +195,29 @@ export type UsageQuotaSnapshot = {
   resetCreditCount?: number | null;
   resetCreditExpiresAt?: string | null;
   resetCreditExpirySource?: 'api' | 'manual_config' | 'unknown' | null;
+  resetCreditDetails?: ResetCreditDetail[];
+  resetCreditDetailStatus?: 'available' | 'unsupported' | 'unavailable' | 'disabled' | null;
+  resetCreditDetailError?: string | null;
   alerts: string[];
   suggestedActions: string[];
+};
+
+export type ResetCreditDetail = {
+  id?: string | null;
+  status?: string | null;
+  expiresAt?: string | null;
+  source: 'api' | 'manual_config';
 };
 
 export type QuotaRefreshResult = {
   snapshots: UsageQuotaSnapshot[];
   warnings: string[];
+};
+
+export type ResetQuotaResult = {
+  snapshot: UsageQuotaSnapshot;
+  outcome: string;
+  operationId: string;
 };
 
 export type UsageRefreshResult = {

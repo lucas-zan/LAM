@@ -22,7 +22,8 @@ use localagentmanager_core::{
     process_uploaded_credentials, read_pat_metadata, refresh_all_quotas as core_refresh_all_quotas,
     refresh_usage_index_with_options as core_refresh_usage_index,
     relay_resume_session as core_relay_resume_session,
-    rename_account_plan as core_rename_account_plan, reset_usage_index as core_reset_usage_index,
+    rename_account_plan as core_rename_account_plan,
+    reset_profile_quota as core_reset_profile_quota, reset_usage_index as core_reset_usage_index,
     resolve_home_root, switch_to_pat_account as core_switch_to_pat_account,
     sync_plan as core_sync_plan, test_provider as core_test_provider,
     update_pat_session_auth as core_update_pat_session_auth,
@@ -31,9 +32,10 @@ use localagentmanager_core::{
     CodexAccount, CodexSession, CpaExport, CreateAccountRequest, CreateProviderRequest,
     CreateRelayRequest, CreateResult, OperationPlan, ProviderProfile, QuotaRefreshResult,
     RelayResumeRequest, RelayResumeResult, RenameAccountRequest, RenameAccountResult,
-    ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult, TokenExpirationStatus,
-    UpdateProviderRequest, UploadedCredentials, UsageDashboard, UsageDashboardRequest,
-    UsageQuotaSnapshot, UsageRefreshResult, UsageSummary, UsageSummaryRequest,
+    ResetQuotaResult, ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult,
+    TokenExpirationStatus, UpdateProviderRequest, UploadedCredentials, UsageDashboard,
+    UsageDashboardRequest, UsageQuotaSnapshot, UsageRefreshResult, UsageSummary,
+    UsageSummaryRequest,
 };
 use std::sync::Mutex;
 use tauri::Emitter;
@@ -327,6 +329,12 @@ pub async fn refresh_all_quotas(
 ) -> Result<QuotaRefreshResult, AppError> {
     let home = home_root()?;
     run_blocking(move || core_refresh_all_quotas(&home, profile_ids)).await
+}
+
+#[tauri::command]
+pub async fn reset_profile_quota(profile_id: String) -> Result<ResetQuotaResult, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_reset_profile_quota(&home, &profile_id)).await
 }
 
 #[tauri::command]

@@ -839,6 +839,22 @@ cd apps/desktop/src-tauri && cargo test
 make check
 ```
 
+Follow-up execution result on 2026-06-29:
+
+- Implemented per-credit reset expiry details, nearest-expiry ordering, and UTC
+  display preservation.
+- Implemented `Reset quota` through app-server
+  `account/rateLimitResetCredit/consume` with per-account locking, persisted
+  idempotency key, unknown-outcome retry reuse, and forced quota refresh.
+- Added frontend account-card reset action and read-only manual expiry rows.
+- Verified with fake app-server success, `noCredit`, and unknown transport
+  paths; live app-server `account/rateLimits/read` smoke passed for both main
+  and PAT homes without consuming a reset credit.
+- Did not run live consume/reset because it would spend a real reset credit.
+- Final commands passed: `cargo test quota`, targeted Vitest, full Vitest,
+  `npm run build`, `npm run test:ui`, `cargo fmt -- --check`,
+  `cargo clippy -- -D warnings`, `cargo test`, and `make check`.
+
 Expected: every command exits 0.
 
 Optional live smoke, only if the operator wants real account verification:
@@ -950,3 +966,68 @@ LAM's parser and fallback diagnostics.
 - Unknown expiry remains explicit: quota refresh records the unknown-expiry path
   when probes do not return a stable field, and
   `~/.codex/lam/reset-credit-expiry.json` is supported as the manual fallback.
+
+## Follow-up Extension: Manual reset expiry list and Reset quota
+
+This follow-up implements the reset-credit detail and reset action requested
+after the original Plan 009 delivery. It supersedes the original read-only
+"do not consume reset credits" boundary only for the explicit `Reset quota`
+flow.
+
+Source design note:
+
+- `docs/TAURI2_RUST_CODEX_RESET_EXPIRY_AND_QUOTA_RESET.md` distinguishes quota
+  window reset time, manual reset-credit expiry, and subscription expiry.
+- Do not derive manual reset-credit expiry from quota window reset,
+  subscription expiry, or grant date.
+- Preserve upstream/manual `expiresAt` as RFC3339/ISO-8601 UTC text for display;
+  do not convert manual reset expiry to GMT+8.
+
+Implementation rules:
+
+- Keep aggregate fields `resetCreditCount`, `resetCreditExpiresAt`, and
+  `resetCreditExpirySource`.
+- Add per-credit details with optional `id`, `status`, `expiresAt`, and
+  `source`, plus detail status/error diagnostics.
+- Accept detail wrappers named `credits`, `rate_limit_reset_credits.credits`,
+  and `rateLimitResetCredits.credits`.
+- Sort visible reset-credit rows by nearest valid `expiresAt` first; credits
+  without expiry sort last. Label the sorted rows as `Reset 1`, `Reset 2`, etc.
+- API detail wins over manual config. Manual config at
+  `~/.codex/lam/reset-credit-expiry.json` fills only absent expiry data and has
+  no UI editor in this plan.
+- Detail endpoint failure, unsupported schema, or invalid manual config must not
+  fail quota refresh. Keep aggregate count and render unknown expiry when no
+  valid expiry exists.
+- Do not log raw token values, raw private response bodies, or full credit IDs.
+
+Reset quota rules:
+
+- Use Codex app-server JSON-RPC
+  `account/rateLimitResetCredit/consume` with an idempotency key.
+- Treat `reset`, `alreadyRedeemed`, `nothingToReset`, and `noCredit` as resolved
+  outcomes, then force refresh quota instead of locally decrementing count.
+- Persist one operation UUID per account while pending or outcome is unknown.
+- Retry uncertain transport outcomes only with the same UUID.
+- Use a per-account lock so concurrent clicks cannot spend two credits.
+- Show `Reset quota` only when `resetCreditCount > 0`, require confirmation,
+  disable it while pending, and replace UI state with the fresh snapshot.
+
+Follow-up verification:
+
+- Rust tests cover per-credit parser wrappers, UTC preservation, invalid expiry,
+  nearest-expiry sorting, detail failure fallback, manual fallback, reset
+  operation UUID reuse, and app-server outcomes.
+- Frontend tests cover manual expiry rows, sorted rows, no-expiry row ordering,
+  reset button disabled/hidden state, confirmation, and state replacement from
+  fresh snapshots.
+- Final commands:
+
+```bash
+cd apps/desktop/src-tauri && cargo test quota
+cd apps/desktop && npm test -- --run src/lib/quota.test.ts src/stores/quota.test.ts src/App.handoff.test.tsx
+cd apps/desktop && npm run build
+cd apps/desktop/src-tauri && cargo fmt -- --check
+cd apps/desktop/src-tauri && cargo clippy -- -D warnings
+make check
+```

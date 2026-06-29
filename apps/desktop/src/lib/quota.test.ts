@@ -156,6 +156,21 @@ describe('resetCreditDisplay', () => {
     expect(display?.title).toContain('manual expiry');
   });
 
+  it('uses nearest per-credit expiry for dot phase without rewriting UTC', () => {
+    const display = resetCreditDisplay({
+      ...baseQuota,
+      resetCreditCount: 2,
+      resetCreditExpiresAt: '2026-08-01T00:00:00Z',
+      resetCreditExpirySource: 'api',
+      resetCreditDetails: [
+        { id: 'later', expiresAt: '2026-08-01T00:00:00Z', source: 'api' },
+        { id: 'soon', expiresAt: '2026-07-01T00:00:00Z', source: 'api' },
+      ],
+    });
+
+    expect(display?.title).toContain('2026-07-01T00:00:00Z');
+  });
+
   it('hides reset dots for zero or absent count', () => {
     expect(resetCreditDisplay({ ...baseQuota, resetCreditCount: 0 })).toBeNull();
     expect(resetCreditDisplay(baseQuota)).toBeNull();

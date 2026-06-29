@@ -13,6 +13,7 @@ import type {
   OperationPlan,
   ProviderProfile,
   QuotaRefreshResult,
+  ResetQuotaResult,
   RelayResumeRequest,
   RelayResumeResult,
   RenameAccountRequest,
@@ -128,6 +129,10 @@ export async function getProfileQuota(profileId: string, forceRefresh = false): 
 
 export async function refreshAllQuotas(profileIds?: string[]): Promise<QuotaRefreshResult> {
   return invoke<QuotaRefreshResult>("refresh_all_quotas", { profileIds });
+}
+
+export async function resetProfileQuota(profileId: string): Promise<ResetQuotaResult> {
+  return invoke<ResetQuotaResult>("reset_profile_quota", { profileId });
 }
 
 export async function listCachedQuotas(profileIds?: string[]): Promise<UsageQuotaSnapshot[]> {

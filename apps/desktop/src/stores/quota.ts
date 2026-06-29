@@ -10,11 +10,13 @@ const QUOTA_REFRESH_INTERVAL_MS = 2 * 60_000;
 interface QuotaState {
   quotas: UsageQuotaSnapshot[];
   refreshingQuotaIds: string[];
+  resettingQuotaIds: string[];
   _timerId: number | null;
   _intervalId: number | null;
 
   refreshQuotas: (profileIds?: string[]) => Promise<void>;
   refreshAccountQuota: (profileId: string) => void;
+  resetAccountQuota: (profileId: string) => Promise<void>;
   loadCachedQuotas: (profileIds?: string[]) => void;
   scheduleQuotaRefresh: (profileIds: string[], delayMs: number) => void;
   startAutoRefresh: (profileIds: string[]) => void;
@@ -26,6 +28,7 @@ interface QuotaState {
 export const useQuotaStore = create<QuotaState>()((set, get) => ({
   quotas: [],
   refreshingQuotaIds: [],
+  resettingQuotaIds: [],
   _timerId: null,
   _intervalId: null,
 
@@ -80,6 +83,24 @@ export const useQuotaStore = create<QuotaState>()((set, get) => ({
 
   refreshAccountQuota: (profileId) => {
     get().refreshQuotas([profileId]);
+  },
+
+  resetAccountQuota: async (profileId) => {
+    if (get().resettingQuotaIds.includes(profileId)) return;
+    useAppStore.getState().clearError();
+    set((s) => ({ resettingQuotaIds: [...s.resettingQuotaIds, profileId] }));
+    try {
+      const result = await api.resetProfileQuota(profileId);
+      set((s) => ({ quotas: mergeQuotaSnapshots(s.quotas, result.snapshot) }));
+      useAppStore.getState().setStatus(`Reset quota: ${result.outcome}`);
+      api.syncTrayQuota();
+    } catch (err) {
+      useAppStore.getState().setError(`${profileId}: ${formatError(err)}`);
+    } finally {
+      set((s) => ({
+        resettingQuotaIds: s.resettingQuotaIds.filter((id) => id !== profileId),
+      }));
+    }
   },
 
   loadCachedQuotas: (profileIds) => {

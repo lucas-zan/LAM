@@ -8,6 +8,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 const CODEX_APP_SERVER_QUOTA_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
@@ -52,8 +53,23 @@ pub struct UsageQuotaSnapshot {
     pub reset_credit_expires_at: Option<String>,
     #[serde(default)]
     pub reset_credit_expiry_source: Option<String>,
+    #[serde(default)]
+    pub reset_credit_details: Vec<ResetCreditDetail>,
+    #[serde(default)]
+    pub reset_credit_detail_status: Option<String>,
+    #[serde(default)]
+    pub reset_credit_detail_error: Option<String>,
     pub alerts: Vec<String>,
     pub suggested_actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetCreditDetail {
+    pub id: Option<String>,
+    pub status: Option<String>,
+    pub expires_at: Option<String>,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -61,6 +77,23 @@ pub struct UsageQuotaSnapshot {
 pub struct QuotaRefreshResult {
     pub snapshots: Vec<UsageQuotaSnapshot>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetQuotaResult {
+    pub snapshot: UsageQuotaSnapshot,
+    pub outcome: String,
+    pub operation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct ResetOperation {
+    id: String,
+    account_id: String,
+    created_at_unix: u64,
+    status: String,
 }
 
 pub fn get_profile_quota(
@@ -147,6 +180,85 @@ pub fn refresh_all_quotas(
     })
 }
 
+pub fn reset_profile_quota(home_root: &Path, profile_id: &str) -> Result<ResetQuotaResult> {
+    let _guard = ResetAccountGuard::acquire(profile_id)?;
+    let account = quota_account(home_root, profile_id)?;
+    let operation = get_or_create_reset_operation(home_root, profile_id)?;
+    match consume_reset_credit_with_app_server(home_root, &account, &operation.id) {
+        Ok(outcome) => {
+            if matches!(
+                outcome.as_str(),
+                "reset" | "alreadyRedeemed" | "nothingToReset" | "noCredit"
+            ) {
+                clear_reset_operation(home_root, profile_id)?;
+                let mut snapshot = get_profile_quota(home_root, profile_id, true)?;
+                snapshot
+                    .alerts
+                    .push(format!("Reset quota outcome: {outcome}"));
+                Ok(ResetQuotaResult {
+                    snapshot,
+                    outcome,
+                    operation_id: operation.id,
+                })
+            } else {
+                mark_reset_operation(home_root, profile_id, &operation, "rejected")?;
+                Err(AppError::new(
+                    "CODEX_RESET_UNSUPPORTED_OUTCOME",
+                    format!("Unsupported reset quota outcome: {outcome}"),
+                ))
+            }
+        }
+        Err(err) if is_reset_outcome_unknown(&err) => {
+            mark_reset_operation(home_root, profile_id, &operation, "outcome_unknown")?;
+            Err(AppError::new(
+                "CODEX_RESET_OUTCOME_UNKNOWN",
+                format!(
+                    "{}; retry will reuse operation {}",
+                    err.message, operation.id
+                ),
+            ))
+        }
+        Err(err) => {
+            mark_reset_operation(home_root, profile_id, &operation, "rejected")?;
+            Err(err)
+        }
+    }
+}
+
+struct ResetAccountGuard {
+    profile_id: String,
+}
+
+impl ResetAccountGuard {
+    fn acquire(profile_id: &str) -> Result<Self> {
+        let mut active = reset_account_locks()
+            .lock()
+            .map_err(|_| AppError::new("CODEX_RESET_LOCK_FAILED", "reset lock poisoned"))?;
+        if !active.insert(profile_id.to_string()) {
+            return Err(AppError::new(
+                "CODEX_RESET_IN_PROGRESS",
+                format!("Reset quota already in progress for {profile_id}"),
+            ));
+        }
+        Ok(Self {
+            profile_id: profile_id.to_string(),
+        })
+    }
+}
+
+impl Drop for ResetAccountGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = reset_account_locks().lock() {
+            active.remove(&self.profile_id);
+        }
+    }
+}
+
+fn reset_account_locks() -> &'static Mutex<std::collections::HashSet<String>> {
+    static LOCKS: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
 fn quota_fallback_warning(profile_id: &str, snapshot: &UsageQuotaSnapshot) -> String {
     let detail = snapshot
         .alerts
@@ -157,6 +269,91 @@ fn quota_fallback_warning(profile_id: &str, snapshot: &UsageQuotaSnapshot) -> St
     format!(
         "{profile_id}: realtime quota unavailable; using {} quota{detail}",
         snapshot.staleness
+    )
+}
+
+fn reset_operation_path(home_root: &Path, profile_id: &str) -> PathBuf {
+    let safe = profile_id.replace(['/', '\\', ':'], "_");
+    config_root(home_root)
+        .join("quota-reset-operations")
+        .join(format!("{safe}.json"))
+}
+
+fn get_or_create_reset_operation(home_root: &Path, profile_id: &str) -> Result<ResetOperation> {
+    let path = reset_operation_path(home_root, profile_id);
+    if path.exists() {
+        let body = fs::read_to_string(&path).map_err(|err| {
+            AppError::new(
+                "CODEX_RESET_OPERATION_READ_FAILED",
+                format!("Failed to read reset operation: {err}"),
+            )
+        })?;
+        if let Ok(operation) = serde_json::from_str::<ResetOperation>(&body) {
+            if operation.account_id == profile_id
+                && matches!(operation.status.as_str(), "pending" | "outcome_unknown")
+            {
+                return Ok(operation);
+            }
+        }
+    }
+    let operation = ResetOperation {
+        id: uuid::Uuid::new_v4().to_string(),
+        account_id: profile_id.to_string(),
+        created_at_unix: system_secs(SystemTime::now()),
+        status: "pending".to_string(),
+    };
+    write_reset_operation(home_root, profile_id, &operation)?;
+    Ok(operation)
+}
+
+fn mark_reset_operation(
+    home_root: &Path,
+    profile_id: &str,
+    operation: &ResetOperation,
+    status: &str,
+) -> Result<()> {
+    let mut next = operation.clone();
+    next.status = status.to_string();
+    write_reset_operation(home_root, profile_id, &next)
+}
+
+fn write_reset_operation(
+    home_root: &Path,
+    profile_id: &str,
+    operation: &ResetOperation,
+) -> Result<()> {
+    let body = serde_json::to_string_pretty(operation).map_err(|err| {
+        AppError::new(
+            "CODEX_RESET_OPERATION_INVALID",
+            format!("Failed to serialize reset operation: {err}"),
+        )
+    })?;
+    write_file_private(
+        &reset_operation_path(home_root, profile_id),
+        &format!("{body}\n"),
+    )
+}
+
+fn clear_reset_operation(home_root: &Path, profile_id: &str) -> Result<()> {
+    let path = reset_operation_path(home_root, profile_id);
+    if path.exists() {
+        fs::remove_file(path).map_err(|err| {
+            AppError::new(
+                "CODEX_RESET_OPERATION_CLEAR_FAILED",
+                format!("Failed to clear reset operation: {err}"),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn is_reset_outcome_unknown(err: &AppError) -> bool {
+    matches!(
+        err.code.as_str(),
+        "CODEX_APP_SERVER_TIMEOUT"
+            | "CODEX_APP_SERVER_WAIT_FAILED"
+            | "CODEX_APP_SERVER_UNAVAILABLE"
+            | "CODEX_APP_SERVER_PROTOCOL_UNRESOLVED"
     )
 }
 
@@ -178,6 +375,9 @@ fn unavailable_quota_snapshot(profile_id: &str, alert: Option<String>) -> UsageQ
         reset_credit_count: None,
         reset_credit_expires_at: None,
         reset_credit_expiry_source: None,
+        reset_credit_details: Vec::new(),
+        reset_credit_detail_status: None,
+        reset_credit_detail_error: None,
         alerts: alert.into_iter().collect(),
         suggested_actions: Vec::new(),
     }
@@ -472,6 +672,173 @@ fn try_codex_app_server_rate_limit_quota(
     }
 }
 
+fn consume_reset_credit_with_app_server(
+    home_root: &Path,
+    account: &CodexAccount,
+    idempotency_key: &str,
+) -> Result<String> {
+    let quota_auth_home = if account.has_personal_access_token {
+        None
+    } else {
+        prepare_quota_auth_home(account)?
+    };
+    let codex_home = quota_auth_home
+        .as_ref()
+        .map(QuotaAuthHome::path)
+        .unwrap_or(&account.codex_home);
+    let mut child = spawn_codex_app_server(home_root, codex_home)?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(
+                b"{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"lam\",\"version\":\"0.1\"},\"capabilities\":{\"experimentalApi\":true}}}\n",
+            )
+            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
+        let request = serde_json::json!({
+            "id": 2,
+            "method": "account/rateLimitResetCredit/consume",
+            "params": { "idempotencyKey": idempotency_key }
+        });
+        let body = serde_json::to_string(&request)
+            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
+        stdin
+            .write_all(format!("{body}\n").as_bytes())
+            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
+        stdin
+            .flush()
+            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
+    } else {
+        terminate_child(&mut child);
+        return Err(AppError::new(
+            "CODEX_APP_SERVER_NO_STDIN",
+            "stdin not available",
+        ));
+    }
+    let Some(stdout) = child.stdout.take() else {
+        terminate_child(&mut child);
+        return Err(AppError::new(
+            "CODEX_APP_SERVER_NO_STDOUT",
+            "stdout not available",
+        ));
+    };
+    let Some(stderr) = child.stderr.take() else {
+        terminate_child(&mut child);
+        return Err(AppError::new(
+            "CODEX_APP_SERVER_NO_STDERR",
+            "stderr not available",
+        ));
+    };
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let (tx_err, rx_err) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let mut reader = std::io::BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let _ = tx.send(line.clone());
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let mut reader = std::io::BufReader::new(stderr);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let trimmed = line.trim().to_string();
+                    if !trimmed.is_empty() {
+                        let _ = tx_err.send(trimmed);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    let deadline = std::time::Instant::now() + CODEX_APP_SERVER_QUOTA_TIMEOUT;
+    let mut last_stderr: Option<String> = None;
+    loop {
+        while let Ok(line) = rx_err.try_recv() {
+            last_stderr = Some(line);
+        }
+        while let Ok(line) = rx.try_recv() {
+            if let Some(outcome) = parse_reset_consume_line(&line)? {
+                terminate_child(&mut child);
+                return Ok(outcome);
+            }
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|err| AppError::new("CODEX_APP_SERVER_WAIT_FAILED", err.to_string()))?
+        {
+            let _ = child.wait();
+            let stderr_hint = last_stderr
+                .as_deref()
+                .map(|line| format!(" ({line})"))
+                .unwrap_or_default();
+            return Err(if status.success() {
+                AppError::new(
+                    "CODEX_APP_SERVER_PROTOCOL_UNRESOLVED",
+                    format!(
+                        "app-server exited before a reset response was parsed{}",
+                        stderr_hint
+                    ),
+                )
+            } else {
+                AppError::new(
+                    "CODEX_APP_SERVER_FAILED",
+                    format!(
+                        "app-server exited before reset could be consumed{}",
+                        stderr_hint
+                    ),
+                )
+            });
+        }
+        if std::time::Instant::now() > deadline {
+            terminate_child(&mut child);
+            let stderr_hint = last_stderr
+                .as_deref()
+                .map(|line| format!(" ({line})"))
+                .unwrap_or_default();
+            return Err(AppError::new(
+                "CODEX_APP_SERVER_TIMEOUT",
+                format!("app-server reset request timed out{}", stderr_hint),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+fn parse_reset_consume_line(line: &str) -> Result<Option<String>> {
+    let Ok(value) = serde_json::from_str::<Value>(line) else {
+        return Ok(None);
+    };
+    if value.get("id").and_then(Value::as_i64) != Some(2) {
+        return Ok(None);
+    }
+    if let Some(error) = value.get("error") {
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("reset quota failed");
+        return Err(AppError::new("CODEX_RESET_FAILED", message));
+    }
+    let result = value.get("result").unwrap_or(&value);
+    let outcome = result
+        .as_str()
+        .or_else(|| result.get("outcome").and_then(Value::as_str))
+        .or_else(|| result.get("status").and_then(Value::as_str))
+        .or_else(|| result.get("type").and_then(Value::as_str));
+    Ok(outcome.map(str::to_string))
+}
+
 fn try_chatgpt_usage_quota(
     home_root: &Path,
     account: &CodexAccount,
@@ -565,6 +932,30 @@ fn enrich_reset_credit_expiry(
     };
 
     if let Some(token) = token.as_deref() {
+        match probe_reset_credit_details(token) {
+            Ok(Some((count, details))) => {
+                if snapshot.reset_credit_count.is_none() {
+                    snapshot.reset_credit_count = count.map(i64::from);
+                }
+                let first_expiry = details.iter().find_map(|detail| detail.expires_at.clone());
+                if let Some(first) = first_expiry {
+                    snapshot.reset_credit_expires_at = Some(first);
+                    snapshot.reset_credit_expiry_source = Some("api".to_string());
+                    snapshot.reset_credit_details = details;
+                    snapshot.reset_credit_detail_status = Some("available".to_string());
+                    return Ok(());
+                }
+                snapshot.reset_credit_details = details;
+                snapshot.reset_credit_detail_status = Some("available".to_string());
+            }
+            Ok(None) => {
+                snapshot.reset_credit_detail_status = Some("unsupported".to_string());
+            }
+            Err(err) => {
+                snapshot.reset_credit_detail_status = Some("unavailable".to_string());
+                snapshot.reset_credit_detail_error = Some(err.code);
+            }
+        }
         match probe_reset_credit_expiry_sources(token) {
             Ok(Some(expires_at)) => {
                 snapshot.reset_credit_expires_at = Some(expires_at);
@@ -584,6 +975,46 @@ fn enrich_reset_credit_expiry(
     Ok(())
 }
 
+fn probe_reset_credit_details(
+    access_token: &str,
+) -> Result<Option<(Option<u32>, Vec<ResetCreditDetail>)>> {
+    let url = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
+    let curl_config = std::env::temp_dir().join(format!(
+        "lam-reset-credit-details-{}.curl",
+        uuid::Uuid::new_v4()
+    ));
+    write_file_private(
+        &curl_config,
+        &format!(
+            "header = \"Authorization: Bearer {}\"\nheader = \"Accept: application/json\"\nheader = \"OpenAI-Beta: codex-1\"\nheader = \"Originator: Codex Desktop\"\n",
+            access_token.replace('"', "\\\"")
+        ),
+    )?;
+    let output = Command::new("curl")
+        .args(["-sS", "--fail", "--max-time", "12", "--config"])
+        .arg(&curl_config)
+        .arg(url)
+        .output();
+    let _ = fs::remove_file(&curl_config);
+    let output =
+        output.map_err(|err| AppError::new("CODEX_RESET_DETAIL_UNAVAILABLE", err.to_string()))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let value: Value = serde_json::from_slice(&output.stdout).map_err(|err| {
+        AppError::new(
+            "CODEX_RESET_DETAIL_INVALID",
+            format!("Invalid reset-credit detail response: {err}"),
+        )
+    })?;
+    let count = extract_reset_credit_count(&value).and_then(|value| u32::try_from(value).ok());
+    let details = extract_reset_credit_details(&value, "api");
+    if count.is_none() && details.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((count, details)))
+}
+
 fn parse_chatgpt_usage_snapshot(value: &Value, profile_id: &str) -> Result<UsageQuotaSnapshot> {
     let rate_limit = value
         .get("rate_limit")
@@ -597,6 +1028,7 @@ fn parse_chatgpt_usage_snapshot(value: &Value, profile_id: &str) -> Result<Usage
     let secondary_used = secondary.and_then(extract_percent);
     let plan_type = extract_string(value, &["plan_type", "planType"]);
     let reset_credit_expires_at = extract_reset_credit_expiry(value);
+    let reset_credit_details = extract_reset_credit_details(value, "api");
 
     Ok(UsageQuotaSnapshot {
         profile_id: profile_id.to_string(),
@@ -615,6 +1047,9 @@ fn parse_chatgpt_usage_snapshot(value: &Value, profile_id: &str) -> Result<Usage
         reset_credit_count: extract_reset_credit_count(value),
         reset_credit_expiry_source: reset_credit_expires_at.as_ref().map(|_| "api".to_string()),
         reset_credit_expires_at,
+        reset_credit_details,
+        reset_credit_detail_status: None,
+        reset_credit_detail_error: None,
         alerts: Vec::new(),
         suggested_actions: if primary_used >= 90 {
             vec!["Session quota is high; switch profile or use relay.".into()]
@@ -817,6 +1252,7 @@ fn parse_rate_limit_snapshot_line(line: &str, profile_id: &str) -> Option<UsageQ
             .and_then(|value| extract_string(value, &["plan_type", "planType"]))
     });
     let reset_credit_expires_at = extract_reset_credit_expiry(result);
+    let reset_credit_details = extract_reset_credit_details(result, "api");
 
     Some(UsageQuotaSnapshot {
         profile_id: profile_id.to_string(),
@@ -835,6 +1271,9 @@ fn parse_rate_limit_snapshot_line(line: &str, profile_id: &str) -> Option<UsageQ
         reset_credit_count: extract_reset_credit_count(result),
         reset_credit_expiry_source: reset_credit_expires_at.as_ref().map(|_| "api".to_string()),
         reset_credit_expires_at,
+        reset_credit_details,
+        reset_credit_detail_status: None,
+        reset_credit_detail_error: None,
         alerts: Vec::new(),
         suggested_actions: if primary_used >= 90 {
             vec!["Session quota is high; switch profile or use relay.".into()]
@@ -978,6 +1417,49 @@ fn extract_reset_credit_expiry(value: &Value) -> Option<String> {
         }
         None
     })
+}
+
+fn extract_reset_credit_details(value: &Value, source: &str) -> Vec<ResetCreditDetail> {
+    let root = reset_credit_node(value).unwrap_or(value);
+    let credits = root
+        .get("credits")
+        .or_else(|| value.get("credits"))
+        .and_then(Value::as_array);
+    let mut details = credits
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, credit)| parse_reset_credit_detail(index, credit, source))
+        .collect::<Vec<_>>();
+    details.sort_by_key(reset_credit_sort_key);
+    details
+}
+
+fn parse_reset_credit_detail(
+    index: usize,
+    value: &Value,
+    source: &str,
+) -> Option<ResetCreditDetail> {
+    let id = extract_string(value, &["id"]).or_else(|| Some(format!("index-{index}")));
+    let status = extract_string(value, &["status"]);
+    let expires_at = extract_string(value, &["expiresAt", "expires_at"])
+        .filter(|value| chrono::DateTime::parse_from_rfc3339(value).is_ok());
+    Some(ResetCreditDetail {
+        id,
+        status,
+        expires_at,
+        source: source.to_string(),
+    })
+}
+
+fn reset_credit_sort_key(detail: &ResetCreditDetail) -> (i64, String) {
+    let timestamp = detail
+        .expires_at
+        .as_deref()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|dt| dt.timestamp())
+        .unwrap_or(i64::MAX);
+    (timestamp, detail.id.clone().unwrap_or_default())
 }
 
 fn epoch_to_rfc3339(epoch: i64) -> Option<String> {
@@ -1170,6 +1652,71 @@ mod tests {
 
         assert_eq!(snapshot.reset_credit_count, Some(3));
         assert_eq!(snapshot.reset_credit_expires_at, None);
+    }
+
+    #[test]
+    fn reset_credit_details_sort_by_nearest_expiry_and_preserve_utc() {
+        let value = serde_json::json!({
+            "rateLimitResetCredits": {
+                "availableCount": 3,
+                "credits": [
+                    {"id": "later", "status": "available", "expiresAt": "2026-07-12T00:00:00Z"},
+                    {"id": "missing", "status": "available"},
+                    {"id": "soon", "status": "available", "expiresAt": "2026-07-01T00:00:00Z"}
+                ]
+            }
+        });
+
+        let details = extract_reset_credit_details(&value, "api");
+
+        assert_eq!(details.len(), 3);
+        assert_eq!(details[0].id.as_deref(), Some("soon"));
+        assert_eq!(
+            details[0].expires_at.as_deref(),
+            Some("2026-07-01T00:00:00Z")
+        );
+        assert_eq!(details[1].id.as_deref(), Some("later"));
+        assert_eq!(details[2].id.as_deref(), Some("missing"));
+    }
+
+    #[test]
+    fn reset_credit_details_accept_snake_case_wrapper_and_ignore_bad_expiry() {
+        let value = serde_json::json!({
+            "rate_limit_reset_credits": {
+                "credits": [
+                    {"id": "bad", "expires_at": "2026-07-01 00:00:00"},
+                    {"id": "ok", "expires_at": "2026-07-02T00:00:00Z"}
+                ]
+            }
+        });
+
+        let details = extract_reset_credit_details(&value, "api");
+
+        assert_eq!(details.len(), 2);
+        assert_eq!(details[0].id.as_deref(), Some("ok"));
+        assert_eq!(
+            details[0].expires_at.as_deref(),
+            Some("2026-07-02T00:00:00Z")
+        );
+        assert_eq!(details[1].id.as_deref(), Some("bad"));
+        assert_eq!(details[1].expires_at, None);
+    }
+
+    #[test]
+    fn reset_consume_parser_covers_supported_outcomes_and_errors() {
+        for outcome in ["reset", "alreadyRedeemed", "nothingToReset", "noCredit"] {
+            let line = serde_json::json!({"id": 2, "result": {"outcome": outcome}}).to_string();
+            assert_eq!(
+                parse_reset_consume_line(&line).unwrap(),
+                Some(outcome.to_string())
+            );
+        }
+        let ignored = serde_json::json!({"id": 1, "result": {"outcome": "reset"}}).to_string();
+        assert_eq!(parse_reset_consume_line(&ignored).unwrap(), None);
+        let error = serde_json::json!({"id": 2, "error": {"message": "nope"}}).to_string();
+        let err = parse_reset_consume_line(&error).unwrap_err();
+        assert_eq!(err.code, "CODEX_RESET_FAILED");
+        assert_eq!(err.message, "nope");
     }
 
     #[test]

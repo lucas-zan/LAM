@@ -5,6 +5,7 @@ import {
   countAccountsWithQuotaData,
   resetCreditDisplay,
   quotaDisplayWindows,
+  sortedResetCreditDetails,
 } from '../lib/quota';
 import type {
   AccountNoteUpdate,
@@ -152,7 +153,9 @@ export function Overview({
   relayLatest,
   currentSession,
   refreshAccountQuota,
+  resetAccountQuota = async () => {},
   refreshingQuotaIds,
+  resettingQuotaIds = [],
   antigravityQuota,
   refreshingAntigravity,
   onRefreshAntigravity,
@@ -172,7 +175,9 @@ export function Overview({
   relayLatest: (targetAccount: CodexAccount) => void;
   currentSession?: CodexSession;
   refreshAccountQuota: (profileId: string) => void;
+  resetAccountQuota?: (profileId: string) => Promise<void>;
   refreshingQuotaIds: string[];
+  resettingQuotaIds?: string[];
   antigravityQuota: AntigravityQuotaResponse | null;
   refreshingAntigravity: boolean;
   onRefreshAntigravity: () => void;
@@ -247,7 +252,9 @@ export function Overview({
           relayLatest={relayLatest}
           currentSession={currentSession}
           refreshAccountQuota={refreshAccountQuota}
+          resetAccountQuota={resetAccountQuota}
           refreshingQuotaIds={refreshingQuotaIds}
+          resettingQuotaIds={resettingQuotaIds}
           onSaveAccountNote={onSaveAccountNote}
           variant="overview"
           authMode={authMode}
@@ -328,7 +335,9 @@ export function Accounts({
   relayLatest,
   currentSession,
   refreshAccountQuota,
+  resetAccountQuota = async () => {},
   refreshingQuotaIds,
+  resettingQuotaIds = [],
   onSaveAccountNote,
   variant = 'default',
   authMode = 'oauth',
@@ -345,7 +354,9 @@ export function Accounts({
   relayLatest: (targetAccount: CodexAccount) => void;
   currentSession?: CodexSession;
   refreshAccountQuota: (profileId: string) => void;
+  resetAccountQuota?: (profileId: string) => Promise<void>;
   refreshingQuotaIds: string[];
+  resettingQuotaIds?: string[];
   onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
   variant?: 'default' | 'overview';
   authMode?: 'oauth' | 'pat';
@@ -404,8 +415,11 @@ export function Accounts({
       <div className="cardGrid accountCardGrid">
         {orderedAccounts.map((account) => {
           const isRefreshing = refreshingQuotaIds.includes(account.id);
+          const isResetting = resettingQuotaIds.includes(account.id);
           const quota = quotas.find((item) => item.profileId === account.id);
           const resetCredits = resetCreditDisplay(quota);
+          const resetCreditDetails = sortedResetCreditDetails(quota);
+          const canResetQuota = (quota?.resetCreditCount ?? 0) > 0 && !isResetting;
           const providerLabel = account.providerId ?? 'unknown';
           const modelLabel = account.model ?? 'unknown';
           const isActiveAccount =
@@ -445,6 +459,28 @@ export function Accounts({
                   >
                     ↻
                   </UIButton>
+                  {quota?.resetCreditCount ? (
+                    <UIButton
+                      variant="ghost"
+                      size="sm"
+                      className="resetQuotaBtn"
+                      title={`Reset ${account.displayName} quota`}
+                      aria-label={`Reset ${account.displayName} quota`}
+                      disabled={!canResetQuota}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (
+                          window.confirm(
+                            `Consume one reset credit for ${account.displayName}?`,
+                          )
+                        ) {
+                          void resetAccountQuota(account.id);
+                        }
+                      }}
+                    >
+                      {isResetting ? 'Resetting' : 'Reset quota'}
+                    </UIButton>
+                  ) : null}
                 </div>
               </div>
               <div className="cardTagsRow">
@@ -486,6 +522,17 @@ export function Accounts({
                   />
                 ))}
               </div>
+              {resetCreditDetails.length ? (
+                <div className="resetCreditExpiryList" aria-label="Manual reset expiry">
+                  <strong>Manual reset expiry</strong>
+                  {resetCreditDetails.map((credit, index) => (
+                    <div key={credit.id ?? index} className="resetCreditExpiryRow">
+                      <span>Reset {index + 1}</span>
+                      <time>{credit.expiresAt ?? '--'}</time>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               <div className="cardActions">
                 <UIButton
                   size="sm"
