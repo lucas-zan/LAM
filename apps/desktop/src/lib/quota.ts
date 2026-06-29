@@ -11,6 +11,18 @@ export type QuotaDisplayWindow = {
   variant: QuotaWindowVariant;
 };
 
+export type ResetCreditDot = {
+  key: string;
+  color: 'blue' | 'green' | 'yellow' | 'red' | 'black' | 'unknown';
+  title: string;
+};
+
+export type ResetCreditDisplay = {
+  dots: ResetCreditDot[];
+  overflow: number;
+  title: string;
+};
+
 export function quotaRemainingPercent(used?: number | null): number | null {
   if (used === null || used === undefined) return null;
   return Math.max(0, 100 - used);
@@ -111,6 +123,71 @@ export function quotaDisplayWindows(quota?: UsageQuotaSnapshot | null): QuotaDis
     });
   }
   return windows;
+}
+
+export function resetCreditDisplay(quota?: UsageQuotaSnapshot | null): ResetCreditDisplay | null {
+  const count = quota?.resetCreditCount ?? 0;
+  if (!quota || count <= 0) return null;
+  const visible = Math.min(count, 5);
+  const details = sortedResetCreditDetails(quota);
+  const expiresAt = details.find((credit) => credit.expiresAt)?.expiresAt ?? quota.resetCreditExpiresAt;
+  const fallbackColor = resetCreditColor(expiresAt);
+  const source =
+    expiresAt && quota.resetCreditExpirySource === 'manual_config'
+      ? `manual expiry ${expiresAt}`
+      : expiresAt
+        ? `expires ${expiresAt}`
+        : 'expiry unknown';
+  return {
+    dots: Array.from({ length: visible }, (_, index) => {
+      const dotExpiresAt = details[index]?.expiresAt;
+      return {
+        key: `${quota.profileId}-${index}`,
+        color: dotExpiresAt ? resetCreditColor(dotExpiresAt) : fallbackColor,
+        title: dotExpiresAt ? `Expires: ${dotExpiresAt.replace('T', ' ').slice(0, 16)}` : 'Expiry unknown',
+      };
+    }),
+    overflow: Math.max(0, count - visible),
+    title: `${count} reset credits; ${source}`,
+  };
+}
+
+export function sortedResetCreditDetails(quota?: UsageQuotaSnapshot | null) {
+  return (quota?.resetCreditDetails ?? []).map((credit) => ({
+    ...credit,
+    expiresAt: credit.source === 'api' ? resetCreditShanghaiTime(credit.expiresAt) : credit.expiresAt,
+  })).sort((a, b) => {
+    const aTime = resetCreditTime(a.expiresAt);
+    const bTime = resetCreditTime(b.expiresAt);
+    if (aTime !== bTime) return aTime - bTime;
+    return (a.id ?? '').localeCompare(b.id ?? '');
+  });
+}
+
+function resetCreditShanghaiTime(expiresAt?: string | null): string | null | undefined {
+  if (!expiresAt) return expiresAt;
+  const parsed = Date.parse(expiresAt);
+  if (!Number.isFinite(parsed)) return expiresAt;
+  const date = new Date(parsed + 8 * 3_600_000);
+  return `${date.toISOString().slice(0, 19)}+08:00`;
+}
+
+function resetCreditTime(expiresAt?: string | null): number {
+  if (!expiresAt) return Number.POSITIVE_INFINITY;
+  const parsed = Date.parse(expiresAt);
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+}
+
+function resetCreditColor(expiresAt?: string | null): ResetCreditDot['color'] {
+  if (!expiresAt) return 'unknown';
+  const parsed = Date.parse(expiresAt);
+  if (!Number.isFinite(parsed)) return 'unknown';
+  const days = Math.ceil((parsed - Date.now()) / 86_400_000);
+  if (days > 24) return 'blue';
+  if (days >= 19) return 'green';
+  if (days >= 13) return 'yellow';
+  if (days >= 7) return 'red';
+  return 'black';
 }
 
 function quotaWindowLabels(

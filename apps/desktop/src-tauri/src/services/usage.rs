@@ -1,3 +1,5 @@
+use super::account::{list_accounts, CodexAccount};
+use super::quota::spawn_codex_app_server;
 use crate::{AppError, Result};
 use chrono::{Datelike, Duration as ChronoDuration, Local, NaiveDate, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -5,11 +7,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::process::Child;
 use std::sync::Mutex;
 
 const PARSER_ADAPTER_VERSION: &str = "lam-codex-jsonl-v1";
+const CODEX_APP_SERVER_USAGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 static REFRESH_LOCK: Mutex<()> = Mutex::new(());
 const KNOWN_NON_TOKEN_EVENT_MSG_TYPES: &[&str] = &[
     "agent_message",
@@ -101,8 +105,35 @@ pub struct UsageSummary {
     pub estimated_cost_usd: f64,
     pub pricing_coverage: UsagePricingCoverage,
     pub diagnostics: UsageDiagnostics,
+    pub headline_stats: UsageHeadlineStats,
+    pub activity_buckets: Vec<UsageActivityBucket>,
     pub top_threads: Vec<UsageThreadSummary>,
     pub recent_calls: Vec<UsageCallRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageHeadlineStats {
+    pub lifetime_tokens: Option<i64>,
+    pub peak_daily_tokens: Option<i64>,
+    pub longest_running_turn_sec: Option<i64>,
+    pub current_streak_days: Option<i64>,
+    pub longest_streak_days: Option<i64>,
+    pub source: String,
+    pub local_total_tokens: i64,
+    pub codex_total_tokens: Option<i64>,
+    pub token_delta: Option<i64>,
+    pub token_delta_percent: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageActivityBucket {
+    pub date: String,
+    pub calls: i64,
+    pub tokens: i64,
+    pub cumulative_calls: i64,
+    pub cumulative_tokens: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -353,6 +384,7 @@ fn refresh_usage_index_unlocked(
     let skipped_events = diagnostics.get("skipped_events").copied().unwrap_or(0) as usize;
     let (inserted_or_updated_events, deleted_rows) =
         apply_parsed_sources(&mut conn, &parsed, logs.len(), skipped_events)?;
+    refresh_account_usage_snapshot(home_root, &conn, &mut diagnostics);
     compact_usage_db_after_refresh(&mut conn, deleted_rows > 0)?;
 
     Ok(UsageRefreshResult {
@@ -417,6 +449,9 @@ pub fn get_usage_summary(home_root: &Path, req: UsageSummaryRequest) -> Result<U
         estimate_summary_cost(&model_totals(&conn, &req, &filter)?);
     let mut diagnostics = usage_diagnostics(&conn, &req, &filter, &top_threads, &recent_calls)?;
     diagnostics.skipped_events = skipped_events;
+    let activity_buckets = query_activity_buckets(&conn, &req, &filter)?;
+    let mut headline_stats = query_local_headline_stats(&conn, &req, &filter, totals.1)?;
+    apply_latest_account_usage_snapshot(&conn, &mut headline_stats, totals.1, &mut diagnostics)?;
     Ok(UsageSummary {
         refreshed_at,
         scanned_files,
@@ -432,6 +467,8 @@ pub fn get_usage_summary(home_root: &Path, req: UsageSummaryRequest) -> Result<U
         estimated_cost_usd,
         pricing_coverage,
         diagnostics,
+        headline_stats,
+        activity_buckets,
         top_threads,
         recent_calls,
     })
@@ -682,6 +719,23 @@ pub fn init_usage_db(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS refresh_meta (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS account_usage_snapshot (
+            snapshot_id TEXT PRIMARY KEY,
+            fetched_at TEXT NOT NULL,
+            source TEXT NOT NULL,
+            lifetime_tokens INTEGER,
+            peak_daily_tokens INTEGER,
+            longest_running_turn_sec INTEGER,
+            current_streak_days INTEGER,
+            longest_streak_days INTEGER,
+            raw_daily_bucket_count INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS account_usage_daily_buckets (
+            snapshot_id TEXT NOT NULL,
+            start_date TEXT NOT NULL,
+            tokens INTEGER NOT NULL,
+            PRIMARY KEY(snapshot_id, start_date)
         );
         ",
     )
@@ -1008,16 +1062,20 @@ fn parse_envelope(
         increment(diagnostics, "skipped_events");
         return;
     };
-    if cumulative_total_tokens <= state.last_cumulative_total {
-        increment(diagnostics, "duplicate_cumulative_total");
-        return;
-    }
     let input_tokens = usage_int(last_usage, "input_tokens").unwrap_or(0);
     let cached_input_tokens = usage_int(last_usage, "cached_input_tokens").unwrap_or(0);
     let uncached_input_tokens = (input_tokens - cached_input_tokens).max(0);
     let output_tokens = usage_int(last_usage, "output_tokens").unwrap_or(0);
     let reasoning_output_tokens = usage_int(last_usage, "reasoning_output_tokens").unwrap_or(0);
     let total_tokens = usage_int(last_usage, "total_tokens").unwrap_or(0);
+    if total_tokens <= 0 {
+        increment(diagnostics, "missing_last_token_total");
+        increment(diagnostics, "skipped_events");
+        return;
+    }
+    if cumulative_total_tokens <= state.last_cumulative_total {
+        increment(diagnostics, "cumulative_reset_accepted");
+    }
     let model_context_window = nullable_usage_int(
         info.get("model_context_window"),
         diagnostics,
@@ -1591,6 +1649,467 @@ fn custom_end(value: &str) -> Option<String> {
     NaiveDate::parse_from_str(value, "%Y-%m-%d")
         .ok()
         .map(|date| day_start(date + ChronoDuration::days(1)))
+}
+
+fn query_local_headline_stats(
+    conn: &Connection,
+    req: &UsageSummaryRequest,
+    filter: &SummaryFilter,
+    local_total_tokens: i64,
+) -> Result<UsageHeadlineStats> {
+    let peak_daily_tokens = conn
+        .query_row(
+            "SELECT MAX(day_tokens) FROM (
+                SELECT COALESCE(NULLIF(\"current_date\", ''), substr(event_timestamp, 1, 10)) AS activity_date,
+                       SUM(total_tokens) AS day_tokens
+                FROM usage_events
+                WHERE (?1 OR is_archived = 0)
+                  AND (?2 IS NULL OR event_timestamp >= ?2)
+                  AND (?3 IS NULL OR event_timestamp < ?3)
+                GROUP BY activity_date
+            )",
+            params![
+                req.include_archived,
+                filter.from.as_deref(),
+                filter.to.as_deref()
+            ],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .map_err(db_error)?
+        .unwrap_or(0);
+    let longest_running_turn_sec = conn
+        .query_row(
+            "SELECT COALESCE(MAX(duration_sec), 0) FROM (
+                SELECT CASE WHEN COUNT(*) > 1
+                    THEN CAST((julianday(MAX(event_timestamp)) - julianday(MIN(event_timestamp))) * 86400 AS INTEGER)
+                    ELSE 0
+                END AS duration_sec
+                FROM usage_events
+                WHERE (?1 OR is_archived = 0)
+                  AND (?2 IS NULL OR event_timestamp >= ?2)
+                  AND (?3 IS NULL OR event_timestamp < ?3)
+                GROUP BY COALESCE(turn_id, record_id)
+            )",
+            params![
+                req.include_archived,
+                filter.from.as_deref(),
+                filter.to.as_deref()
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(db_error)?;
+    let dates = query_activity_dates(conn, req, filter)?;
+    let current_streak_days = current_streak_len(&dates);
+    let longest_streak_days = longest_streak_len(&dates);
+    Ok(UsageHeadlineStats {
+        lifetime_tokens: Some(local_total_tokens),
+        peak_daily_tokens: Some(peak_daily_tokens),
+        longest_running_turn_sec: Some(longest_running_turn_sec),
+        current_streak_days: Some(current_streak_days),
+        longest_streak_days: Some(longest_streak_days),
+        source: "local_sqlite".to_string(),
+        local_total_tokens,
+        codex_total_tokens: None,
+        token_delta: None,
+        token_delta_percent: None,
+    })
+}
+
+fn query_activity_buckets(
+    conn: &Connection,
+    req: &UsageSummaryRequest,
+    filter: &SummaryFilter,
+) -> Result<Vec<UsageActivityBucket>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT COALESCE(NULLIF(\"current_date\", ''), substr(event_timestamp, 1, 10)) AS activity_date,
+                    COUNT(*) AS calls,
+                    COALESCE(SUM(total_tokens), 0) AS tokens
+             FROM usage_events
+             WHERE (?1 OR is_archived = 0)
+               AND (?2 IS NULL OR event_timestamp >= ?2)
+               AND (?3 IS NULL OR event_timestamp < ?3)
+             GROUP BY activity_date
+             ORDER BY activity_date ASC",
+        )
+        .map_err(db_error)?;
+    let rows = stmt
+        .query_map(
+            params![
+                req.include_archived,
+                filter.from.as_deref(),
+                filter.to.as_deref()
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .map_err(db_error)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(db_error)?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(first) = parse_activity_date(&rows[0].0) else {
+        return Ok(Vec::new());
+    };
+    let Some(last) = parse_activity_date(&rows[rows.len() - 1].0) else {
+        return Ok(Vec::new());
+    };
+    let by_date = rows
+        .into_iter()
+        .map(|(date, calls, tokens)| (date, (calls, tokens)))
+        .collect::<BTreeMap<_, _>>();
+    let mut buckets = Vec::new();
+    let mut cumulative_calls = 0;
+    let mut cumulative_tokens = 0;
+    let mut date = first;
+    while date <= last {
+        let key = date.format("%Y-%m-%d").to_string();
+        let (calls, tokens) = by_date.get(&key).copied().unwrap_or((0, 0));
+        cumulative_calls += calls;
+        cumulative_tokens += tokens;
+        buckets.push(UsageActivityBucket {
+            date: key,
+            calls,
+            tokens,
+            cumulative_calls,
+            cumulative_tokens,
+        });
+        date += ChronoDuration::days(1);
+    }
+    Ok(buckets)
+}
+
+fn query_activity_dates(
+    conn: &Connection,
+    req: &UsageSummaryRequest,
+    filter: &SummaryFilter,
+) -> Result<Vec<NaiveDate>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT COALESCE(NULLIF(\"current_date\", ''), substr(event_timestamp, 1, 10)) AS activity_date
+             FROM usage_events
+             WHERE (?1 OR is_archived = 0)
+               AND (?2 IS NULL OR event_timestamp >= ?2)
+               AND (?3 IS NULL OR event_timestamp < ?3)
+             ORDER BY activity_date ASC",
+        )
+        .map_err(db_error)?;
+    let dates = stmt
+        .query_map(
+            params![
+                req.include_archived,
+                filter.from.as_deref(),
+                filter.to.as_deref()
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(db_error)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(db_error)?
+        .into_iter()
+        .filter_map(|value| parse_activity_date(&value))
+        .collect();
+    Ok(dates)
+}
+
+fn parse_activity_date(value: &str) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d").ok()
+}
+
+fn current_streak_len(dates: &[NaiveDate]) -> i64 {
+    let mut iter = dates.iter().rev();
+    let Some(mut prev) = iter.next().copied() else {
+        return 0;
+    };
+    let mut count = 1;
+    for date in iter {
+        if *date == prev - ChronoDuration::days(1) {
+            count += 1;
+            prev = *date;
+        } else {
+            break;
+        }
+    }
+    count
+}
+
+fn longest_streak_len(dates: &[NaiveDate]) -> i64 {
+    let mut longest = 0;
+    let mut current = 0;
+    let mut prev: Option<NaiveDate> = None;
+    for date in dates {
+        current = if Some(*date - ChronoDuration::days(1)) == prev {
+            current + 1
+        } else {
+            1
+        };
+        longest = longest.max(current);
+        prev = Some(*date);
+    }
+    longest
+}
+
+fn apply_latest_account_usage_snapshot(
+    conn: &Connection,
+    stats: &mut UsageHeadlineStats,
+    local_total_tokens: i64,
+    diagnostics: &mut UsageDiagnostics,
+) -> Result<()> {
+    let snapshot = conn
+        .query_row(
+            "SELECT lifetime_tokens, peak_daily_tokens, longest_running_turn_sec,
+                    current_streak_days, longest_streak_days
+             FROM account_usage_snapshot
+             ORDER BY fetched_at DESC
+             LIMIT 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, Option<i64>>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(db_error)?;
+    if let Some((lifetime, peak, longest_task, current_streak, longest_streak)) = snapshot {
+        stats.lifetime_tokens = lifetime;
+        stats.peak_daily_tokens = peak;
+        stats.longest_running_turn_sec = longest_task;
+        stats.current_streak_days = current_streak;
+        stats.longest_streak_days = longest_streak;
+        stats.source = "codex_account_usage".to_string();
+        stats.codex_total_tokens = lifetime;
+        stats.token_delta = lifetime.map(|total| total - local_total_tokens);
+        stats.token_delta_percent = lifetime.and_then(|total| {
+            if total > 0 {
+                Some((total - local_total_tokens) as f64 / total as f64)
+            } else {
+                None
+            }
+        });
+    } else {
+        diagnostics
+            .parser_diagnostics
+            .entry("account_usage_unavailable".to_string())
+            .or_insert(1);
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct AccountUsageSnapshot {
+    lifetime_tokens: Option<i64>,
+    peak_daily_tokens: Option<i64>,
+    longest_running_turn_sec: Option<i64>,
+    current_streak_days: Option<i64>,
+    longest_streak_days: Option<i64>,
+    daily_buckets: Vec<(String, i64)>,
+}
+
+fn refresh_account_usage_snapshot(
+    home_root: &Path,
+    conn: &Connection,
+    diagnostics: &mut BTreeMap<String, i64>,
+) {
+    let Some(account) = list_accounts(home_root)
+        .ok()
+        .and_then(|accounts| accounts.into_iter().find(|account| account.has_auth))
+    else {
+        increment(diagnostics, "account_usage_unavailable");
+        return;
+    };
+    match try_codex_app_server_account_usage(home_root, &account)
+        .and_then(|snapshot| store_account_usage_snapshot(conn, &snapshot))
+    {
+        Ok(()) => {}
+        Err(_) => increment(diagnostics, "account_usage_unavailable"),
+    }
+}
+
+fn try_codex_app_server_account_usage(
+    home_root: &Path,
+    account: &CodexAccount,
+) -> Result<AccountUsageSnapshot> {
+    let mut child = spawn_codex_app_server(home_root, &account.codex_home)?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(
+                b"{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"lam\",\"version\":\"0.1\"},\"capabilities\":{\"experimentalApi\":true}}}\n",
+            )
+            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
+        stdin
+            .write_all(b"{\"id\":2,\"method\":\"account/usage/read\",\"params\":null}\n")
+            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
+        stdin
+            .flush()
+            .map_err(|err| AppError::new("CODEX_APP_SERVER_WRITE_FAILED", err.to_string()))?;
+    }
+    let Some(stdout) = child.stdout.take() else {
+        terminate_usage_child(&mut child);
+        return Err(AppError::new(
+            "CODEX_APP_SERVER_NO_STDOUT",
+            "stdout not available",
+        ));
+    };
+    let Some(stderr) = child.stderr.take() else {
+        terminate_usage_child(&mut child);
+        return Err(AppError::new(
+            "CODEX_APP_SERVER_NO_STDERR",
+            "stderr not available",
+        ));
+    };
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let (tx_err, rx_err) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(std::result::Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(std::result::Result::ok) {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                let _ = tx_err.send(trimmed.to_string());
+            }
+        }
+    });
+    let deadline = std::time::Instant::now() + CODEX_APP_SERVER_USAGE_TIMEOUT;
+    let mut last_stderr: Option<String> = None;
+    loop {
+        while let Ok(line) = rx_err.try_recv() {
+            last_stderr = Some(line);
+        }
+        while let Ok(line) = rx.try_recv() {
+            if let Some(snapshot) = parse_account_usage_snapshot_line(&line) {
+                terminate_usage_child(&mut child);
+                return Ok(snapshot);
+            }
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|err| AppError::new("CODEX_APP_SERVER_WAIT_FAILED", err.to_string()))?
+        {
+            let _ = child.wait();
+            let stderr_hint = last_stderr
+                .as_deref()
+                .map(|line| format!(" ({line})"))
+                .unwrap_or_default();
+            return Err(if status.success() {
+                AppError::new(
+                    "CODEX_APP_SERVER_PROTOCOL_UNRESOLVED",
+                    format!("app-server exited before account usage was parsed{stderr_hint}"),
+                )
+            } else {
+                AppError::new(
+                    "CODEX_APP_SERVER_FAILED",
+                    format!("app-server exited before account usage could be read{stderr_hint}"),
+                )
+            });
+        }
+        if std::time::Instant::now() > deadline {
+            terminate_usage_child(&mut child);
+            let stderr_hint = last_stderr
+                .as_deref()
+                .map(|line| format!(" ({line})"))
+                .unwrap_or_default();
+            return Err(AppError::new(
+                "CODEX_APP_SERVER_TIMEOUT",
+                format!("app-server account usage request timed out{stderr_hint}"),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+fn terminate_usage_child(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn parse_account_usage_snapshot_line(line: &str) -> Option<AccountUsageSnapshot> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let result = value.get("result").unwrap_or(&value);
+    let summary = result.get("summary")?;
+    let daily_buckets = result
+        .get("dailyUsageBuckets")
+        .or_else(|| result.get("daily_usage_buckets"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let date = item
+                        .get("startDate")
+                        .or_else(|| item.get("start_date"))
+                        .and_then(Value::as_str)?;
+                    let tokens = item.get("tokens").and_then(Value::as_i64)?;
+                    Some((date.to_string(), tokens))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Some(AccountUsageSnapshot {
+        lifetime_tokens: json_i64_alias(summary, &["lifetimeTokens", "lifetime_tokens"]),
+        peak_daily_tokens: json_i64_alias(summary, &["peakDailyTokens", "peak_daily_tokens"]),
+        longest_running_turn_sec: json_i64_alias(
+            summary,
+            &["longestRunningTurnSec", "longest_running_turn_sec"],
+        ),
+        current_streak_days: json_i64_alias(summary, &["currentStreakDays", "current_streak_days"]),
+        longest_streak_days: json_i64_alias(summary, &["longestStreakDays", "longest_streak_days"]),
+        daily_buckets,
+    })
+}
+
+fn json_i64_alias(value: &Value, keys: &[&str]) -> Option<i64> {
+    keys.iter().find_map(|key| value.get(*key)).and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_u64().and_then(|raw| i64::try_from(raw).ok()))
+    })
+}
+
+fn store_account_usage_snapshot(conn: &Connection, snapshot: &AccountUsageSnapshot) -> Result<()> {
+    let snapshot_id = format!("account-usage-{}", Utc::now().timestamp_millis());
+    let fetched_at = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT OR REPLACE INTO account_usage_snapshot (
+            snapshot_id, fetched_at, source, lifetime_tokens, peak_daily_tokens,
+            longest_running_turn_sec, current_streak_days, longest_streak_days,
+            raw_daily_bucket_count
+        ) VALUES (?1, ?2, 'codex_account_usage', ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            snapshot_id,
+            fetched_at,
+            snapshot.lifetime_tokens,
+            snapshot.peak_daily_tokens,
+            snapshot.longest_running_turn_sec,
+            snapshot.current_streak_days,
+            snapshot.longest_streak_days,
+            snapshot.daily_buckets.len() as i64,
+        ],
+    )
+    .map_err(db_error)?;
+    for (date, tokens) in &snapshot.daily_buckets {
+        conn.execute(
+            "INSERT OR REPLACE INTO account_usage_daily_buckets (snapshot_id, start_date, tokens)
+             VALUES (?1, ?2, ?3)",
+            params![snapshot_id, date, tokens],
+        )
+        .map_err(db_error)?;
+    }
+    Ok(())
 }
 
 fn query_recent_calls(
@@ -2467,6 +2986,8 @@ mod tests {
         ] {
             assert!(columns.contains(&column.to_string()), "{column}");
         }
+        assert!(!table_columns(&conn, "account_usage_snapshot").is_empty());
+        assert!(!table_columns(&conn, "account_usage_daily_buckets").is_empty());
     }
 
     #[test]
@@ -2847,6 +3368,90 @@ mod tests {
         let summary = get_usage_summary(temp.path(), summary_request("all")).unwrap();
         assert_eq!(summary.recent_calls[0].context_window_percent, Some(0.9));
         assert_eq!(summary.diagnostics.high_context_calls.len(), 1);
+    }
+
+    #[test]
+    fn parser_accepts_positive_last_usage_after_cumulative_reset() {
+        let temp = TempDir::new().unwrap();
+        write_log(
+            temp.path(),
+            &format!(
+                "{}\n{}\n{}\n{}\n",
+                json!({"type":"session_meta","timestamp":"2026-06-28T00:00:00Z","payload":{"id":"00000000-0000-0000-0000-000000000001"}}),
+                json!({"type":"turn_context","timestamp":"2026-06-28T00:00:01Z","payload":{"turn_id":"turn-1","cwd":"/repo/LAM","model":"gpt-5","current_date":"2026-06-28"}}),
+                json!({"type":"event_msg","timestamp":"2026-06-28T00:00:02Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"reasoning_output_tokens":5,"total_tokens":120},"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":20,"reasoning_output_tokens":5,"total_tokens":1020}}}}),
+                json!({"type":"event_msg","timestamp":"2026-06-28T00:00:03Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"cached_input_tokens":5,"output_tokens":10,"reasoning_output_tokens":2,"total_tokens":60},"total_token_usage":{"input_tokens":500,"cached_input_tokens":50,"output_tokens":10,"reasoning_output_tokens":2,"total_tokens":510}}}})
+            ),
+        );
+        refresh_usage_index(temp.path()).unwrap();
+        let summary = get_usage_summary(temp.path(), summary_request("all")).unwrap();
+        assert_eq!(summary.total_calls, 2);
+        assert_eq!(summary.total_tokens, 180);
+        assert_eq!(
+            summary
+                .diagnostics
+                .parser_diagnostics
+                .get("cumulative_reset_accepted"),
+            Some(&1)
+        );
+    }
+
+    #[test]
+    fn local_headline_and_activity_buckets_follow_local_usage() {
+        let temp = TempDir::new().unwrap();
+        write_log(
+            temp.path(),
+            &format!(
+                "{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+                json!({"type":"session_meta","timestamp":"2026-06-28T00:00:00Z","payload":{"id":"00000000-0000-0000-0000-000000000001"}}),
+                json!({"type":"turn_context","timestamp":"2026-06-26T00:00:01Z","payload":{"turn_id":"turn-1","cwd":"/repo/LAM","model":"gpt-5","current_date":"2026-06-26"}}),
+                json!({"type":"event_msg","timestamp":"2026-06-26T00:00:02Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":30,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":40},"total_token_usage":{"input_tokens":30,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":40}}}}),
+                json!({"type":"turn_context","timestamp":"2026-06-28T00:00:03Z","payload":{"turn_id":"turn-2","cwd":"/repo/LAM","model":"gpt-5","current_date":"2026-06-28"}}),
+                json!({"type":"event_msg","timestamp":"2026-06-28T00:00:04Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":40,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":50},"total_token_usage":{"input_tokens":70,"cached_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":90}}}}),
+                json!({"type":"event_msg","timestamp":"2026-06-28T00:01:04Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":20},"total_token_usage":{"input_tokens":80,"cached_input_tokens":0,"output_tokens":30,"reasoning_output_tokens":0,"total_tokens":110}}}}),
+                json!({"type":"event_msg","timestamp":"2026-06-28T00:02:04Z","payload":{"type":"agent_message","message":"done"}})
+            ),
+        );
+        refresh_usage_index(temp.path()).unwrap();
+        let summary = get_usage_summary(temp.path(), summary_request("all")).unwrap();
+        assert_eq!(summary.headline_stats.source, "local_sqlite");
+        assert_eq!(summary.headline_stats.lifetime_tokens, Some(110));
+        assert_eq!(summary.headline_stats.peak_daily_tokens, Some(70));
+        assert_eq!(summary.headline_stats.current_streak_days, Some(1));
+        assert_eq!(summary.headline_stats.longest_streak_days, Some(1));
+        assert_eq!(summary.activity_buckets.len(), 3);
+        assert_eq!(summary.activity_buckets[1].date, "2026-06-27");
+        assert_eq!(summary.activity_buckets[1].calls, 0);
+        assert_eq!(summary.activity_buckets[2].cumulative_tokens, 110);
+    }
+
+    #[test]
+    fn account_usage_snapshot_overrides_headlines_and_keeps_delta() {
+        let temp = TempDir::new().unwrap();
+        write_log(temp.path(), &fixture(100, 50));
+        refresh_usage_index(temp.path()).unwrap();
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        store_account_usage_snapshot(
+            &conn,
+            &AccountUsageSnapshot {
+                lifetime_tokens: Some(5_900_000_000),
+                peak_daily_tokens: Some(193_000_000),
+                longest_running_turn_sec: Some(8_880),
+                current_streak_days: Some(8),
+                longest_streak_days: Some(19),
+                daily_buckets: vec![("2026-06-28".to_string(), 12345)],
+            },
+        )
+        .unwrap();
+        let summary = get_usage_summary(temp.path(), summary_request("all")).unwrap();
+        assert_eq!(summary.headline_stats.source, "codex_account_usage");
+        assert_eq!(summary.headline_stats.lifetime_tokens, Some(5_900_000_000));
+        assert_eq!(summary.headline_stats.peak_daily_tokens, Some(193_000_000));
+        assert_eq!(summary.headline_stats.longest_running_turn_sec, Some(8_880));
+        assert_eq!(summary.headline_stats.current_streak_days, Some(8));
+        assert_eq!(summary.headline_stats.longest_streak_days, Some(19));
+        assert_eq!(summary.headline_stats.local_total_tokens, 60);
+        assert_eq!(summary.headline_stats.token_delta, Some(5_899_999_940));
     }
 
     #[test]

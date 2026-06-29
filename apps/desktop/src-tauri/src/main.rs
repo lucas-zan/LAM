@@ -63,6 +63,7 @@ fn main() {
             commands::open_terminal_for_login,
             commands::get_profile_quota,
             commands::refresh_all_quotas,
+            commands::reset_profile_quota,
             commands::list_cached_quotas,
             commands::refresh_usage_index,
             commands::get_usage_summary,

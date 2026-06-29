@@ -22,6 +22,7 @@ vi.mock('./lib/api', () => ({
   listProviders: vi.fn(),
   listSessions: vi.fn(),
   getProfileQuota: vi.fn(),
+  resetProfileQuota: vi.fn(),
   listCachedQuotas: vi.fn(),
   getUsageSummary: vi.fn(),
   getUsageDashboard: vi.fn(),
@@ -241,6 +242,7 @@ beforeEach(() => {
   useQuotaStore.setState({
     quotas: [],
     refreshingQuotaIds: [],
+    resettingQuotaIds: [],
     _timerId: null,
     _intervalId: null,
   });
@@ -287,6 +289,26 @@ beforeEach(() => {
     secondaryResetAt: null,
     alerts: [],
     suggestedActions: [],
+  });
+  vi.mocked(api.resetProfileQuota).mockResolvedValue({
+    snapshot: {
+      profileId: 'main',
+      source: 'app_server_rate_limits',
+      fetchedAt: 2,
+      staleness: 'fresh',
+      planType: 'team',
+      activityTokens: null,
+      primaryUsedPercent: 3,
+      secondaryUsedPercent: null,
+      remainingPercent: 97,
+      resetAt: null,
+      secondaryResetAt: null,
+      resetCreditCount: 0,
+      alerts: [],
+      suggestedActions: [],
+    },
+    outcome: 'reset',
+    operationId: 'op-1',
   });
   vi.mocked(api.relayResumeSession).mockResolvedValue({
     action: 'copied',
@@ -507,6 +529,54 @@ describe('App handoff modal', () => {
       chatgpt_plan_type: 'enterprise',
     });
     expect(exported.id_token_synthetic).toBeUndefined();
+  });
+
+  it('shows reset expiry rows in Shanghai order and confirms before reset', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    useQuotaStore.setState({
+      quotas: [
+        {
+          profileId: 'codex-c',
+          source: 'app_server_rate_limits',
+          fetchedAt: 1,
+          staleness: 'fresh',
+          planType: 'team',
+          activityTokens: null,
+          primaryUsedPercent: 41,
+          secondaryUsedPercent: null,
+          remainingPercent: 59,
+          resetAt: null,
+          secondaryResetAt: null,
+          resetCreditCount: 2,
+          resetCreditDetails: [
+            { id: 'later', expiresAt: '2026-07-12T00:00:00Z', source: 'api' },
+            { id: 'soon', expiresAt: '2026-07-01T00:00:00Z', source: 'api' },
+          ],
+          alerts: [],
+          suggestedActions: [],
+        },
+      ],
+      resettingQuotaIds: [],
+    });
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByLabelText(/pat mode/i)).toHaveProperty('checked', true));
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    expect(within(accountCard!).queryByLabelText('Manual reset expiry')).toBeNull();
+    expect(within(accountCard!).getByLabelText('Expires: 2026-07-01 08:00')).toBeTruthy();
+    expect(within(accountCard!).getByLabelText('Expires: 2026-07-12 08:00')).toBeTruthy();
+    expect(within(accountCard!).queryByRole('button', { name: 'Handoff' })).toBeNull();
+    expect(within(accountCard!).getAllByRole('button', { name: /reset codex-c quota/i })).toHaveLength(1);
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /reset codex-c quota/i }));
+
+    expect(confirm).toHaveBeenCalled();
+    await waitFor(() => expect(api.resetProfileQuota).toHaveBeenCalledWith('codex-c'));
   });
 
   it('uses login switching for every account in Auth mode', async () => {

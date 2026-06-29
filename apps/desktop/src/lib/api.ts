@@ -13,6 +13,7 @@ import type {
   OperationPlan,
   ProviderProfile,
   QuotaRefreshResult,
+  ResetQuotaResult,
   RelayResumeRequest,
   RelayResumeResult,
   RenameAccountRequest,
@@ -130,6 +131,10 @@ export async function refreshAllQuotas(profileIds?: string[]): Promise<QuotaRefr
   return invoke<QuotaRefreshResult>("refresh_all_quotas", { profileIds });
 }
 
+export async function resetProfileQuota(profileId: string): Promise<ResetQuotaResult> {
+  return invoke<ResetQuotaResult>("reset_profile_quota", { profileId });
+}
+
 export async function listCachedQuotas(profileIds?: string[]): Promise<UsageQuotaSnapshot[]> {
   if (!inTauri()) return [];
   return invoke<UsageQuotaSnapshot[]>("list_cached_quotas", { profileIds });
@@ -162,6 +167,19 @@ const emptyUsageSummary = (): UsageSummary => ({
     highContextCalls: [],
     lastRefreshError: null,
   },
+  headlineStats: {
+    lifetimeTokens: null,
+    peakDailyTokens: null,
+    longestRunningTurnSec: null,
+    currentStreakDays: null,
+    longestStreakDays: null,
+    source: 'local_sqlite',
+    localTotalTokens: 0,
+    codexTotalTokens: null,
+    tokenDelta: null,
+    tokenDeltaPercent: null,
+  },
+  activityBuckets: [],
   topThreads: [],
   recentCalls: [],
 });

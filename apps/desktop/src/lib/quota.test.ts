@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { planTypeLabel, quotaDisplayWindows, accountHasAvailableQuota } from './quota';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { planTypeLabel, quotaDisplayWindows, accountHasAvailableQuota, resetCreditDisplay } from './quota';
 import type { UsageQuotaSnapshot } from './types';
 
 const baseQuota: UsageQuotaSnapshot = {
@@ -19,6 +19,10 @@ const baseQuota: UsageQuotaSnapshot = {
   alerts: [],
   suggestedActions: [],
 };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('quotaDisplayWindows', () => {
   it('returns 5h and weekly windows for standard quota snapshots', () => {
@@ -118,5 +122,79 @@ describe('accountHasAvailableQuota', () => {
         secondaryUsedPercent: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe('resetCreditDisplay', () => {
+  it('renders hollow unknown-expiry dots when count exists without expiry', () => {
+    expect(
+      resetCreditDisplay({
+        ...baseQuota,
+        resetCreditCount: 2,
+        resetCreditExpiresAt: null,
+        resetCreditExpirySource: 'unknown',
+      }),
+    ).toMatchObject({
+      dots: [
+        { key: 'main-0', color: 'unknown' },
+        { key: 'main-1', color: 'unknown' },
+      ],
+      overflow: 0,
+      title: '2 reset credits; expiry unknown',
+    });
+  });
+
+  it('caps visible dots and surfaces manual expiry source', () => {
+    const expiresAt = new Date(Date.now() + 26 * 86_400_000).toISOString();
+
+    const display = resetCreditDisplay({
+      ...baseQuota,
+      resetCreditCount: 7,
+      resetCreditExpiresAt: expiresAt,
+      resetCreditExpirySource: 'manual_config',
+    });
+
+    expect(display?.dots).toHaveLength(5);
+    expect(display?.dots[0].color).toBe('blue');
+    expect(display?.overflow).toBe(2);
+    expect(display?.title).toContain('manual expiry');
+  });
+
+  it('uses nearest per-credit expiry for dot phase and displays API time in Shanghai', () => {
+    const display = resetCreditDisplay({
+      ...baseQuota,
+      resetCreditCount: 2,
+      resetCreditExpiresAt: '2026-08-01T00:00:00Z',
+      resetCreditExpirySource: 'api',
+      resetCreditDetails: [
+        { id: 'later', expiresAt: '2026-08-01T00:00:00Z', source: 'api' },
+        { id: 'soon', expiresAt: '2026-07-01T00:00:00Z', source: 'api' },
+      ],
+    });
+
+    expect(display?.title).toContain('2026-07-01T08:00:00+08:00');
+  });
+
+  it('colors each reset credit by its own expiry', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-06-29T00:00:00Z'));
+
+    const display = resetCreditDisplay({
+      ...baseQuota,
+      resetCreditCount: 3,
+      resetCreditExpiresAt: null,
+      resetCreditExpirySource: 'api',
+      resetCreditDetails: [
+        { id: 'reset-1', expiresAt: '2026-07-11T23:18:30Z', source: 'api' },
+        { id: 'reset-2', expiresAt: '2026-07-18T00:28:08Z', source: 'api' },
+        { id: 'reset-3', expiresAt: '2026-07-26T23:16:35Z', source: 'api' },
+      ],
+    });
+
+    expect(display?.dots.map((dot) => dot.color)).toEqual(['yellow', 'green', 'blue']);
+  });
+
+  it('hides reset dots for zero or absent count', () => {
+    expect(resetCreditDisplay({ ...baseQuota, resetCreditCount: 0 })).toBeNull();
+    expect(resetCreditDisplay(baseQuota)).toBeNull();
   });
 });

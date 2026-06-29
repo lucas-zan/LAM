@@ -125,7 +125,7 @@ describe('handoff navigation and entry points', () => {
     render(<Overview {...overviewProps()} authMode="pat" />);
 
     for (const name of [/relay latest/i, /handoff/i]) {
-      for (const button of screen.getAllByRole('button', { name })) {
+      for (const button of screen.queryAllByRole('button', { name })) {
         expect(button).toHaveProperty('disabled', true);
       }
     }

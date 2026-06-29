@@ -3,6 +3,7 @@ import { sessionDisplayName } from '../lib/format';
 import {
   countAccountsWithAvailableQuota,
   countAccountsWithQuotaData,
+  resetCreditDisplay,
   quotaDisplayWindows,
 } from '../lib/quota';
 import type {
@@ -151,7 +152,9 @@ export function Overview({
   relayLatest,
   currentSession,
   refreshAccountQuota,
+  resetAccountQuota = async () => {},
   refreshingQuotaIds,
+  resettingQuotaIds = [],
   antigravityQuota,
   refreshingAntigravity,
   onRefreshAntigravity,
@@ -171,7 +174,9 @@ export function Overview({
   relayLatest: (targetAccount: CodexAccount) => void;
   currentSession?: CodexSession;
   refreshAccountQuota: (profileId: string) => void;
+  resetAccountQuota?: (profileId: string) => Promise<void>;
   refreshingQuotaIds: string[];
+  resettingQuotaIds?: string[];
   antigravityQuota: AntigravityQuotaResponse | null;
   refreshingAntigravity: boolean;
   onRefreshAntigravity: () => void;
@@ -246,7 +251,9 @@ export function Overview({
           relayLatest={relayLatest}
           currentSession={currentSession}
           refreshAccountQuota={refreshAccountQuota}
+          resetAccountQuota={resetAccountQuota}
           refreshingQuotaIds={refreshingQuotaIds}
+          resettingQuotaIds={resettingQuotaIds}
           onSaveAccountNote={onSaveAccountNote}
           variant="overview"
           authMode={authMode}
@@ -327,7 +334,9 @@ export function Accounts({
   relayLatest,
   currentSession,
   refreshAccountQuota,
+  resetAccountQuota = async () => {},
   refreshingQuotaIds,
+  resettingQuotaIds = [],
   onSaveAccountNote,
   variant = 'default',
   authMode = 'oauth',
@@ -344,7 +353,9 @@ export function Accounts({
   relayLatest: (targetAccount: CodexAccount) => void;
   currentSession?: CodexSession;
   refreshAccountQuota: (profileId: string) => void;
+  resetAccountQuota?: (profileId: string) => Promise<void>;
   refreshingQuotaIds: string[];
+  resettingQuotaIds?: string[];
   onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
   variant?: 'default' | 'overview';
   authMode?: 'oauth' | 'pat';
@@ -403,7 +414,10 @@ export function Accounts({
       <div className="cardGrid accountCardGrid">
         {orderedAccounts.map((account) => {
           const isRefreshing = refreshingQuotaIds.includes(account.id);
+          const isResetting = resettingQuotaIds.includes(account.id);
           const quota = quotas.find((item) => item.profileId === account.id);
+          const resetCredits = resetCreditDisplay(quota);
+          const canResetQuota = (quota?.resetCreditCount ?? 0) > 0 && !isResetting;
           const providerLabel = account.providerId ?? 'unknown';
           const modelLabel = account.model ?? 'unknown';
           const isActiveAccount =
@@ -419,6 +433,20 @@ export function Accounts({
               <div className="cardHead">
                 <div className="cardTitleRow">
                   <h3>{account.displayName}</h3>
+                  {resetCredits ? (
+                    <span className="resetCreditDots" aria-label={resetCredits.title}>
+                      {resetCredits.dots.map((dot) => (
+                        <span
+                          key={dot.key}
+                          className={`resetCreditDot resetCreditDot--${dot.color}`}
+                          data-tooltip={dot.title}
+                          aria-label={dot.title}
+                          tabIndex={0}
+                        />
+                      ))}
+                      {resetCredits.overflow > 0 ? <span className="resetCreditMore">+{resetCredits.overflow}</span> : null}
+                    </span>
+                  ) : null}
                 </div>
                 <div className="cardHeadActions">
                   <UIButton
@@ -498,24 +526,47 @@ export function Accounts({
                   <IconPlay size={13} />
                   Relay Latest
                 </UIButton>
-                <UIButton
-                  size="sm"
-                  className="accountActionBtn"
-                  disabled={authMode === 'pat' || accounts.length < 2}
-                  aria-label="Handoff"
-                  title={
-                    authMode === 'pat'
-                      ? 'Not available in PAT mode'
-                      : `Choose a session to continue with ${account.displayName}`
-                  }
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openHandoff(account);
-                  }}
-                >
-                  <IconPlay size={13} />
-                  Handoff
-                </UIButton>
+                {authMode === 'pat' ? (
+                  <UIButton
+                    size="sm"
+                    className="accountActionBtn resetQuotaBtn"
+                    disabled={!canResetQuota}
+                    aria-label={`Reset ${account.displayName} quota`}
+                    title={
+                      quota?.resetCreditCount
+                        ? `Reset ${account.displayName} quota`
+                        : 'No reset credits available'
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (
+                        window.confirm(
+                          `Consume one reset credit for ${account.displayName}?`,
+                        )
+                      ) {
+                        void resetAccountQuota(account.id);
+                      }
+                    }}
+                  >
+                    <IconPlay size={13} />
+                    {isResetting ? 'Resetting' : 'Reset Quota'}
+                  </UIButton>
+                ) : (
+                  <UIButton
+                    size="sm"
+                    className="accountActionBtn"
+                    disabled={accounts.length < 2}
+                    aria-label="Handoff"
+                    title={`Choose a session to continue with ${account.displayName}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openHandoff(account);
+                    }}
+                  >
+                    <IconPlay size={13} />
+                    Handoff
+                  </UIButton>
+                )}
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
