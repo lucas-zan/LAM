@@ -28,6 +28,7 @@ import {
   mergeQuotaSnapshots,
   quotaDisplayWindows,
   quotaRemainingPercent,
+  resetCreditDisplay,
 } from '../lib/quota';
 import { formatResetCountdown } from '../lib/reset';
 import { scheduleTrayPopoverWindowSize } from '../lib/tray-popover-size';
@@ -688,6 +689,7 @@ function TrayAccountList({
           <div className="trayProviderRows">
             {activeGroup.accounts.map((account, index) => {
               const quota = quotas.find((q) => q.profileId === account.id);
+              const resetCredits = resetCreditDisplay(quota);
               const title = account.displayName.trim() || account.id;
               const isActiveAccount =
                 authMode === 'pat'
@@ -733,6 +735,14 @@ function TrayAccountList({
                       />
                       <div className="trayAccountNameWrap">
                         <strong title={title}>{title}</strong>
+                        {resetCredits ? (
+                          <span className="resetCreditDots" title={resetCredits.title} aria-label={resetCredits.title}>
+                            {resetCredits.dots.map((dot) => (
+                              <span key={dot.key} className={`resetCreditDot resetCreditDot--${dot.color}`} />
+                            ))}
+                            {resetCredits.overflow > 0 ? <span className="resetCreditMore">+{resetCredits.overflow}</span> : null}
+                          </span>
+                        ) : null}
                         <span className="badge badge--authMode" title={`Auth mode: ${authTag}`}>
                           {authTag}
                         </span>

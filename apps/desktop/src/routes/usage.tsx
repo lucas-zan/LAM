@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { IconRefresh, IconUsage } from '../components/icons';
 import { UIButton } from '../components/ui-button';
-import type { UsageCallRow, UsageDashboard, UsageWindow, UsageWindowPreset } from '../lib/types';
+import type { UsageActivityBucket, UsageCallRow, UsageDashboard, UsageWindow, UsageWindowPreset } from '../lib/types';
 import { lowCacheThreads, sortThreads, sortedThreadCalls } from '../lib/usage-dashboard-analysis';
 import { formatCompactNumber, formatPercent, formatTimestamp, formatNumber } from '../lib/usage-dashboard-format';
 import { summarizeUsageDiagnostics } from '../lib/usage-diagnostics';
@@ -10,6 +10,8 @@ import { getCallRawContents, type CallRawContents } from '../lib/api';
 
 type UsageTab = 'insights' | 'calls' | 'threads' | 'diagnostics';
 type LoadLimit = 5000 | 10000 | 20000 | 'all';
+type HeatmapMetric = 'calls' | 'tokens';
+type HeatmapMode = 'daily' | 'weekly' | 'cumulative';
 
 const loadLimitOptions: Array<[LoadLimit, string]> = [
   [5000, '5,000 calls'],
@@ -108,6 +110,55 @@ function renderCacheRatio(ratio: number) {
   return <span className={className}>{percent}</span>;
 }
 
+function formatDuration(seconds: number | null | undefined) {
+  if (!seconds || seconds <= 0) return '0m';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.round((seconds % 3600) / 60);
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+function formatTokenDelta(delta: number | null | undefined, percent: number | null | undefined) {
+  if (delta === null || delta === undefined) return null;
+  const sign = delta > 0 ? '+' : '';
+  return `${sign}${formatCompactNumber(delta)} (${formatPercent(percent ?? 0)})`;
+}
+
+function heatmapValue(bucket: UsageActivityBucket, metric: HeatmapMetric, mode: HeatmapMode) {
+  if (mode === 'cumulative') {
+    return metric === 'calls' ? bucket.cumulativeCalls : bucket.cumulativeTokens;
+  }
+  return metric === 'calls' ? bucket.calls : bucket.tokens;
+}
+
+function heatmapBuckets(buckets: UsageActivityBucket[], metric: HeatmapMetric, mode: HeatmapMode) {
+  if (mode !== 'weekly') {
+    return buckets.map((bucket) => ({
+      label: bucket.date.slice(5),
+      value: heatmapValue(bucket, metric, mode),
+      title: `${bucket.date}: ${formatCompactNumber(heatmapValue(bucket, metric, mode))} ${metric}`,
+    }));
+  }
+  const weekly = new Map<string, number>();
+  for (const bucket of buckets) {
+    const date = new Date(`${bucket.date}T00:00:00Z`);
+    const monday = new Date(date);
+    const day = monday.getUTCDay() || 7;
+    monday.setUTCDate(monday.getUTCDate() - day + 1);
+    const key = monday.toISOString().slice(0, 10);
+    weekly.set(key, (weekly.get(key) ?? 0) + (metric === 'calls' ? bucket.calls : bucket.tokens));
+  }
+  return Array.from(weekly.entries()).map(([date, value]) => ({
+    label: date.slice(5),
+    value,
+    title: `Week of ${date}: ${formatCompactNumber(value)} ${metric}`,
+  }));
+}
+
+function heatmapLevel(value: number, max: number) {
+  if (value <= 0 || max <= 0) return 0;
+  return Math.max(1, Math.ceil((value / max) * 4));
+}
+
 export function UsagePage({
   authMode,
   summary,
@@ -127,6 +178,8 @@ export function UsagePage({
   const [pricingConfidence, setPricingConfidence] = useState('');
   const [sortKey, setSortKey] = useState('time');
   const [loadLimit, setLoadLimit] = useState<LoadLimit>(5000);
+  const [heatmapMetric, setHeatmapMetric] = useState<HeatmapMetric>('calls');
+  const [heatmapMode, setHeatmapMode] = useState<HeatmapMode>('daily');
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [activeDetailCall, setActiveDetailCall] = useState<UsageCallRow | null>(null);
   const [rawContents, setRawContents] = useState<CallRawContents | null>(null);
@@ -155,6 +208,24 @@ export function UsagePage({
     highContextCalls: [],
     lastRefreshError: null,
   };
+  const heatmapCells = useMemo(
+    () => heatmapBuckets(summary?.activityBuckets ?? [], heatmapMetric, heatmapMode),
+    [summary?.activityBuckets, heatmapMetric, heatmapMode],
+  );
+  const maxHeatmapValue = Math.max(0, ...heatmapCells.map((cell) => cell.value));
+  const headlineStats = summary?.headlineStats ?? {
+    lifetimeTokens: summary?.totalTokens ?? null,
+    peakDailyTokens: null,
+    longestRunningTurnSec: null,
+    currentStreakDays: null,
+    longestStreakDays: null,
+    source: 'local_sqlite',
+    localTotalTokens: summary?.totalTokens ?? 0,
+    codexTotalTokens: null,
+    tokenDelta: null,
+    tokenDeltaPercent: null,
+  };
+  const parityLabel = formatTokenDelta(headlineStats.tokenDelta, headlineStats.tokenDeltaPercent);
 
   if (authMode !== 'pat') {
     return (
@@ -177,6 +248,7 @@ export function UsagePage({
           <p>
             Updated {formatTimestamp(summary?.refreshedAt, 'never')} · {summary?.scannedFiles ?? 0} files ·{' '}
             {summary?.totalCalls ?? 0} calls
+            {parityLabel ? <> · Codex parity: {parityLabel}</> : null}
           </p>
           </div>
         </div>
@@ -303,6 +375,11 @@ export function UsagePage({
 
       <div className="usageMetricGrid">
         {[
+          ['Lifetime tokens', `${formatCompactNumber(headlineStats.lifetimeTokens)} tok`],
+          ['Peak tokens', `${formatCompactNumber(headlineStats.peakDailyTokens)} tok`],
+          ['Longest task', formatDuration(headlineStats.longestRunningTurnSec)],
+          ['Current streak', `${formatCompactNumber(headlineStats.currentStreakDays)} days`],
+          ['Longest streak', `${formatCompactNumber(headlineStats.longestStreakDays)} days`],
           ['Visible Calls', formatCompactNumber(calls.length)],
           ['Total Tokens', `${formatCompactNumber(summary?.totalTokens)} tok`],
           ['Cached Input', `${formatCompactNumber(summary?.cachedInputTokens)} tok`],
@@ -317,6 +394,39 @@ export function UsagePage({
           </div>
         ))}
       </div>
+
+      <section className="usagePanel usageHeatmapPanel">
+        <div className="usageHeatmapHeader">
+          <h3>Activity</h3>
+          <div className="usageSegmentedControls">
+            <div className="usageTabs usageTabs--compact" role="tablist" aria-label="Activity mode">
+              {(['daily', 'weekly', 'cumulative'] as const).map((mode) => (
+                <button key={mode} type="button" className={heatmapMode === mode ? 'active' : ''} onClick={() => setHeatmapMode(mode)}>
+                  {mode === 'daily' ? 'Daily' : mode === 'weekly' ? 'Weekly' : 'Cumulative'}
+                </button>
+              ))}
+            </div>
+            <div className="usageTabs usageTabs--compact" role="tablist" aria-label="Activity metric">
+              {(['calls', 'tokens'] as const).map((metric) => (
+                <button key={metric} type="button" className={heatmapMetric === metric ? 'active' : ''} onClick={() => setHeatmapMetric(metric)}>
+                  {metric === 'calls' ? 'Calls' : 'Tokens'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="usageHeatmapGrid" aria-label="Usage activity heatmap">
+          {heatmapCells.length ? heatmapCells.map((cell) => (
+            <span
+              key={cell.title}
+              className={`usageHeatmapCell usageHeatmapCell--${heatmapLevel(cell.value, maxHeatmapValue)}`}
+              title={cell.title}
+            >
+              {cell.label}
+            </span>
+          )) : <p className="usageEmpty">No activity buckets.</p>}
+        </div>
+      </section>
 
       <div className="usageTabs" role="tablist" aria-label="Usage views">
         {(['insights', 'calls', 'threads', 'diagnostics'] as const).map((tab) => (

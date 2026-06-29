@@ -192,6 +192,9 @@ export type UsageQuotaSnapshot = {
   remainingPercent?: number | null;
   resetAt?: string | null;
   secondaryResetAt?: string | null;
+  resetCreditCount?: number | null;
+  resetCreditExpiresAt?: string | null;
+  resetCreditExpirySource?: 'api' | 'manual_config' | 'unknown' | null;
   alerts: string[];
   suggestedActions: string[];
 };
@@ -250,6 +253,27 @@ export type UsageDiagnostics = {
   lastRefreshError?: string | null;
 };
 
+export type UsageHeadlineStats = {
+  lifetimeTokens?: number | null;
+  peakDailyTokens?: number | null;
+  longestRunningTurnSec?: number | null;
+  currentStreakDays?: number | null;
+  longestStreakDays?: number | null;
+  source: string;
+  localTotalTokens: number;
+  codexTotalTokens?: number | null;
+  tokenDelta?: number | null;
+  tokenDeltaPercent?: number | null;
+};
+
+export type UsageActivityBucket = {
+  date: string;
+  calls: number;
+  tokens: number;
+  cumulativeCalls: number;
+  cumulativeTokens: number;
+};
+
 export type UsageSummary = {
   refreshedAt?: string | null;
   scannedFiles: number;
@@ -265,6 +289,8 @@ export type UsageSummary = {
   estimatedCostUsd: number;
   pricingCoverage: UsagePricingCoverage;
   diagnostics: UsageDiagnostics;
+  headlineStats?: UsageHeadlineStats;
+  activityBuckets?: UsageActivityBucket[];
   topThreads: UsageThreadSummary[];
   recentCalls: UsageCallRow[];
 };

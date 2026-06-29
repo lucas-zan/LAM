@@ -619,6 +619,32 @@ p {
   min-width: 0;
   margin: 0;
 }
+.resetCreditDots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+.resetCreditDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: currentColor;
+}
+.resetCreditDot--unknown {
+  background: transparent;
+  color: var(--muted);
+}
+.resetCreditDot--blue { color: #2563eb; }
+.resetCreditDot--green { color: #16a34a; }
+.resetCreditDot--yellow { color: #ca8a04; }
+.resetCreditDot--red { color: #dc2626; }
+.resetCreditDot--black { color: #111827; }
+.resetCreditMore {
+  color: var(--muted);
+  font-size: 11px;
+}
 .cardHeadActions {
   display: flex;
   align-items: center;
@@ -2360,6 +2386,51 @@ html[data-tray-popover='1'] #root {
   color: var(--text);
   background: var(--surface2);
 }
+.usageTabs--compact button {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.usageHeatmapPanel {
+  display: grid;
+  gap: 10px;
+}
+
+.usageHeatmapHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.usageSegmentedControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.usageHeatmapGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+  gap: 6px;
+}
+
+.usageHeatmapCell {
+  min-height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--surface2);
+}
+
+.usageHeatmapCell--1 { background: #dbeafe; color: #1e3a8a; }
+.usageHeatmapCell--2 { background: #86efac; color: #14532d; }
+.usageHeatmapCell--3 { background: #fde68a; color: #713f12; }
+.usageHeatmapCell--4 { background: #f87171; color: #7f1d1d; }
 
 .usageSection {
   display: grid;
@@ -3262,4 +3333,3 @@ pre {
   from { transform: translateY(12px) scale(0.98); opacity: 0; }
   to { transform: translateY(0) scale(1); opacity: 1; }
 }
-

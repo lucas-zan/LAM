@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planTypeLabel, quotaDisplayWindows, accountHasAvailableQuota } from './quota';
+import { planTypeLabel, quotaDisplayWindows, accountHasAvailableQuota, resetCreditDisplay } from './quota';
 import type { UsageQuotaSnapshot } from './types';
 
 const baseQuota: UsageQuotaSnapshot = {
@@ -118,5 +118,46 @@ describe('accountHasAvailableQuota', () => {
         secondaryUsedPercent: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe('resetCreditDisplay', () => {
+  it('renders hollow unknown-expiry dots when count exists without expiry', () => {
+    expect(
+      resetCreditDisplay({
+        ...baseQuota,
+        resetCreditCount: 2,
+        resetCreditExpiresAt: null,
+        resetCreditExpirySource: 'unknown',
+      }),
+    ).toMatchObject({
+      dots: [
+        { key: 'main-0', color: 'unknown' },
+        { key: 'main-1', color: 'unknown' },
+      ],
+      overflow: 0,
+      title: '2 reset credits; expiry unknown',
+    });
+  });
+
+  it('caps visible dots and surfaces manual expiry source', () => {
+    const expiresAt = new Date(Date.now() + 26 * 86_400_000).toISOString();
+
+    const display = resetCreditDisplay({
+      ...baseQuota,
+      resetCreditCount: 7,
+      resetCreditExpiresAt: expiresAt,
+      resetCreditExpirySource: 'manual_config',
+    });
+
+    expect(display?.dots).toHaveLength(5);
+    expect(display?.dots[0].color).toBe('blue');
+    expect(display?.overflow).toBe(2);
+    expect(display?.title).toContain('manual expiry');
+  });
+
+  it('hides reset dots for zero or absent count', () => {
+    expect(resetCreditDisplay({ ...baseQuota, resetCreditCount: 0 })).toBeNull();
+    expect(resetCreditDisplay(baseQuota)).toBeNull();
   });
 });

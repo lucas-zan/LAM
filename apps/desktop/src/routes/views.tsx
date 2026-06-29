@@ -3,6 +3,7 @@ import { sessionDisplayName } from '../lib/format';
 import {
   countAccountsWithAvailableQuota,
   countAccountsWithQuotaData,
+  resetCreditDisplay,
   quotaDisplayWindows,
 } from '../lib/quota';
 import type {
@@ -404,6 +405,7 @@ export function Accounts({
         {orderedAccounts.map((account) => {
           const isRefreshing = refreshingQuotaIds.includes(account.id);
           const quota = quotas.find((item) => item.profileId === account.id);
+          const resetCredits = resetCreditDisplay(quota);
           const providerLabel = account.providerId ?? 'unknown';
           const modelLabel = account.model ?? 'unknown';
           const isActiveAccount =
@@ -419,6 +421,14 @@ export function Accounts({
               <div className="cardHead">
                 <div className="cardTitleRow">
                   <h3>{account.displayName}</h3>
+                  {resetCredits ? (
+                    <span className="resetCreditDots" title={resetCredits.title} aria-label={resetCredits.title}>
+                      {resetCredits.dots.map((dot) => (
+                        <span key={dot.key} className={`resetCreditDot resetCreditDot--${dot.color}`} />
+                      ))}
+                      {resetCredits.overflow > 0 ? <span className="resetCreditMore">+{resetCredits.overflow}</span> : null}
+                    </span>
+                  ) : null}
                 </div>
                 <div className="cardHeadActions">
                   <UIButton

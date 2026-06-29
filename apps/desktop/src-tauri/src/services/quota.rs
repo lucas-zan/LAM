@@ -46,6 +46,12 @@ pub struct UsageQuotaSnapshot {
     pub remaining_percent: Option<u8>,
     pub reset_at: Option<String>,
     pub secondary_reset_at: Option<String>,
+    #[serde(default)]
+    pub reset_credit_count: Option<i64>,
+    #[serde(default)]
+    pub reset_credit_expires_at: Option<String>,
+    #[serde(default)]
+    pub reset_credit_expiry_source: Option<String>,
     pub alerts: Vec<String>,
     pub suggested_actions: Vec<String>,
 }
@@ -65,7 +71,8 @@ pub fn get_profile_quota(
     let account = quota_account(home_root, profile_id)?;
     if force_refresh && app_server_quota_enabled() {
         match try_codex_app_server_quota(home_root, &account) {
-            Ok(snapshot) => {
+            Ok(mut snapshot) => {
+                apply_manual_reset_credit_expiry(home_root, &account.id, &mut snapshot);
                 write_quota_cache(home_root, &snapshot)?;
                 return Ok(snapshot);
             }
@@ -168,6 +175,9 @@ fn unavailable_quota_snapshot(profile_id: &str, alert: Option<String>) -> UsageQ
         remaining_percent: None,
         reset_at: None,
         secondary_reset_at: None,
+        reset_credit_count: None,
+        reset_credit_expires_at: None,
+        reset_credit_expiry_source: None,
         alerts: alert.into_iter().collect(),
         suggested_actions: Vec::new(),
     }
@@ -256,7 +266,7 @@ fn try_codex_app_server_quota(
     home_root: &Path,
     account: &CodexAccount,
 ) -> Result<UsageQuotaSnapshot> {
-    if let Some(snapshot) = try_chatgpt_usage_quota(account)? {
+    if let Some(snapshot) = try_chatgpt_usage_quota(home_root, account)? {
         return Ok(snapshot);
     }
     let quota_auth_home = prepare_quota_auth_home(account)?;
@@ -408,7 +418,10 @@ fn try_codex_app_server_quota(
     }
 }
 
-fn try_chatgpt_usage_quota(account: &CodexAccount) -> Result<Option<UsageQuotaSnapshot>> {
+fn try_chatgpt_usage_quota(
+    home_root: &Path,
+    account: &CodexAccount,
+) -> Result<Option<UsageQuotaSnapshot>> {
     let auth_f_path = account.codex_home.join("auth-f.json");
     if !auth_f_path.exists() {
         return Ok(None);
@@ -460,7 +473,19 @@ fn try_chatgpt_usage_quota(account: &CodexAccount) -> Result<Option<UsageQuotaSn
             format!("Invalid ChatGPT usage response: {err}"),
         )
     })?;
-    Ok(Some(parse_chatgpt_usage_snapshot(&value, &account.id)?))
+    let mut snapshot = parse_chatgpt_usage_snapshot(&value, &account.id)?;
+    if snapshot.reset_credit_count.unwrap_or(0) > 0 && snapshot.reset_credit_expires_at.is_none() {
+        if let Some(expires_at) = probe_reset_credit_expiry_sources(&access_token)? {
+            snapshot.reset_credit_expires_at = Some(expires_at);
+            snapshot.reset_credit_expiry_source = Some("api".to_string());
+        } else {
+            snapshot
+                .alerts
+                .push("Reset-credit expiry was not present in probed responses.".into());
+        }
+    }
+    apply_manual_reset_credit_expiry(home_root, &account.id, &mut snapshot);
+    Ok(Some(snapshot))
 }
 
 fn parse_chatgpt_usage_snapshot(value: &Value, profile_id: &str) -> Result<UsageQuotaSnapshot> {
@@ -475,6 +500,7 @@ fn parse_chatgpt_usage_snapshot(value: &Value, profile_id: &str) -> Result<Usage
     let secondary = find_window(rate_limit, &["secondary", "secondary_window"]);
     let secondary_used = secondary.and_then(extract_percent);
     let plan_type = extract_string(value, &["plan_type", "planType"]);
+    let reset_credit_expires_at = extract_reset_credit_expiry(value);
 
     Ok(UsageQuotaSnapshot {
         profile_id: profile_id.to_string(),
@@ -490,6 +516,9 @@ fn parse_chatgpt_usage_snapshot(value: &Value, profile_id: &str) -> Result<Usage
         remaining_percent: Some(100_u8.saturating_sub(primary_used)),
         reset_at: extract_reset(primary),
         secondary_reset_at: secondary.and_then(extract_reset),
+        reset_credit_count: extract_reset_credit_count(value),
+        reset_credit_expiry_source: reset_credit_expires_at.as_ref().map(|_| "api".to_string()),
+        reset_credit_expires_at,
         alerts: Vec::new(),
         suggested_actions: if primary_used >= 90 {
             vec!["Session quota is high; switch profile or use relay.".into()]
@@ -497,6 +526,44 @@ fn parse_chatgpt_usage_snapshot(value: &Value, profile_id: &str) -> Result<Usage
             Vec::new()
         },
     })
+}
+
+fn probe_reset_credit_expiry_sources(access_token: &str) -> Result<Option<String>> {
+    for url in [
+        "https://chatgpt.com/backend-api/entitlements",
+        "https://chatgpt.com/backend-api/usage_state",
+    ] {
+        let curl_config = std::env::temp_dir().join(format!(
+            "lam-reset-credit-probe-{}.curl",
+            uuid::Uuid::new_v4()
+        ));
+        write_file_private(
+            &curl_config,
+            &format!(
+                "header = \"Authorization: Bearer {}\"\n",
+                access_token.replace('"', "\\\"")
+            ),
+        )?;
+        let output = Command::new("curl")
+            .args(["-sS", "--fail", "--max-time", "12", "--config"])
+            .arg(&curl_config)
+            .arg(url)
+            .output();
+        let _ = fs::remove_file(&curl_config);
+        let Ok(output) = output else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(&output.stdout) else {
+            continue;
+        };
+        if let Some(expires_at) = extract_reset_credit_expiry(&value) {
+            return Ok(Some(expires_at));
+        }
+    }
+    Ok(None)
 }
 
 fn prepare_quota_auth_home(account: &CodexAccount) -> Result<Option<QuotaAuthHome>> {
@@ -598,7 +665,7 @@ fn terminate_child(child: &mut Child) {
     let _ = child.wait();
 }
 
-fn spawn_codex_app_server(home_root: &Path, codex_home: &Path) -> Result<Child> {
+pub(crate) fn spawn_codex_app_server(home_root: &Path, codex_home: &Path) -> Result<Child> {
     // Always launch codex via login shell so that the user's full PATH (including
     // node, bun, etc.) is available.  DMG-installed apps inherit only a minimal
     // PATH from macOS (/usr/bin:/bin:/usr/sbin:/sbin) which lacks the node runtime
@@ -653,6 +720,7 @@ fn parse_rate_limit_snapshot_line(line: &str, profile_id: &str) -> Option<UsageQ
             .or_else(|| result.get("rate_limits"))
             .and_then(|value| extract_string(value, &["plan_type", "planType"]))
     });
+    let reset_credit_expires_at = extract_reset_credit_expiry(result);
 
     Some(UsageQuotaSnapshot {
         profile_id: profile_id.to_string(),
@@ -668,6 +736,9 @@ fn parse_rate_limit_snapshot_line(line: &str, profile_id: &str) -> Option<UsageQ
         remaining_percent: Some(100_u8.saturating_sub(primary_used)),
         reset_at,
         secondary_reset_at,
+        reset_credit_count: extract_reset_credit_count(result),
+        reset_credit_expiry_source: reset_credit_expires_at.as_ref().map(|_| "api".to_string()),
+        reset_credit_expires_at,
         alerts: Vec::new(),
         suggested_actions: if primary_used >= 90 {
             vec!["Session quota is high; switch profile or use relay.".into()]
@@ -775,6 +846,107 @@ fn extract_reset(value: &Value) -> Option<String> {
         })
 }
 
+fn extract_reset_credit_count(value: &Value) -> Option<i64> {
+    reset_credit_node(value).and_then(|node| {
+        node.get("availableCount")
+            .or_else(|| node.get("available_count"))
+            .or_else(|| node.get("count"))
+            .and_then(|raw| {
+                raw.as_i64()
+                    .or_else(|| raw.as_u64().and_then(|v| i64::try_from(v).ok()))
+            })
+    })
+}
+
+fn extract_reset_credit_expiry(value: &Value) -> Option<String> {
+    reset_credit_node(value).and_then(|node| {
+        for key in [
+            "expiresAt",
+            "expires_at",
+            "expiryAt",
+            "expiry_at",
+            "expirationAt",
+            "expiration_at",
+        ] {
+            if let Some(raw) = node.get(key) {
+                if let Some(s) = raw.as_str().filter(|s| !s.is_empty()) {
+                    return Some(s.to_string());
+                }
+                if let Some(epoch) = raw.as_i64() {
+                    return epoch_to_rfc3339(epoch);
+                }
+                if let Some(epoch) = raw.as_u64() {
+                    return i64::try_from(epoch).ok().and_then(epoch_to_rfc3339);
+                }
+            }
+        }
+        None
+    })
+}
+
+fn epoch_to_rfc3339(epoch: i64) -> Option<String> {
+    let seconds = if epoch > 1_000_000_000_000 {
+        epoch / 1000
+    } else {
+        epoch
+    };
+    chrono::DateTime::from_timestamp(seconds, 0).map(|dt| dt.to_rfc3339())
+}
+
+fn reset_credit_node(value: &Value) -> Option<&Value> {
+    value
+        .get("rateLimitResetCredits")
+        .or_else(|| value.get("rate_limit_reset_credits"))
+        .or_else(|| value.get("resetCredits"))
+        .or_else(|| value.get("reset_credits"))
+        .or_else(|| {
+            value
+                .get("result")
+                .and_then(|result| reset_credit_node(result))
+        })
+}
+
+fn apply_manual_reset_credit_expiry(
+    home_root: &Path,
+    profile_id: &str,
+    snapshot: &mut UsageQuotaSnapshot,
+) {
+    if snapshot.reset_credit_expires_at.is_some() || snapshot.reset_credit_count.unwrap_or(0) <= 0 {
+        return;
+    }
+    let path = home_root.join(".codex/lam/reset-credit-expiry.json");
+    let Ok(body) = fs::read_to_string(path) else {
+        snapshot.reset_credit_expiry_source = Some("unknown".to_string());
+        return;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&body) else {
+        snapshot
+            .alerts
+            .push("Invalid reset-credit manual expiry config; ignoring override.".into());
+        snapshot.reset_credit_expiry_source = Some("unknown".to_string());
+        return;
+    };
+    let Some(raw) = value
+        .get("profiles")
+        .and_then(|profiles| profiles.get(profile_id))
+        .and_then(|profile| profile.get("resetCreditExpiresAt"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    else {
+        snapshot.reset_credit_expiry_source = Some("unknown".to_string());
+        return;
+    };
+    if chrono::DateTime::parse_from_rfc3339(raw).is_ok() {
+        snapshot.reset_credit_expires_at = Some(raw.to_string());
+        snapshot.reset_credit_expiry_source = Some("manual_config".to_string());
+    } else {
+        snapshot
+            .alerts
+            .push("Invalid reset-credit manual expiry timestamp; ignoring override.".into());
+        snapshot.reset_credit_expiry_source = Some("unknown".to_string());
+    }
+}
+
 fn extract_string(value: &Value, keys: &[&str]) -> Option<String> {
     for key in keys {
         if let Some(s) = value.get(key).and_then(|v| v.as_str()) {
@@ -855,6 +1027,7 @@ mod tests {
     fn parses_chatgpt_wham_usage_quota() {
         let usage = serde_json::json!({
             "plan_type": "plus",
+            "rateLimitResetCredits": {"availableCount": 2},
             "rate_limit": {
                 "primary_window": {
                     "used_percent": 72,
@@ -879,5 +1052,132 @@ mod tests {
         assert_eq!(snapshot.secondary_used_percent, Some(28));
         assert_eq!(snapshot.secondary_window_duration_mins, Some(10080));
         assert_eq!(snapshot.remaining_percent, Some(28));
+        assert_eq!(snapshot.reset_credit_count, Some(2));
+        assert_eq!(snapshot.reset_credit_expires_at, None);
+    }
+
+    #[test]
+    fn parses_app_server_reset_credit_count() {
+        let line = serde_json::json!({
+            "id": 2,
+            "result": {
+                "rateLimits": {
+                    "primary": {"usedPercent": 25, "windowDurationMins": 300, "resetsAt": 1782553772},
+                    "secondary": {"usedPercent": 10, "windowDurationMins": 10080, "resetsAt": 1782847747}
+                },
+                "rateLimitResetCredits": {"availableCount": 3}
+            }
+        })
+        .to_string();
+
+        let snapshot = parse_rate_limit_snapshot_line(&line, "Yas").unwrap();
+
+        assert_eq!(snapshot.reset_credit_count, Some(3));
+        assert_eq!(snapshot.reset_credit_expires_at, None);
+    }
+
+    #[test]
+    fn numeric_reset_credit_expiry_is_normalized_to_rfc3339() {
+        let line = serde_json::json!({
+            "id": 2,
+            "result": {
+                "rateLimits": {
+                    "primary": {"usedPercent": 25, "windowDurationMins": 300, "resetsAt": 1782553772}
+                },
+                "rateLimitResetCredits": {"availableCount": 1, "expiresAt": 1782553772}
+            }
+        })
+        .to_string();
+
+        let snapshot = parse_rate_limit_snapshot_line(&line, "Yas").unwrap();
+
+        assert_eq!(snapshot.reset_credit_count, Some(1));
+        assert_eq!(
+            snapshot.reset_credit_expires_at.as_deref(),
+            Some("2026-06-27T09:49:32+00:00")
+        );
+        assert_eq!(snapshot.reset_credit_expiry_source.as_deref(), Some("api"));
+    }
+
+    #[test]
+    fn manual_reset_credit_expiry_fills_only_absent_api_expiry() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join(".codex/lam/reset-credit-expiry.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            path,
+            r#"{"profiles":{"Yas":{"resetCreditExpiresAt":"2026-07-12T00:00:00Z","note":"manual"}}}"#,
+        )
+        .unwrap();
+        let mut snapshot = unavailable_quota_snapshot("Yas", None);
+        snapshot.reset_credit_count = Some(2);
+
+        apply_manual_reset_credit_expiry(temp.path(), "Yas", &mut snapshot);
+
+        assert_eq!(
+            snapshot.reset_credit_expires_at.as_deref(),
+            Some("2026-07-12T00:00:00Z")
+        );
+        assert_eq!(
+            snapshot.reset_credit_expiry_source.as_deref(),
+            Some("manual_config")
+        );
+
+        snapshot.reset_credit_expires_at = Some("2026-08-01T00:00:00Z".into());
+        snapshot.reset_credit_expiry_source = Some("api".into());
+        apply_manual_reset_credit_expiry(temp.path(), "Yas", &mut snapshot);
+        assert_eq!(
+            snapshot.reset_credit_expires_at.as_deref(),
+            Some("2026-08-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn invalid_manual_reset_credit_expiry_does_not_fail_refresh_metadata() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join(".codex/lam/reset-credit-expiry.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            path,
+            r#"{"profiles":{"Yas":{"resetCreditExpiresAt":"not-a-date"}}}"#,
+        )
+        .unwrap();
+        let mut snapshot = unavailable_quota_snapshot("Yas", None);
+        snapshot.reset_credit_count = Some(1);
+
+        apply_manual_reset_credit_expiry(temp.path(), "Yas", &mut snapshot);
+
+        assert_eq!(snapshot.reset_credit_expires_at, None);
+        assert_eq!(
+            snapshot.reset_credit_expiry_source.as_deref(),
+            Some("unknown")
+        );
+        assert!(snapshot
+            .alerts
+            .iter()
+            .any(|alert| alert.contains("Invalid reset-credit")));
+    }
+
+    #[test]
+    fn quota_cache_preserves_reset_credit_fields() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut snapshot = unavailable_quota_snapshot("Yas", None);
+        snapshot.source = "chatgpt_wham_usage".into();
+        snapshot.reset_credit_count = Some(2);
+        snapshot.reset_credit_expires_at = Some("2026-07-12T00:00:00Z".into());
+        snapshot.reset_credit_expiry_source = Some("manual_config".into());
+
+        write_quota_cache(temp.path(), &snapshot).unwrap();
+        let cached = read_quota_cache(temp.path(), "Yas").unwrap().unwrap();
+
+        assert_eq!(cached.reset_credit_count, Some(2));
+        assert_eq!(
+            cached.reset_credit_expires_at.as_deref(),
+            Some("2026-07-12T00:00:00Z")
+        );
+        assert_eq!(
+            cached.reset_credit_expiry_source.as_deref(),
+            Some("manual_config")
+        );
     }
 }
