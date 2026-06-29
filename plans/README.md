@@ -2,7 +2,7 @@
 
 **Base commit:** `6e4471e`  
 **Generated:** 2026-06-24  
-**Last updated:** 2026-06-28 (Plan 008 completed)
+**Last updated:** 2026-06-29 (Plan 009 added)
 
 ## Plan Index
 
@@ -15,6 +15,7 @@
 | 006 | Prevent Codex restart and quit from leaving orphan helper processes | DONE | S | L | 1 focused command test |
 | 007 | PAT-mode Codex usage statistics from JSONL into local SQLite | DONE | L | H | `make check` + real-home smoke + deep audit |
 | 008 | Usage statistics dashboard reference parity and full-page route | DONE | L | H | dashboard parity + tray smoke + installed-app verification |
+| 009 | Codex account usage parity, activity heatmap, and reset-credit dots | DONE | L | H | usage + quota + dashboard focused suites |
 
 ## Dependencies
 
@@ -34,6 +35,37 @@
   statistics from a modal into a full bottom-nav page, adds the tray footer
   Stats entry, and expands the dashboard to reference-project parity for all
   aggregate data items except `Usage observed`.
+- **009** is a follow-up to Plan 008. It adds Codex account-level usage parity
+  stats (`account/usage/read`), a calls/tokens activity heatmap with Daily,
+  Weekly, and Cumulative modes, reset-credit count display from
+  `account/rateLimits/read`, and a focused local-token undercount audit.
+
+## Plan 009 execution note
+
+Read `plans/009-codex-usage-parity-activity-and-reset-credits.md` as a
+self-contained plan. It is intentionally additive to the Plan 007/008 usage
+pipeline: keep JSONL as the local replayable source, keep SQLite as the read
+model, prefer Codex app-server `account/usage/read` for the five account
+headline stats, and expose local-vs-Codex token deltas instead of silently
+overwriting local totals. For reset credits, prefer Codex app-server
+`account/rateLimits/read`; treat `/entitlements` and `/usage_state` only as
+controlled probes until their live response shape is proven stable.
+
+**Execution completed 2026-06-29**: executor delivered Plan 009 in isolated
+worktree `/Users/micro/Documents/Code/Rust/LAM-plan009` on branch
+`codex/009-usage-parity-reset-credits` at commit `cddf6e1`, with follow-up
+quota fixes at commit `6346a8d`. Reviewer found and executor fixed four bugs
+before approval: account usage now reuses the quota app-server launcher so
+installed-app PATH handling stays consistent; numeric reset-credit expiry values
+are normalized to RFC3339 before frontend coloring; PAT accounts try
+`auth.json` app-server quota before `auth-f.json` ChatGPT usage; and app-server
+reset-credit counts now enrich expiry via probe/manual config before rendering
+as unknown. Reviewer reran focused quota/account-usage tests, focused Vitest,
+frontend build, UI smoke, `cargo fmt -- --check`, `cargo clippy -- -D
+warnings`, `cargo test`, and `make check`; all passed. The follow-up quota fix
+was revalidated with `cargo fmt -- --check`, `cargo test quota_app_server`,
+`cargo test quota`, `cargo clippy -- -D warnings`, `git diff --check`, and
+`cargo test`.
 
 ## Plan 008 execution note
 
