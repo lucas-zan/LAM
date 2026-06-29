@@ -266,10 +266,64 @@ fn try_codex_app_server_quota(
     home_root: &Path,
     account: &CodexAccount,
 ) -> Result<UsageQuotaSnapshot> {
-    if let Some(snapshot) = try_chatgpt_usage_quota(home_root, account)? {
-        return Ok(snapshot);
+    if account.has_personal_access_token {
+        match try_codex_app_server_rate_limit_quota(home_root, account) {
+            Ok(mut snapshot) => {
+                enrich_reset_credit_expiry(home_root, account, &mut snapshot, None)?;
+                return Ok(snapshot);
+            }
+            Err(app_server_err) => match try_chatgpt_usage_quota(home_root, account) {
+                Ok(Some(mut snapshot)) => {
+                    snapshot.alerts.push(format!(
+                        "Codex app-server quota unavailable: {}",
+                        app_server_err.message
+                    ));
+                    return Ok(snapshot);
+                }
+                Ok(None) => return Err(app_server_err),
+                Err(chatgpt_err) => {
+                    return Err(AppError::new(
+                        "QUOTA_REFRESH_FAILED",
+                        format!(
+                            "Codex app-server quota failed: {}; ChatGPT usage fallback failed: {}",
+                            app_server_err.message, chatgpt_err.message
+                        ),
+                    ));
+                }
+            },
+        }
     }
-    let quota_auth_home = prepare_quota_auth_home(account)?;
+
+    match try_chatgpt_usage_quota(home_root, account) {
+        Ok(Some(snapshot)) => return Ok(snapshot),
+        Ok(None) => {}
+        Err(chatgpt_err) => match try_codex_app_server_rate_limit_quota(home_root, account) {
+            Ok(mut snapshot) => {
+                snapshot.alerts.push(format!(
+                    "ChatGPT usage quota unavailable: {}",
+                    chatgpt_err.message
+                ));
+                enrich_reset_credit_expiry(home_root, account, &mut snapshot, None)?;
+                return Ok(snapshot);
+            }
+            Err(_) => return Err(chatgpt_err),
+        },
+    }
+
+    let mut snapshot = try_codex_app_server_rate_limit_quota(home_root, account)?;
+    enrich_reset_credit_expiry(home_root, account, &mut snapshot, None)?;
+    Ok(snapshot)
+}
+
+fn try_codex_app_server_rate_limit_quota(
+    home_root: &Path,
+    account: &CodexAccount,
+) -> Result<UsageQuotaSnapshot> {
+    let quota_auth_home = if account.has_personal_access_token {
+        None
+    } else {
+        prepare_quota_auth_home(account)?
+    };
     let codex_home = quota_auth_home
         .as_ref()
         .map(QuotaAuthHome::path)
@@ -422,20 +476,7 @@ fn try_chatgpt_usage_quota(
     home_root: &Path,
     account: &CodexAccount,
 ) -> Result<Option<UsageQuotaSnapshot>> {
-    let auth_f_path = account.codex_home.join("auth-f.json");
-    if !auth_f_path.exists() {
-        return Ok(None);
-    }
-    let auth_content = fs::read_to_string(&auth_f_path).map_err(|err| {
-        AppError::new(
-            "QUOTA_AUTH_READ_FAILED",
-            format!("Failed to read auth-f.json: {err}"),
-        )
-    })?;
-    let auth_json: Value = serde_json::from_str(&auth_content).map_err(|err| {
-        AppError::new("QUOTA_AUTH_INVALID", format!("Invalid auth-f.json: {err}"))
-    })?;
-    let Some(access_token) = auth_string_alias(&auth_json, &["access_token", "accessToken"]) else {
+    let Some(access_token) = auth_f_access_token(account)? else {
         return Ok(None);
     };
     let curl_config =
@@ -474,18 +515,61 @@ fn try_chatgpt_usage_quota(
         )
     })?;
     let mut snapshot = parse_chatgpt_usage_snapshot(&value, &account.id)?;
-    if snapshot.reset_credit_count.unwrap_or(0) > 0 && snapshot.reset_credit_expires_at.is_none() {
-        if let Some(expires_at) = probe_reset_credit_expiry_sources(&access_token)? {
+    enrich_reset_credit_expiry(home_root, account, &mut snapshot, Some(&access_token))?;
+    Ok(Some(snapshot))
+}
+
+fn auth_f_access_token(account: &CodexAccount) -> Result<Option<String>> {
+    let auth_f_path = account.codex_home.join("auth-f.json");
+    if !auth_f_path.exists() {
+        return Ok(None);
+    }
+    let auth_content = fs::read_to_string(&auth_f_path).map_err(|err| {
+        AppError::new(
+            "QUOTA_AUTH_READ_FAILED",
+            format!("Failed to read auth-f.json: {err}"),
+        )
+    })?;
+    let auth_json: Value = serde_json::from_str(&auth_content).map_err(|err| {
+        AppError::new("QUOTA_AUTH_INVALID", format!("Invalid auth-f.json: {err}"))
+    })?;
+    Ok(auth_string_alias(
+        &auth_json,
+        &["access_token", "accessToken"],
+    ))
+}
+
+fn enrich_reset_credit_expiry(
+    home_root: &Path,
+    account: &CodexAccount,
+    snapshot: &mut UsageQuotaSnapshot,
+    access_token: Option<&str>,
+) -> Result<()> {
+    if snapshot.reset_credit_count.unwrap_or(0) <= 0 || snapshot.reset_credit_expires_at.is_some() {
+        return Ok(());
+    }
+
+    let owned_token;
+    let token = if let Some(access_token) = access_token {
+        Some(access_token)
+    } else {
+        owned_token = auth_f_access_token(account)?;
+        owned_token.as_deref()
+    };
+
+    if let Some(token) = token {
+        if let Some(expires_at) = probe_reset_credit_expiry_sources(token)? {
             snapshot.reset_credit_expires_at = Some(expires_at);
             snapshot.reset_credit_expiry_source = Some("api".to_string());
-        } else {
-            snapshot
-                .alerts
-                .push("Reset-credit expiry was not present in probed responses.".into());
+            return Ok(());
         }
+        snapshot
+            .alerts
+            .push("Reset-credit expiry was not present in probed responses.".into());
     }
-    apply_manual_reset_credit_expiry(home_root, &account.id, &mut snapshot);
-    Ok(Some(snapshot))
+
+    apply_manual_reset_credit_expiry(home_root, &account.id, snapshot);
+    Ok(())
 }
 
 fn parse_chatgpt_usage_snapshot(value: &Value, profile_id: &str) -> Result<UsageQuotaSnapshot> {

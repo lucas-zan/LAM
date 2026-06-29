@@ -1014,6 +1014,105 @@ exit 1
 }
 
 #[test]
+fn quota_app_server_pat_auth_uses_runtime_auth_before_auth_f() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-pat-runtime-auth-priority");
+    let account_home = seed_codex_home(&home, "a");
+    write(
+        &account_home.join("auth.json"),
+        r#"{"source":"runtime","personal_access_token":"pat"}"#,
+    );
+    write(
+        &account_home.join("auth-f.json"),
+        r#"{"source":"uploaded","accessToken":"web-token"}"#,
+    );
+    let codex_home_log = home.join("codex-home.log");
+    let bin = home.join("fake-codex.sh");
+    write_executable(
+        &bin,
+        r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  printf '%s' "$CODEX_HOME" > "$LAM_TEST_CODEX_HOME_LOG"
+  /usr/bin/grep '"source"[[:space:]]*:[[:space:]]*"runtime"' "$CODEX_HOME/auth.json" >/dev/null || exit 4
+  /usr/bin/grep '"personal_access_token"[[:space:]]*:' "$CODEX_HOME/auth.json" >/dev/null || exit 5
+  read _line1 || exit 1
+  read _line2 || exit 1
+  echo '{"id":2,"result":{"rateLimits":{"planType":"plus","primary":{"usedPercent":31,"resetsAt":1781678412},"secondary":null}}}'
+  /bin/sleep 1
+  exit 0
+fi
+exit 1
+"#,
+    );
+    let original_enable = std::env::var_os("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+    let original_bin = std::env::var_os("LAM_CODEX_BIN");
+    let original_log = std::env::var_os("LAM_TEST_CODEX_HOME_LOG");
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::set_var("LAM_CODEX_BIN", bin.to_string_lossy().to_string());
+    std::env::set_var("LAM_TEST_CODEX_HOME_LOG", &codex_home_log);
+
+    let snapshot = get_profile_quota(&home, "a", true).unwrap();
+
+    restore_env_var("LAM_TEST_CODEX_HOME_LOG", original_log);
+    restore_env_var("LAM_CODEX_BIN", original_bin);
+    restore_env_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", original_enable);
+    assert_eq!(snapshot.source, "app_server_rate_limits");
+    assert_eq!(snapshot.primary_used_percent, Some(31));
+    assert_eq!(
+        PathBuf::from(fs::read_to_string(&codex_home_log).unwrap()),
+        account_home
+    );
+}
+
+#[test]
+fn quota_app_server_reset_credit_expiry_uses_manual_config() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-reset-credit-manual-expiry");
+    let account_home = seed_codex_home(&home, "a");
+    write(
+        &account_home.join("auth.json"),
+        r#"{"personal_access_token":"pat"}"#,
+    );
+    write(
+        &home.join(".codex/lam/reset-credit-expiry.json"),
+        r#"{"profiles":{"a":{"resetCreditExpiresAt":"2026-07-15T00:00:00Z"}}}"#,
+    );
+    let bin = home.join("fake-codex.sh");
+    write_executable(
+        &bin,
+        r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  read _line1 || exit 1
+  read _line2 || exit 1
+  echo '{"id":2,"result":{"rateLimits":{"planType":"plus","primary":{"usedPercent":22,"resetsAt":1781678412},"secondary":null},"rateLimitResetCredits":{"availableCount":2}}}'
+  /bin/sleep 1
+  exit 0
+fi
+exit 1
+"#,
+    );
+    let original_enable = std::env::var_os("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+    let original_bin = std::env::var_os("LAM_CODEX_BIN");
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::set_var("LAM_CODEX_BIN", bin.to_string_lossy().to_string());
+
+    let snapshot = get_profile_quota(&home, "a", true).unwrap();
+
+    restore_env_var("LAM_CODEX_BIN", original_bin);
+    restore_env_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", original_enable);
+    assert_eq!(snapshot.source, "app_server_rate_limits");
+    assert_eq!(snapshot.reset_credit_count, Some(2));
+    assert_eq!(
+        snapshot.reset_credit_expires_at.as_deref(),
+        Some("2026-07-15T00:00:00Z")
+    );
+    assert_eq!(
+        snapshot.reset_credit_expiry_source.as_deref(),
+        Some("manual_config")
+    );
+}
+
+#[test]
 fn quota_app_server_uses_each_profile_codex_home() {
     let _guard = env_lock().lock().unwrap();
     let home = temp_home("quota-profile-codex-home");
