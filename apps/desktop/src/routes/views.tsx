@@ -5,7 +5,6 @@ import {
   countAccountsWithQuotaData,
   resetCreditDisplay,
   quotaDisplayWindows,
-  sortedResetCreditDetails,
 } from '../lib/quota';
 import type {
   AccountNoteUpdate,
@@ -418,7 +417,6 @@ export function Accounts({
           const isResetting = resettingQuotaIds.includes(account.id);
           const quota = quotas.find((item) => item.profileId === account.id);
           const resetCredits = resetCreditDisplay(quota);
-          const resetCreditDetails = sortedResetCreditDetails(quota);
           const canResetQuota = (quota?.resetCreditCount ?? 0) > 0 && !isResetting;
           const providerLabel = account.providerId ?? 'unknown';
           const modelLabel = account.model ?? 'unknown';
@@ -436,9 +434,15 @@ export function Accounts({
                 <div className="cardTitleRow">
                   <h3>{account.displayName}</h3>
                   {resetCredits ? (
-                    <span className="resetCreditDots" title={resetCredits.title} aria-label={resetCredits.title}>
+                    <span className="resetCreditDots" aria-label={resetCredits.title}>
                       {resetCredits.dots.map((dot) => (
-                        <span key={dot.key} className={`resetCreditDot resetCreditDot--${dot.color}`} />
+                        <span
+                          key={dot.key}
+                          className={`resetCreditDot resetCreditDot--${dot.color}`}
+                          data-tooltip={dot.title}
+                          aria-label={dot.title}
+                          tabIndex={0}
+                        />
                       ))}
                       {resetCredits.overflow > 0 ? <span className="resetCreditMore">+{resetCredits.overflow}</span> : null}
                     </span>
@@ -500,17 +504,6 @@ export function Accounts({
                   />
                 ))}
               </div>
-              {resetCreditDetails.length ? (
-                <div className="resetCreditExpiryList" aria-label="Manual reset expiry">
-                  <strong>Manual reset expiry</strong>
-                  {resetCreditDetails.map((credit, index) => (
-                    <div key={credit.id ?? index} className="resetCreditExpiryRow">
-                      <span>Reset {index + 1}</span>
-                      <time>{credit.expiresAt ?? '--'}</time>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
               <div className="cardActions">
                 <UIButton
                   size="sm"

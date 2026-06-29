@@ -567,9 +567,9 @@ describe('App handoff modal', () => {
     const accountCard = (await screen.findByText('codex-c')).closest('article');
     expect(accountCard).not.toBeNull();
 
-    const rows = within(accountCard!).getByLabelText('Manual reset expiry');
-    expect(within(rows).getByText('Reset 1').nextSibling?.textContent).toBe('2026-07-01T08:00:00+08:00');
-    expect(within(rows).getByText('Reset 2').nextSibling?.textContent).toBe('2026-07-12T08:00:00+08:00');
+    expect(within(accountCard!).queryByLabelText('Manual reset expiry')).toBeNull();
+    expect(within(accountCard!).getByLabelText('Reset 1: 2026-07-01T08:00:00+08:00')).toBeTruthy();
+    expect(within(accountCard!).getByLabelText('Reset 2: 2026-07-12T08:00:00+08:00')).toBeTruthy();
     expect(within(accountCard!).queryByRole('button', { name: 'Handoff' })).toBeNull();
     expect(within(accountCard!).getAllByRole('button', { name: /reset codex-c quota/i })).toHaveLength(1);
 

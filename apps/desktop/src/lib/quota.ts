@@ -14,6 +14,7 @@ export type QuotaDisplayWindow = {
 export type ResetCreditDot = {
   key: string;
   color: 'blue' | 'green' | 'yellow' | 'red' | 'black' | 'unknown';
+  title: string;
 };
 
 export type ResetCreditDisplay = {
@@ -138,10 +139,14 @@ export function resetCreditDisplay(quota?: UsageQuotaSnapshot | null): ResetCred
         ? `expires ${expiresAt}`
         : 'expiry unknown';
   return {
-    dots: Array.from({ length: visible }, (_, index) => ({
-      key: `${quota.profileId}-${index}`,
-      color: details[index]?.expiresAt ? resetCreditColor(details[index].expiresAt) : fallbackColor,
-    })),
+    dots: Array.from({ length: visible }, (_, index) => {
+      const dotExpiresAt = details[index]?.expiresAt;
+      return {
+        key: `${quota.profileId}-${index}`,
+        color: dotExpiresAt ? resetCreditColor(dotExpiresAt) : fallbackColor,
+        title: dotExpiresAt ? `Reset ${index + 1}: ${dotExpiresAt}` : `Reset ${index + 1}: expiry unknown`,
+      };
+    }),
     overflow: Math.max(0, count - visible),
     title: `${count} reset credits; ${source}`,
   };

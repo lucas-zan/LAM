@@ -736,9 +736,15 @@ function TrayAccountList({
                       <div className="trayAccountNameWrap">
                         <strong title={title}>{title}</strong>
                         {resetCredits ? (
-                          <span className="resetCreditDots" title={resetCredits.title} aria-label={resetCredits.title}>
+                          <span className="resetCreditDots" aria-label={resetCredits.title}>
                             {resetCredits.dots.map((dot) => (
-                              <span key={dot.key} className={`resetCreditDot resetCreditDot--${dot.color}`} />
+                              <span
+                                key={dot.key}
+                                className={`resetCreditDot resetCreditDot--${dot.color}`}
+                                data-tooltip={dot.title}
+                                aria-label={dot.title}
+                                tabIndex={0}
+                              />
                             ))}
                             {resetCredits.overflow > 0 ? <span className="resetCreditMore">+{resetCredits.overflow}</span> : null}
                           </span>
