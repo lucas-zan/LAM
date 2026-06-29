@@ -459,28 +459,6 @@ export function Accounts({
                   >
                     ↻
                   </UIButton>
-                  {quota?.resetCreditCount ? (
-                    <UIButton
-                      variant="ghost"
-                      size="sm"
-                      className="resetQuotaBtn"
-                      title={`Reset ${account.displayName} quota`}
-                      aria-label={`Reset ${account.displayName} quota`}
-                      disabled={!canResetQuota}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (
-                          window.confirm(
-                            `Consume one reset credit for ${account.displayName}?`,
-                          )
-                        ) {
-                          void resetAccountQuota(account.id);
-                        }
-                      }}
-                    >
-                      {isResetting ? 'Resetting' : 'Reset quota'}
-                    </UIButton>
-                  ) : null}
                 </div>
               </div>
               <div className="cardTagsRow">
@@ -555,24 +533,47 @@ export function Accounts({
                   <IconPlay size={13} />
                   Relay Latest
                 </UIButton>
-                <UIButton
-                  size="sm"
-                  className="accountActionBtn"
-                  disabled={authMode === 'pat' || accounts.length < 2}
-                  aria-label="Handoff"
-                  title={
-                    authMode === 'pat'
-                      ? 'Not available in PAT mode'
-                      : `Choose a session to continue with ${account.displayName}`
-                  }
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openHandoff(account);
-                  }}
-                >
-                  <IconPlay size={13} />
-                  Handoff
-                </UIButton>
+                {authMode === 'pat' ? (
+                  <UIButton
+                    size="sm"
+                    className="accountActionBtn resetQuotaBtn"
+                    disabled={!canResetQuota}
+                    aria-label={`Reset ${account.displayName} quota`}
+                    title={
+                      quota?.resetCreditCount
+                        ? `Reset ${account.displayName} quota`
+                        : 'No reset credits available'
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (
+                        window.confirm(
+                          `Consume one reset credit for ${account.displayName}?`,
+                        )
+                      ) {
+                        void resetAccountQuota(account.id);
+                      }
+                    }}
+                  >
+                    <IconPlay size={13} />
+                    {isResetting ? 'Resetting' : 'Reset Quota'}
+                  </UIButton>
+                ) : (
+                  <UIButton
+                    size="sm"
+                    className="accountActionBtn"
+                    disabled={accounts.length < 2}
+                    aria-label="Handoff"
+                    title={`Choose a session to continue with ${account.displayName}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openHandoff(account);
+                    }}
+                  >
+                    <IconPlay size={13} />
+                    Handoff
+                  </UIButton>
+                )}
                 <UIButton
                   size="sm"
                   className="accountActionBtn"

@@ -570,6 +570,8 @@ describe('App handoff modal', () => {
     const rows = within(accountCard!).getByLabelText('Manual reset expiry');
     expect(within(rows).getByText('Reset 1').nextSibling?.textContent).toBe('2026-07-01T08:00:00+08:00');
     expect(within(rows).getByText('Reset 2').nextSibling?.textContent).toBe('2026-07-12T08:00:00+08:00');
+    expect(within(accountCard!).queryByRole('button', { name: 'Handoff' })).toBeNull();
+    expect(within(accountCard!).getAllByRole('button', { name: /reset codex-c quota/i })).toHaveLength(1);
 
     fireEvent.click(within(accountCard!).getByRole('button', { name: /reset codex-c quota/i }));
 
