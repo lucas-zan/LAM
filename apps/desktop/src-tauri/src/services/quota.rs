@@ -549,23 +549,35 @@ fn enrich_reset_credit_expiry(
         return Ok(());
     }
 
-    let owned_token;
     let token = if let Some(access_token) = access_token {
-        Some(access_token)
+        Some(access_token.to_string())
     } else {
-        owned_token = auth_f_access_token(account)?;
-        owned_token.as_deref()
+        match auth_f_access_token(account) {
+            Ok(token) => token,
+            Err(err) => {
+                snapshot.alerts.push(format!(
+                    "Reset-credit expiry probe skipped: {}",
+                    err.message
+                ));
+                None
+            }
+        }
     };
 
-    if let Some(token) = token {
-        if let Some(expires_at) = probe_reset_credit_expiry_sources(token)? {
-            snapshot.reset_credit_expires_at = Some(expires_at);
-            snapshot.reset_credit_expiry_source = Some("api".to_string());
-            return Ok(());
+    if let Some(token) = token.as_deref() {
+        match probe_reset_credit_expiry_sources(token) {
+            Ok(Some(expires_at)) => {
+                snapshot.reset_credit_expires_at = Some(expires_at);
+                snapshot.reset_credit_expiry_source = Some("api".to_string());
+                return Ok(());
+            }
+            Ok(None) => snapshot
+                .alerts
+                .push("Reset-credit expiry was not present in probed responses.".into()),
+            Err(err) => snapshot
+                .alerts
+                .push(format!("Reset-credit expiry probe failed: {}", err.message)),
         }
-        snapshot
-            .alerts
-            .push("Reset-credit expiry was not present in probed responses.".into());
     }
 
     apply_manual_reset_credit_expiry(home_root, &account.id, snapshot);

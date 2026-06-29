@@ -1113,6 +1113,52 @@ exit 1
 }
 
 #[test]
+fn quota_app_server_pat_auth_ignores_broken_auth_f_for_expiry() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-pat-broken-auth-f-expiry");
+    let account_home = seed_codex_home(&home, "a");
+    write(
+        &account_home.join("auth.json"),
+        r#"{"personal_access_token":"pat"}"#,
+    );
+    write(&account_home.join("auth-f.json"), "{");
+    let bin = home.join("fake-codex.sh");
+    write_executable(
+        &bin,
+        r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  read _line1 || exit 1
+  read _line2 || exit 1
+  echo '{"id":2,"result":{"rateLimits":{"planType":"plus","primary":{"usedPercent":24,"resetsAt":1781678412},"secondary":null},"rateLimitResetCredits":{"availableCount":1}}}'
+  /bin/sleep 1
+  exit 0
+fi
+exit 1
+"#,
+    );
+    let original_enable = std::env::var_os("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+    let original_bin = std::env::var_os("LAM_CODEX_BIN");
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::set_var("LAM_CODEX_BIN", bin.to_string_lossy().to_string());
+
+    let snapshot = get_profile_quota(&home, "a", true).unwrap();
+
+    restore_env_var("LAM_CODEX_BIN", original_bin);
+    restore_env_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", original_enable);
+    assert_eq!(snapshot.source, "app_server_rate_limits");
+    assert_eq!(snapshot.staleness, "fresh");
+    assert_eq!(snapshot.reset_credit_count, Some(1));
+    assert_eq!(
+        snapshot.reset_credit_expiry_source.as_deref(),
+        Some("unknown")
+    );
+    assert!(snapshot
+        .alerts
+        .iter()
+        .any(|alert| alert.contains("Reset-credit expiry probe skipped")));
+}
+
+#[test]
 fn quota_app_server_uses_each_profile_codex_home() {
     let _guard = env_lock().lock().unwrap();
     let home = temp_home("quota-profile-codex-home");
