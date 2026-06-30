@@ -2605,8 +2605,7 @@ html[data-tray-popover='1'] #root {
 
 .usageHeatmapMain {
   flex: 0 0 auto;
-  overflow-x: auto;
-  padding-top: 25px;
+  padding-top: 15px;
   padding-bottom: 8px;
 }
 
