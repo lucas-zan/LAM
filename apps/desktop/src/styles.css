@@ -2528,8 +2528,6 @@ html[data-tray-popover='1'] #root {
   grid-auto-flow: column;
   grid-auto-columns: 14px;
   gap: 3px;
-  overflow-x: auto;
-  padding-bottom: 8px;
   width: 100%;
 }
 
@@ -2608,6 +2606,8 @@ html[data-tray-popover='1'] #root {
 .usageHeatmapMain {
   flex: 0 0 auto;
   overflow-x: auto;
+  padding-top: 25px;
+  padding-bottom: 8px;
 }
 
 .usageHeatmapSidebar {
