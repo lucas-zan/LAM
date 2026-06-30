@@ -638,7 +638,8 @@ export function UsagePage({
                   <span
                     key={cell.key}
                     className={`usageHeatmapCell usageHeatmapCell--${heatmapLevel(cell.value, maxHeatmapValue)}`}
-                    title={cell.title}
+                    data-tooltip={cell.title}
+                    tabIndex={0}
                   />
                 );
               }) : <p className="usageEmpty">No activity buckets.</p>}

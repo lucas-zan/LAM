@@ -2536,16 +2536,45 @@ html[data-tray-popover='1'] #root {
 .usageHeatmapCell {
   width: 14px;
   height: 14px;
-  border-radius: 2px;
+  border-radius: 3.5px;
   background: var(--heatmap-bg-0);
   border: none;
   cursor: pointer;
   transition: all 0.1s ease;
+  position: relative;
+  outline: none;
 }
 
 .usageHeatmapCell:hover {
   transform: scale(1.25);
   z-index: 10;
+}
+
+.usageHeatmapCell::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  transform: translateX(-50%) translateY(3px) scale(0.95);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+  box-shadow: var(--shadow-md);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.usageHeatmapCell:hover::after,
+.usageHeatmapCell:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(1);
 }
 
 .usageHeatmapCell--empty {

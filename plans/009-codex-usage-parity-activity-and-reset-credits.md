@@ -391,6 +391,22 @@ Out of scope:
   plan. A simple local config file is acceptable when no API expiry is exposed.
 - Do not change non-PAT auth behavior.
 
+Follow-up scope now requested after Plan 009 completion:
+
+- Add a later implementation pass for `Manual reset expiry` and
+  `Reset quota`, using
+  `docs/TAURI2_RUST_CODEX_RESET_EXPIRY_AND_QUOTA_RESET.md` as the source design
+  note.
+- This follow-up supersedes the original "Do not consume reset credits" boundary
+  only for the future reset-quota pass. It does not change the already-completed
+  Plan 009 read-only delivery.
+- Treat Codex app-server `account/rateLimitResetCredit/consume` as the default
+  reset path. Private `wham` consume is only a fallback/spike path if app-server
+  cannot support the live account shape.
+- Treat per-credit expiry as experimental detail data. The product must still
+  show quota windows, plan type, reset count, and reset action when expiry
+  detail is unavailable.
+
 ## Git Workflow
 
 - Branch: `codex/009-usage-parity-reset-credits`
@@ -874,6 +890,200 @@ Expected manually:
   local totals.
 - Quota refresh shows reset-credit dots when the backend reports available
   credits.
+
+## Follow-up Extension: Manual reset expiry list and Reset quota
+
+This section is intentionally a future implementation extension, not a rewrite
+of the completed Plan 009 work. The executor should implement it in a new
+follow-up branch/plan pass after the existing usage parity and reset-credit dot
+work is merged.
+
+Source design note:
+
+- `docs/TAURI2_RUST_CODEX_RESET_EXPIRY_AND_QUOTA_RESET.md` explains the desired
+  Tauri/Rust design for `Manual reset expiry` and `Reset quota`.
+- That document distinguishes three different times:
+  - quota window reset: `reset_at` or `reset_after_seconds`
+  - manual reset-credit expiry: per-credit `credits[].expiresAt`
+  - subscription expiry: account/subscription metadata
+- Do not derive `credits[].expiresAt` from quota window resets, grant dates, or
+  subscription expiry. Only display a per-credit expiry when the upstream detail
+  payload provides an RFC3339/ISO-8601 timestamp or the operator configured a
+  manual override.
+
+### Follow-up Step A: Model per-credit expiry separately from count
+
+Extend the quota model beyond the current aggregate fields:
+
+- Keep existing aggregate fields:
+  - `resetCreditCount`
+  - `resetCreditExpiresAt`
+  - `resetCreditExpirySource`
+- Add a per-credit detail list for UI rows, for example:
+  - `resetCreditDetails?: Array<{ id?: string; status?: string; expiresAt?: string; source: 'api' | 'manual_config' }>`
+  - `resetCreditDetailStatus?: 'available' | 'unsupported' | 'unavailable' | 'disabled'`
+  - `resetCreditDetailError?: string | null`
+
+Parser rules:
+
+- First try supported/app-server quota for windows, plan type, and aggregate
+  available count.
+- Only fetch private detail when explicitly enabled and Rust has a usable
+  backend-side credential. Do not expose tokens to the WebView.
+- Normalize detail payloads from any of these wrappers:
+  - `{ "credits": [...] }`
+  - `{ "rate_limit_reset_credits": { "credits": [...] } }`
+  - `{ "rateLimitResetCredits": { "credits": [...] } }`
+- Accept only credit entries with non-empty `id` or a stable array position and
+  optional `expiresAt` / `expires_at`.
+- Parse and preserve `expiresAt` as the upstream RFC3339/ISO-8601 UTC timestamp.
+  Invalid or offset-less timestamps should produce no display time for that
+  credit, not a guessed local time.
+- Do not convert manual reset expiry display to GMT+8. Show the original UTC
+  timestamp/value returned by upstream or supplied by manual config.
+
+Ordering rule requested by the user:
+
+- Default display and reset-credit row order starts from the nearest credit:
+  sort available credits by the soonest valid `expiresAt` first.
+- Credits without a valid expiry sort after credits with expiry.
+- Label rows after sorting as `Reset 1`, `Reset 2`, `Reset 3`, etc.
+- If upstream reset consume does not allow selecting a specific credit, do not
+  claim the user is choosing `Reset 1`; the ordering is display/default
+  priority only. The consume endpoint still spends one available reset credit as
+  upstream decides.
+
+Degradation rules:
+
+- Detail 404 or unsupported schema: set `resetCreditDetailStatus =
+  'unsupported'`, keep aggregate count and reset action.
+- Detail timeout or transient failure: set `resetCreditDetailStatus =
+  'unavailable'`, keep aggregate count and reset action.
+- Never fail quota refresh only because per-credit expiry detail failed.
+- Never log raw token values, raw private response bodies, or full credit IDs.
+  If diagnostics are needed, record only redacted field paths, types, HTTP
+  status, and response category.
+
+### Follow-up Step B: Keep manual expiry override simple and read-only
+
+Continue supporting the operator-maintained file:
+
+```json
+{
+  "profiles": {
+    "profile-id-or-email": {
+      "resetCreditExpiresAt": "2026-07-12T00:00:00Z",
+      "note": "manual expiry from account page"
+    }
+  }
+}
+```
+
+Additional follow-up rules:
+
+- Do not add a UI editor for this file.
+- API per-credit detail wins over manual config.
+- Manual config fills only missing expiry data.
+- Match by `profile_id` first; only use display name/email fallback if the
+  existing quota/account model already exposes such a stable key, and add a
+  diagnostic for fallback-key use.
+- For multiple reset credits with only one manual expiry timestamp, apply it as
+  aggregate/card-level expiry and keep the per-credit list marked as manual
+  aggregate detail rather than inventing distinct per-credit times.
+- Invalid JSON or invalid timestamps should warn and continue; they must not
+  fail quota refresh.
+
+### Follow-up Step C: Implement Reset quota as an idempotent operation
+
+Default reset path:
+
+- Use Codex app-server JSON-RPC:
+
+```json
+{
+  "method": "account/rateLimitResetCredit/consume",
+  "id": 2,
+  "params": { "idempotencyKey": "<UUID>" }
+}
+```
+
+- Treat outcomes as:
+  - `reset`: success, then force refresh quota.
+  - `alreadyRedeemed`: idempotent success for the same operation, then force
+    refresh quota.
+  - `nothingToReset`: no local count mutation; force refresh quota and show a
+    clear message.
+  - `noCredit`: no local count mutation; force refresh quota and show no-credit
+    message.
+
+Operation state:
+
+- Persist one reset operation UUID per account while it is pending or outcome is
+  unknown.
+- Use a per-account lock so double-clicks or two windows cannot create two
+  consume requests.
+- On timeout, connection drop, or unknown transport outcome, mark
+  `OutcomeUnknown`; retry only with the same UUID, or read fresh quota first.
+- Do not decrement `resetCreditCount` locally. Always replace UI state with the
+  fresh snapshot returned after reset/refresh.
+- If private `wham` consume is ever used, send the same UUID as
+  `redeem_request_id` for the same logical operation. Do not generate a new UUID
+  after an uncertain timeout.
+
+UI behavior:
+
+- Show `Reset quota` only when `resetCreditCount > 0`.
+- Require a confirmation dialog that says one reset credit will be consumed.
+- Disable the reset button for the current account while the operation is
+  pending.
+- On success, use the command's fresh returned snapshot.
+- On `OutcomeUnknown`, tell the user the result is uncertain and that LAM will
+  verify using the same operation ID; do not invite repeated new reset attempts.
+
+### Follow-up Verification Requirements
+
+Rust tests:
+
+- per-credit detail parser accepts snake_case and camelCase wrappers.
+- `expiresAt` UTC RFC3339 is preserved for display without GMT+8 conversion.
+- already offset-qualified timestamps are not double-shifted or rewritten.
+- invalid or offset-less timestamps do not panic and do not produce guessed
+  local time.
+- nearest-expiry sorting labels `Reset 1`, `Reset 2`, etc. in soonest-expiry
+  order.
+- aggregate count remains usable when detail endpoint is 404, timeout, or
+  schema-drifted.
+- manual expiry fills only absent API expiry and invalid manual config does not
+  fail quota refresh.
+- reset operation persists and reuses the same UUID after an unknown outcome.
+- app-server outcomes `reset`, `alreadyRedeemed`, `nothingToReset`, and
+  `noCredit` are handled without local count mutation.
+
+Frontend tests:
+
+- `Manual reset expiry` renders only when detail is available or manual
+  aggregate expiry exists.
+- Reset rows are ordered from nearest expiry first.
+- credits without expiry render after dated credits.
+- `Reset quota` button is hidden/disabled when count is zero.
+- reset confirmation appears before invoking the backend command.
+- reset success replaces state with the fresh snapshot instead of decrementing
+  locally.
+- `OutcomeUnknown` renders a non-destructive warning and keeps the account
+  locked against new UUID attempts.
+
+Final commands:
+
+```bash
+cd apps/desktop/src-tauri && cargo test quota
+cd apps/desktop && npm test -- --run src/lib/quota.test.ts src/stores/quota.test.ts src/App.handoff.test.tsx
+cd apps/desktop && npm run build
+cd apps/desktop/src-tauri && cargo fmt -- --check
+cd apps/desktop/src-tauri && cargo clippy -- -D warnings
+make check
+```
+
+Expected: all commands exit 0.
 
 ## Test Plan
 
