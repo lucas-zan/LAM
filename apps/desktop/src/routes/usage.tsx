@@ -744,7 +744,7 @@ export function UsagePage({
       {usageTab === 'calls' ? (
         <div className="usageDashboardGrid usageDashboardGrid--wide">
           <div className="usageTableWrap">
-            <table className="usageTable">
+            <table className="usageTable usageTable--wide">
               <thead>
                 <tr>
                   {[

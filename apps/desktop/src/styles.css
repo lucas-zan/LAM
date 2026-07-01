@@ -3344,6 +3344,10 @@ pre {
   min-width: 180px;
 }
 
+.usageTable--wide {
+  min-width: 1300px;
+}
+
 .usageTable th.usageColActions,
 .usageTable td.usageColActions {
   width: 60px;
@@ -3365,7 +3369,7 @@ pre {
 
 .usageBtnDots:hover {
   background: var(--surface2);
-  color: var(--ink);
+  color: var(--text);
   transform: scale(1.1);
 }
 
