@@ -2481,23 +2481,41 @@ html[data-tray-popover='1'] #root {
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
+  margin: 18px 0;
 }
 
 .usageTabs button {
-  padding: 7px 12px;
+  padding: 7px 14px;
   background: var(--surface);
   color: var(--muted);
+  border: 0;
   border-right: 1px solid var(--line);
+  outline: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s ease;
 }
 
 .usageTabs button:last-child {
   border-right: 0;
 }
 
+.usageTabs button:not(.active):hover {
+  color: var(--text);
+  background: var(--surface3, var(--surface2));
+}
+
 .usageTabs button.active {
   color: var(--text);
   background: var(--surface2);
+  font-weight: 600;
 }
+
+.usageTabs--compact {
+  margin: 0;
+}
+
 .usageTabs--compact button {
   padding: 5px 9px;
   font-size: 12px;
