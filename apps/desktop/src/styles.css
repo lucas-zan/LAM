@@ -2741,8 +2741,7 @@ html[data-tray-popover='1'] #root {
   display: grid;
   gap: 14px;
   min-height: 0;
-  height: 100%;
-  overflow: auto;
+  height: auto;
   padding: 18px;
 }
 
