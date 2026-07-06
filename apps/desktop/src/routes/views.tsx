@@ -32,7 +32,21 @@ import {
 } from '../components/icons';
 import { UIButton } from '../components/ui-button';
 import { PlanTypeBadge } from '../components/plan-type-badge';
-import { checkProfileTokenExpiration } from '../lib/api';
+import { confirm as tauriConfirm } from '@tauri-apps/plugin-dialog';
+import { checkProfileTokenExpiration, inTauri } from '../lib/api';
+import { useAppStore } from '../stores/app';
+
+async function confirmResetQuota(displayName: string): Promise<boolean> {
+  const message = `Reset quota for ${displayName}? This will consume one reset credit if one is available.`;
+  if (inTauri()) {
+    try {
+      return await tauriConfirm(message, { title: 'Reset Quota', kind: 'warning' });
+    } catch (err) {
+      console.warn('Tauri confirm dialog failed; falling back to window.confirm', err);
+    }
+  }
+  return window.confirm(message);
+}
 
 export function AntigravityModels({
   quota,
@@ -417,7 +431,6 @@ export function Accounts({
           const isResetting = resettingQuotaIds.includes(account.id);
           const quota = quotas.find((item) => item.profileId === account.id);
           const resetCredits = resetCreditDisplay(quota);
-          const canResetQuota = (quota?.resetCreditCount ?? 0) > 0 && !isResetting;
           const providerLabel = account.providerId ?? 'unknown';
           const modelLabel = account.model ?? 'unknown';
           const isActiveAccount =
@@ -530,20 +543,13 @@ export function Accounts({
                   <UIButton
                     size="sm"
                     className="accountActionBtn resetQuotaBtn"
-                    disabled={!canResetQuota}
                     aria-label={`Reset ${account.displayName} quota`}
-                    title={
-                      quota?.resetCreditCount
-                        ? `Reset ${account.displayName} quota`
-                        : 'No reset credits available'
-                    }
-                    onClick={(e) => {
+                    title={`Reset ${account.displayName} quota`}
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      if (
-                        window.confirm(
-                          `Consume one reset credit for ${account.displayName}?`,
-                        )
-                      ) {
+                      useAppStore.getState().setStatus(`Confirming reset quota for ${account.id}`);
+                      const confirmed = await confirmResetQuota(account.displayName);
+                      if (confirmed) {
                         void resetAccountQuota(account.id);
                       }
                     }}

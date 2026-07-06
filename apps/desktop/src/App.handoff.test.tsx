@@ -483,6 +483,8 @@ describe('App handoff modal', () => {
   it('exports CPA auth from the PAT mode account action', async () => {
     vi.mocked(api.getAuthMode).mockResolvedValue('pat');
     vi.mocked(api.listSessions).mockResolvedValue([]);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
     useQuotaStore.setState({
       quotas: [
         {
@@ -534,8 +536,8 @@ describe('App handoff modal', () => {
   it('shows reset expiry rows in Shanghai order and confirms before reset', async () => {
     vi.mocked(api.getAuthMode).mockResolvedValue('pat');
     vi.mocked(api.listSessions).mockResolvedValue([]);
-    const confirm = vi.fn(() => true);
-    vi.stubGlobal('confirm', confirm);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
     useQuotaStore.setState({
       quotas: [
         {
@@ -575,7 +577,7 @@ describe('App handoff modal', () => {
 
     fireEvent.click(within(accountCard!).getByRole('button', { name: /reset codex-c quota/i }));
 
-    expect(confirm).toHaveBeenCalled();
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
     await waitFor(() => expect(api.resetProfileQuota).toHaveBeenCalledWith('codex-c'));
   });
 
