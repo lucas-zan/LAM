@@ -104,6 +104,9 @@ export function App() {
     closeModal,
     hideDockIcon,
     setHideDockIcon,
+    terminalTargets,
+    terminalTargetId,
+    setTerminalTargetId,
   } = useAppStore();
   const {
     accounts,
@@ -848,6 +851,9 @@ export function App() {
             setDivergedStrategy={setDivergedStrategy}
             hideDockIcon={hideDockIcon}
             setHideDockIcon={setHideDockIcon}
+            terminalTargets={terminalTargets}
+            terminalTargetId={terminalTargetId}
+            setTerminalTargetId={setTerminalTargetId}
             resetUsageStatistics={resetUsageStatistics}
           />
         ) : null}
@@ -1464,7 +1470,8 @@ export function App() {
                   const session = handoffSessions.find((s) => s.id === handoffSessionId);
                   const target = accounts.find((a) => a.id === handoffTargetId);
                   if (!session || !target) return;
-                  await relaySessionTo(session, target);
+                  const success = await relaySessionTo(session, target);
+                  if (!success) return;
                   closeModal();
                   await refresh();
                 }}

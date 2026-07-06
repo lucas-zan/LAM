@@ -559,26 +559,65 @@ p {
   border-radius: 8px;
   background: var(--surface2);
   padding: 8px 10px;
-  transition: all 0.15s ease;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .antigravityModelTile:hover {
   background: var(--surface3, var(--surface2));
   border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  transform: translateY(-1px);
 }
 .antigravityModelTile strong {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.3;
 }
 .antigravityModelTile span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: 9.5px;
   color: var(--muted);
+}
+
+/* Custom branded colors for Antigravity Model Tiles */
+.antigravityModelTile--gemini {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--purple) 6%, var(--surface)) 0%, color-mix(in srgb, var(--accent) 4%, var(--surface)) 100%);
+  border-color: color-mix(in srgb, var(--purple) 18%, var(--line));
+}
+.antigravityModelTile--gemini strong {
+  color: color-mix(in srgb, var(--purple) 85%, var(--text));
+}
+.antigravityModelTile--gemini:hover {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--purple) 10%, var(--surface)) 0%, color-mix(in srgb, var(--accent) 6%, var(--surface)) 100%);
+  border-color: color-mix(in srgb, var(--purple) 30%, var(--line));
+}
+
+.antigravityModelTile--claude {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--amber) 6%, var(--surface)) 0%, color-mix(in srgb, var(--amber) 2%, var(--surface)) 100%);
+  border-color: color-mix(in srgb, var(--amber) 18%, var(--line));
+}
+.antigravityModelTile--claude strong {
+  color: color-mix(in srgb, var(--amber) 85%, var(--text));
+}
+.antigravityModelTile--claude:hover {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--amber) 10%, var(--surface)) 0%, color-mix(in srgb, var(--amber) 4%, var(--surface)) 100%);
+  border-color: color-mix(in srgb, var(--amber) 30%, var(--line));
+}
+
+.antigravityModelTile--gpt {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--green) 6%, var(--surface)) 0%, color-mix(in srgb, var(--green) 2%, var(--surface)) 100%);
+  border-color: color-mix(in srgb, var(--green) 18%, var(--line));
+}
+.antigravityModelTile--gpt strong {
+  color: color-mix(in srgb, var(--green) 85%, var(--text));
+}
+.antigravityModelTile--gpt:hover {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--green) 10%, var(--surface)) 0%, color-mix(in srgb, var(--green) 4%, var(--surface)) 100%);
+  border-color: color-mix(in srgb, var(--green) 30%, var(--line));
 }
 .activeSessionBanner {
   display: grid;
@@ -3314,6 +3353,13 @@ html[data-tray-popover='1'] #root {
 
 .usageFilterPanel label:first-child {
   grid-column: span 2;
+}
+
+.usageFilterPanel .filterResetBtn {
+  height: 36px;
+  min-height: 36px;
+  width: 100%;
+  font-size: 12px;
 }
 
 .usageFilterPanel input,

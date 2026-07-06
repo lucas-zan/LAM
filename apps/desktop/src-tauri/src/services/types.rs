@@ -364,3 +364,68 @@ pub fn set_hide_dock_icon(home_root: &Path, hide: bool) -> Result<()> {
 
     Ok(())
 }
+
+pub fn selected_terminal_target_id(home_root: &Path) -> String {
+    let settings_path = settings_file_path(home_root);
+
+    if !settings_path.exists() {
+        return "terminal".to_string();
+    }
+
+    let content = match fs::read_to_string(&settings_path) {
+        Ok(c) => c,
+        Err(_) => return "terminal".to_string(),
+    };
+
+    let settings: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(s) => s,
+        Err(_) => return "terminal".to_string(),
+    };
+
+    settings
+        .get("terminalTargetId")
+        .and_then(|v| v.as_str())
+        .filter(|id| is_known_terminal_target_id(id))
+        .unwrap_or("terminal")
+        .to_string()
+}
+
+pub fn set_selected_terminal_target_id(home_root: &Path, target_id: &str) -> Result<()> {
+    if !is_known_terminal_target_id(target_id) {
+        return Err(AppError::new(
+            "INVALID_TERMINAL_TARGET",
+            format!("Unknown terminal target: {target_id}"),
+        ));
+    }
+
+    let settings_path = settings_file_path(home_root);
+    let config_dir = config_root(home_root);
+    fs::create_dir_all(&config_dir).map_err(|e| {
+        AppError::new(
+            "CREATE_DIR_FAILED",
+            format!("Failed to create config dir: {}", e),
+        )
+    })?;
+
+    let mut settings = if settings_path.exists() {
+        let content = fs::read_to_string(&settings_path).unwrap_or_default();
+        serde_json::from_str::<serde_json::Value>(&content)
+            .unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    if let Some(obj) = settings.as_object_mut() {
+        obj.insert(
+            "terminalTargetId".to_string(),
+            serde_json::Value::String(target_id.to_string()),
+        );
+    }
+
+    write_file_private(&settings_path, &settings.to_string())?;
+    Ok(())
+}
+
+fn is_known_terminal_target_id(target_id: &str) -> bool {
+    matches!(target_id, "terminal" | "ghostty" | "cmux" | "codex_app")
+}

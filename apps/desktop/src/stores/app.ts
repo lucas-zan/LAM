@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import type { ThemeMode } from '../lib/theme';
-import type { HealthCheck } from '../lib/types';
+import type { HealthCheck, TerminalTarget } from '../lib/types';
 import type { Route } from '../routes/types';
 import * as api from '../lib/api';
 
@@ -25,6 +25,8 @@ interface AppState {
   appReady: boolean;
   modal: Modal;
   hideDockIcon: boolean;
+  terminalTargets: TerminalTarget[];
+  terminalTargetId: string;
 
   setRoute: (route: Route) => void;
   setThemeMode: (mode: ThemeMode) => void;
@@ -36,6 +38,7 @@ interface AppState {
   openModal: (modal: NonNullable<Modal>) => void;
   closeModal: () => void;
   setHideDockIcon: (hide: boolean) => Promise<void>;
+  setTerminalTargetId: (targetId: string) => Promise<void>;
   loadSettings: () => Promise<void>;
 }
 
@@ -53,6 +56,8 @@ export const useAppStore = create<AppState>()(
     appReady: false,
     modal: null,
     hideDockIcon: false,
+    terminalTargets: [],
+    terminalTargetId: 'terminal',
 
     setRoute: (route) => set({ route }),
     setThemeMode: (themeMode) => {
@@ -74,10 +79,22 @@ export const useAppStore = create<AppState>()(
         set({ error: err instanceof Error ? err.message : 'Failed to set Dock icon visibility' });
       }
     },
+    setTerminalTargetId: async (targetId) => {
+      try {
+        await api.setSelectedTerminalTarget(targetId);
+        set({ terminalTargetId: targetId });
+      } catch (err) {
+        set({ error: err instanceof Error ? err.message : 'Failed to set handoff terminal' });
+      }
+    },
     loadSettings: async () => {
       try {
-        const hide = await api.getHideDockIcon();
-        set({ hideDockIcon: hide });
+        const [hide, terminalTargets, terminalTargetId] = await Promise.all([
+          api.getHideDockIcon(),
+          api.listTerminalTargets(),
+          api.getSelectedTerminalTarget(),
+        ]);
+        set({ hideDockIcon: hide, terminalTargets, terminalTargetId });
       } catch (err) {
         console.error('Failed to load settings:', err);
       }

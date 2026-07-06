@@ -35,6 +35,7 @@ vi.mock('./lib/api', () => ({
   getUsageThreads: vi.fn(),
   getUsageDiagnostics: vi.fn(),
   getUsageRateCard: vi.fn(),
+  tryRefreshUsageIndex: vi.fn(),
   refreshUsageIndex: vi.fn(),
   resetUsageIndex: vi.fn(),
   compactUsageDb: vi.fn(),
@@ -55,6 +56,14 @@ vi.mock('./lib/api', () => ({
   getAuthMode: vi.fn(() => Promise.resolve('oauth')),
   getHideDockIcon: vi.fn(() => Promise.resolve(false)),
   setHideDockIcon: vi.fn(),
+  listTerminalTargets: vi.fn(() =>
+    Promise.resolve([
+      { id: 'terminal', displayName: 'Terminal.app', kind: 'terminal', installed: true },
+      { id: 'ghostty', displayName: 'Ghostty', kind: 'terminal', installed: true },
+    ]),
+  ),
+  getSelectedTerminalTarget: vi.fn(() => Promise.resolve('terminal')),
+  setSelectedTerminalTarget: vi.fn(),
   getAntigravityQuota: vi.fn(() => Promise.resolve({ ok: true, models: [] })),
 }));
 
@@ -336,6 +345,15 @@ beforeEach(() => {
     dbPath: '/tmp/.codex/lam/usage/usage.sqlite3',
     parserDiagnostics: {},
   });
+  vi.mocked(api.tryRefreshUsageIndex).mockResolvedValue({
+    scannedFiles: 18,
+    parsedFiles: 1,
+    parsedEvents: 1,
+    insertedOrUpdatedEvents: 1,
+    skippedEvents: 0,
+    dbPath: '/tmp/.codex/lam/usage/usage.sqlite3',
+    parserDiagnostics: {},
+  });
   vi.mocked(api.resetUsageIndex).mockResolvedValue();
   vi.mocked(api.compactUsageDb).mockResolvedValue();
   vi.mocked(api.getCallRawContents).mockResolvedValue({ request: '', assistant: '', toolOutput: '' });
@@ -526,7 +544,7 @@ describe('App handoff modal', () => {
       },
     );
 
-    fireEvent.submit(screen.getByRole('button', { name: /upload/i }).closest('form')!);
+    fireEvent.submit(screen.getByRole('button', { name: /^upload$/i }).closest('form')!);
 
     await waitFor(() => expect(api.addPatAccount).toHaveBeenCalled());
     await waitFor(() => expect(refreshAccountQuota).toHaveBeenCalledWith('codex-nova'));
@@ -573,12 +591,10 @@ describe('App handoff modal', () => {
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: /new account/i }));
     fireEvent.click(screen.getByRole('button', { name: /pat/i }));
+    fireEvent.click(screen.getByRole('button', { name: /token & session/i }));
     const patInput = screen.getByPlaceholderText(/enter token/i);
     fireEvent.change(patInput, { target: { value: 'pat-new' } });
-    await screen.findByText('Paste the JSON returned by https://chatgpt.com/api/auth/session');
-    const sessionButton = await screen.findByRole('button', { name: /paste session/i });
-    fireEvent.click(sessionButton);
-    fireEvent.change(screen.getByLabelText(/paste session/i), {
+    fireEvent.change(screen.getByLabelText(/paste session json/i), {
       target: { value: '{"accessToken":"at-new","idToken":"id-new"}' },
     });
     vi.stubGlobal(
@@ -860,6 +876,56 @@ describe('App handoff modal', () => {
     );
   });
 
+  it('keeps the handoff modal open when the terminal launch fails', async () => {
+    vi.mocked(api.listSessions).mockImplementation((accountId) => {
+      if (accountId === 'main') return Promise.resolve([session('main', 'main-session', 10)]);
+      if (accountId === 'codex-c') return Promise.resolve([session('codex-c', 'c-session', 20)]);
+      return Promise.resolve([]);
+    });
+    vi.mocked(api.openTerminalWithCommand).mockRejectedValue(
+      new Error('cmux did not accept the resume command: Broken pipe'),
+    );
+
+    render(<App />);
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: 'Handoff' }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Source account')).toHaveProperty('value', 'main'),
+    );
+    await screen.findAllByText(/main-session thread name/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start Handoff' }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/cmux did not accept the resume command/i)).toBeTruthy(),
+    );
+    expect(screen.getByRole('heading', { name: 'Handoff Session' })).toBeTruthy();
+    expect(api.listAccounts).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the handoff modal after a successful terminal launch', async () => {
+    vi.mocked(api.listSessions).mockImplementation((accountId) => {
+      if (accountId === 'main') return Promise.resolve([session('main', 'main-session', 10)]);
+      if (accountId === 'codex-c') return Promise.resolve([session('codex-c', 'c-session', 20)]);
+      return Promise.resolve([]);
+    });
+
+    render(<App />);
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: 'Handoff' }));
+    await screen.findAllByText(/main-session thread name/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start Handoff' }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'Handoff Session' })).toBeNull(),
+    );
+  });
+
   it('shows Usage beside Overview and renders full-page dashboard in PAT mode', async () => {
     vi.mocked(api.getAuthMode).mockResolvedValue('pat');
     vi.mocked(api.listSessions).mockResolvedValue([]);
@@ -955,7 +1021,7 @@ describe('App handoff modal', () => {
     expect((await screen.findAllByText('$1.23')).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }));
     await waitFor(() => expect(api.getUsageOverview).toHaveBeenCalled());
-    expect(api.refreshUsageIndex).toHaveBeenCalledWith(false);
+    expect(api.tryRefreshUsageIndex).toHaveBeenCalledWith(false);
   });
 
   it('reloads all-history usage and refreshes with the same archived flag', async () => {
@@ -1095,6 +1161,21 @@ describe('App handoff modal', () => {
     expect(await screen.findByText('$35.00')).toBeTruthy();
     const rateCardTable = document.querySelector('.usageRateCardTable');
     expect(rateCardTable?.closest('.rows')).toBeNull();
+  });
+
+  it('selects a terminal target from settings', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    useAppStore.setState({ route: 'settings' });
+
+    render(<App />);
+
+    const terminalSelect = (await screen.findByLabelText(/handoff terminal/i)) as HTMLSelectElement;
+    expect(terminalSelect.value).toBe('terminal');
+
+    fireEvent.change(terminalSelect, { target: { value: 'ghostty' } });
+
+    await waitFor(() => expect(api.setSelectedTerminalTarget).toHaveBeenCalledWith('ghostty'));
   });
 
   it('loads PAT usage without creating a React-owned usage interval', async () => {

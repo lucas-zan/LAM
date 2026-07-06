@@ -200,6 +200,15 @@ pub fn toggle_quota_popover<R: Runtime>(app: &AppHandle<R>, tray_rect: Option<Re
     if let Err(err) = apply_macos_popover_opacity(&window, percent) {
         eprintln!("LAM: quota popover opacity apply failed: {}", err.message);
     }
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::NSApplication;
+        if let Some(mtm) = MainThreadMarker::new() {
+            let ns_app = NSApplication::sharedApplication(mtm);
+            ns_app.activate();
+        }
+    }
     let _ = window.show();
     let _ = window.set_focus();
     let _ = app.emit_to(POPOVER_LABEL, "quota-popover-refresh", ());

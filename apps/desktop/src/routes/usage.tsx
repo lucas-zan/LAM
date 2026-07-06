@@ -730,6 +730,30 @@ export function UsagePage({
   };
   const parityLabel = formatTokenDelta(headlineStats.tokenDelta, headlineStats.tokenDeltaPercent);
 
+  const hasActiveFilters = useMemo(() => {
+    return (
+      search !== '' ||
+      model !== '' ||
+      effort !== '' ||
+      pricingConfidence !== '' ||
+      usageWindow.preset !== 'all' ||
+      usageWindow.from !== null ||
+      usageWindow.to !== null ||
+      includeArchivedUsage !== false ||
+      sortKey !== 'time'
+    );
+  }, [search, model, effort, pricingConfidence, usageWindow, includeArchivedUsage, sortKey]);
+
+  const handleResetFilters = () => {
+    setSearch('');
+    setModel('');
+    setEffort('');
+    setPricingConfidence('');
+    setUsagePreset('all');
+    setIncludeArchivedUsage(false);
+    setSortKey('time');
+  };
+
   return (
     <section className="usageDashboardPage">
       <header className="usageDashboardHeader">
@@ -959,6 +983,19 @@ export function UsagePage({
               <option value="active">Active sessions only</option>
               <option value="all">All history</option>
             </select>
+          </label>
+          <label>
+            Actions
+            <UIButton
+              type="button"
+              variant="default"
+              size="sm"
+              className="filterResetBtn"
+              disabled={!hasActiveFilters}
+              onClick={handleResetFilters}
+            >
+              Reset Filters
+            </UIButton>
           </label>
         </div>
       )}

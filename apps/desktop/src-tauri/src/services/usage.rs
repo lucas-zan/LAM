@@ -455,6 +455,19 @@ pub fn try_refresh_usage_index_with_options(
     refresh_usage_index_unlocked(home_root, include_archived).map(Some)
 }
 
+pub fn refresh_account_usage_snapshot_index(home_root: &Path) -> Result<()> {
+    let _guard = REFRESH_LOCK
+        .lock()
+        .map_err(|_| AppError::new("USAGE_REFRESH_LOCK", "usage refresh lock is poisoned"))?;
+    let db_path = usage_db_path(home_root);
+    prepare_usage_dir(&db_path)?;
+    let conn = open_usage_db(&db_path)?;
+    init_usage_db(&conn)?;
+    let mut diagnostics = BTreeMap::new();
+    refresh_account_usage_snapshot(home_root, &conn, &mut diagnostics);
+    Ok(())
+}
+
 fn refresh_usage_index_unlocked(
     home_root: &Path,
     include_archived: bool,
@@ -489,7 +502,6 @@ fn refresh_usage_index_unlocked(
     let skipped_events = diagnostics.get("skipped_events").copied().unwrap_or(0) as usize;
     let (inserted_or_updated_events, deleted_rows) =
         apply_parsed_sources(&mut conn, &parsed, logs.len(), skipped_events)?;
-    refresh_account_usage_snapshot(home_root, &conn, &mut diagnostics);
     compact_usage_db_after_refresh(&mut conn, deleted_rows > 0)?;
 
     Ok(UsageRefreshResult {
@@ -2456,6 +2468,18 @@ fn apply_latest_account_usage_snapshot(
         .optional()
         .map_err(db_error)?;
     if let Some((lifetime, peak, longest_task, current_streak, longest_streak)) = snapshot {
+        let has_meaningful_headline =
+            [lifetime, peak, longest_task, current_streak, longest_streak]
+                .into_iter()
+                .flatten()
+                .any(|value| value > 0);
+        if !has_meaningful_headline {
+            diagnostics
+                .parser_diagnostics
+                .entry("account_usage_empty".to_string())
+                .or_insert(1);
+            return Ok(());
+        }
         stats.lifetime_tokens = lifetime;
         stats.peak_daily_tokens = peak;
         stats.longest_running_turn_sec = longest_task;
@@ -4338,6 +4362,18 @@ mod tests {
     }
 
     #[test]
+    fn refresh_usage_index_does_not_sync_account_usage_snapshot() {
+        let temp = TempDir::new().unwrap();
+        write_log(temp.path(), &fixture(100, 50));
+
+        let result = refresh_usage_index(temp.path()).unwrap();
+
+        assert!(!result
+            .parser_diagnostics
+            .contains_key("account_usage_unavailable"));
+    }
+
+    #[test]
     fn refresh_backfills_workspace_metadata_for_unchanged_sources() {
         let temp = TempDir::new().unwrap();
         write_log(temp.path(), &fixture(100, 50));
@@ -4867,6 +4903,41 @@ mod tests {
         assert_eq!(summary.headline_stats.longest_streak_days, Some(19));
         assert_eq!(summary.headline_stats.local_total_tokens, 60);
         assert_eq!(summary.headline_stats.token_delta, Some(5_899_999_940));
+    }
+
+    #[test]
+    fn account_usage_empty_snapshot_does_not_override_local_headlines() {
+        let temp = TempDir::new().unwrap();
+        write_log(temp.path(), &fixture(100, 50));
+        refresh_usage_index(temp.path()).unwrap();
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        store_account_usage_snapshot(
+            &conn,
+            &AccountUsageSnapshot {
+                lifetime_tokens: Some(0),
+                peak_daily_tokens: Some(0),
+                longest_running_turn_sec: Some(0),
+                current_streak_days: Some(0),
+                longest_streak_days: Some(0),
+                daily_buckets: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let summary = get_usage_summary(temp.path(), summary_request("all")).unwrap();
+
+        assert_eq!(summary.headline_stats.source, "local_sqlite");
+        assert_eq!(summary.headline_stats.lifetime_tokens, Some(60));
+        assert_eq!(summary.headline_stats.peak_daily_tokens, Some(60));
+        assert_eq!(summary.headline_stats.current_streak_days, Some(1));
+        assert_eq!(summary.headline_stats.codex_total_tokens, None);
+        assert_eq!(
+            summary
+                .diagnostics
+                .parser_diagnostics
+                .get("account_usage_empty"),
+            Some(&1)
+        );
     }
 
     #[test]

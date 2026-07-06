@@ -2,9 +2,10 @@ use localagentmanager_core::{
     attach_provider_to_profile, build_resume_command, create_account_plan, create_provider,
     create_relay_plan, delete_provider, execute_attach_provider_to_profile, execute_create_account,
     execute_create_relay, execute_rename_account, execute_sync, get_profile_quota, list_accounts,
-    list_cached_accounts, list_cached_quotas, list_providers, list_sessions,
+    list_cached_accounts, list_cached_quotas, list_providers, list_sessions, list_terminal_targets,
     plan_attach_provider_to_profile, refresh_all_quotas, relay_resume_session, rename_account_plan,
-    reset_profile_quota, resolve_home_root, sync_plan, terminal_applescript, update_account_note,
+    reset_profile_quota, resolve_home_root, selected_terminal_target_id,
+    set_selected_terminal_target_id, sync_plan, terminal_applescript, update_account_note,
     AccountNoteUpdate, AttachProviderRequest, CreateAccountRequest, CreateProviderRequest,
     CreateRelayRequest, RelayResumeRequest, RenameAccountRequest, ResumeCommandRequest,
     SecretInput, SyncRequest,
@@ -828,6 +829,35 @@ fn resume_command_is_escaped_and_has_no_arbitrary_shell_input() {
     let script = terminal_applescript(&command.command);
     assert!(script.contains("tell application \"Terminal\""));
     assert!(script.contains("do script"));
+}
+
+#[test]
+fn terminal_target_settings_preserve_existing_settings() {
+    let home = temp_home("terminal-target-settings");
+    let settings_path = home.join(".config/agent-workspace/settings.json");
+    fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+    fs::write(&settings_path, r#"{"hideDockIcon":true}"#).unwrap();
+
+    assert_eq!(selected_terminal_target_id(&home), "terminal");
+    set_selected_terminal_target_id(&home, "ghostty").unwrap();
+
+    assert_eq!(selected_terminal_target_id(&home), "ghostty");
+    let settings: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(settings_path).unwrap()).unwrap();
+    assert_eq!(settings["hideDockIcon"], true);
+    assert_eq!(settings["terminalTargetId"], "ghostty");
+}
+
+#[test]
+fn terminal_target_discovery_always_includes_terminal_default() {
+    let targets = list_terminal_targets();
+    let terminal = targets
+        .iter()
+        .find(|target| target.id == "terminal")
+        .unwrap();
+
+    assert_eq!(terminal.display_name, "Terminal.app");
+    assert!(terminal.installed);
 }
 
 #[test]

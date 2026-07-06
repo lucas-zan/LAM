@@ -21,17 +21,23 @@ use localagentmanager_core::{
     get_usage_summary as core_get_usage_summary, get_usage_threads as core_get_usage_threads,
     list_accounts as core_list_accounts, list_cached_accounts as core_list_cached_accounts,
     list_cached_quotas as core_list_cached_quotas, list_providers as core_list_providers,
-    list_sessions as core_list_sessions, open_terminal_for_login as core_open_terminal_for_login,
+    list_sessions as core_list_sessions, list_terminal_targets as core_list_terminal_targets,
+    open_terminal_for_login as core_open_terminal_for_login,
     open_terminal_with_command as core_open_terminal_with_command,
     open_terminal_with_resume as core_open_terminal_with_resume,
     plan_attach_provider_to_profile as core_plan_attach_provider_to_profile,
-    process_uploaded_credentials, read_pat_metadata, refresh_all_quotas as core_refresh_all_quotas,
+    process_uploaded_credentials, read_pat_metadata,
+    refresh_account_usage_snapshot_index as core_refresh_account_usage_snapshot_index,
+    refresh_all_quotas as core_refresh_all_quotas,
     refresh_usage_index_with_options as core_refresh_usage_index,
     relay_resume_session as core_relay_resume_session,
     rename_account_plan as core_rename_account_plan,
     reset_profile_quota as core_reset_profile_quota, reset_usage_index as core_reset_usage_index,
-    resolve_home_root, switch_to_pat_account as core_switch_to_pat_account,
-    sync_plan as core_sync_plan, test_provider as core_test_provider,
+    resolve_home_root, selected_terminal_target_id as core_selected_terminal_target_id,
+    set_selected_terminal_target_id as core_set_selected_terminal_target_id,
+    switch_to_pat_account as core_switch_to_pat_account, sync_plan as core_sync_plan,
+    test_provider as core_test_provider,
+    try_refresh_usage_index_with_options as core_try_refresh_usage_index,
     update_pat_session_auth as core_update_pat_session_auth,
     update_provider as core_update_provider, AccountNoteUpdate, AddPatAccountRequest,
     AddPatAccountResult, AddSessionProfileAccountRequest, AppError, AttachProviderRequest,
@@ -40,10 +46,11 @@ use localagentmanager_core::{
     DeleteAccountRequest, DeleteAccountResult, OperationPlan, ProviderProfile, QuotaRefreshResult,
     RelayResumeRequest, RelayResumeResult, RenameAccountRequest, RenameAccountResult,
     ResetQuotaResult, ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult,
-    TokenExpirationStatus, UpdateProviderRequest, UploadedCredentials, UsageActivityBucket,
-    UsageCallRow, UsageDashboard, UsageDashboardRequest, UsageDashboardResponse, UsageDiagnostics,
-    UsageInsights, UsagePagedResponse, UsageQuotaSnapshot, UsageRateCardEntry, UsageRefreshResult,
-    UsageScopesResponse, UsageSummary, UsageSummaryRequest, UsageThreadSummary,
+    TerminalTarget, TokenExpirationStatus, UpdateProviderRequest, UploadedCredentials,
+    UsageActivityBucket, UsageCallRow, UsageDashboard, UsageDashboardRequest,
+    UsageDashboardResponse, UsageDiagnostics, UsageInsights, UsagePagedResponse,
+    UsageQuotaSnapshot, UsageRateCardEntry, UsageRefreshResult, UsageScopesResponse, UsageSummary,
+    UsageSummaryRequest, UsageThreadSummary,
 };
 use std::sync::Mutex;
 use tauri::Emitter;
@@ -308,7 +315,7 @@ pub fn open_terminal_with_resume(req: ResumeCommandRequest) -> Result<(), AppErr
 
 #[tauri::command]
 pub fn open_terminal_with_command(command: String) -> Result<(), AppError> {
-    core_open_terminal_with_command(&command)
+    core_open_terminal_with_command(&home_root()?, &command)
 }
 
 #[tauri::command]
@@ -324,6 +331,21 @@ pub fn open_terminal_for_login(profile_id: String) -> Result<(), AppError> {
 #[tauri::command]
 pub fn build_login_command(profile_id: String) -> Result<ResumeCommand, AppError> {
     core_build_login_command(&home_root()?, &profile_id)
+}
+
+#[tauri::command]
+pub fn list_terminal_targets() -> Result<Vec<TerminalTarget>, AppError> {
+    Ok(core_list_terminal_targets())
+}
+
+#[tauri::command]
+pub fn get_selected_terminal_target() -> Result<String, AppError> {
+    Ok(core_selected_terminal_target_id(&home_root()?))
+}
+
+#[tauri::command]
+pub fn set_selected_terminal_target(target_id: String) -> Result<(), AppError> {
+    core_set_selected_terminal_target_id(&home_root()?, &target_id)
 }
 
 #[tauri::command]
@@ -362,6 +384,20 @@ pub async fn list_cached_quotas(
 pub async fn refresh_usage_index(include_archived: bool) -> Result<UsageRefreshResult, AppError> {
     let home = home_root()?;
     run_blocking(move || core_refresh_usage_index(&home, include_archived)).await
+}
+
+#[tauri::command]
+pub async fn try_refresh_usage_index(
+    include_archived: bool,
+) -> Result<Option<UsageRefreshResult>, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_try_refresh_usage_index(&home, include_archived)).await
+}
+
+#[tauri::command]
+pub async fn refresh_account_usage_snapshot() -> Result<(), AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_refresh_account_usage_snapshot_index(&home)).await
 }
 
 #[tauri::command]

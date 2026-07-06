@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useUsageStore } from './usage';
+import { defaultUsageSummaryRequest, useUsageStore } from './usage';
 import * as api from '../lib/api';
 import type { UsageCallRow, UsageDashboard } from '../lib/types';
 
@@ -13,6 +13,7 @@ vi.mock('../lib/api', () => ({
   getUsageThreads: vi.fn(),
   getUsageDiagnostics: vi.fn(),
   refreshUsageIndex: vi.fn(),
+  tryRefreshUsageIndex: vi.fn(),
 }));
 
 vi.mock('./app', () => ({
@@ -207,6 +208,62 @@ describe('useUsageStore', () => {
     ]);
   });
 
+  it('ignores stale summary responses after a newer scoped request starts', async () => {
+    const oldOverview = deferred<UsageDashboard>();
+    const oldActivity = deferred<Awaited<ReturnType<typeof api.getUsageActivity>>>();
+    const newOverview = deferred<UsageDashboard>();
+    const newActivity = deferred<Awaited<ReturnType<typeof api.getUsageActivity>>>();
+    vi.mocked(api.getUsageScopes).mockResolvedValue({
+      scopes: [
+        { id: 'total', label: 'Total', kind: 'total', isDefault: true },
+        { id: 'workspace:main', label: 'main', kind: 'workspace', isDefault: false },
+      ],
+      activeScopeId: 'total',
+    });
+    vi.mocked(api.getUsageOverview)
+      .mockReturnValueOnce(oldOverview.promise)
+      .mockReturnValueOnce(newOverview.promise);
+    vi.mocked(api.getUsageActivity)
+      .mockReturnValueOnce(oldActivity.promise)
+      .mockReturnValueOnce(newActivity.promise);
+
+    const oldReq = { ...defaultUsageSummaryRequest(), scopeId: 'workspace:old' };
+    const first = useUsageStore.getState().loadUsageSummary(oldReq);
+    const second = useUsageStore.getState().loadUsageSummary({
+      ...oldReq,
+      scopeId: 'workspace:new',
+    });
+
+    newOverview.resolve({ ...dashboard, totalCalls: 9 });
+    newActivity.resolve([
+      { date: '2026-07-04', calls: 9, tokens: 90, cumulativeCalls: 9, cumulativeTokens: 90 },
+    ]);
+    await second;
+
+    oldOverview.resolve({ ...dashboard, totalCalls: 1 });
+    oldActivity.resolve([
+      { date: '2026-07-03', calls: 1, tokens: 10, cumulativeCalls: 1, cumulativeTokens: 10 },
+    ]);
+    await first;
+
+    expect(useUsageStore.getState().summary?.totalCalls).toBe(9);
+    expect(useUsageStore.getState().summary?.activityBuckets).toEqual([
+      { date: '2026-07-04', calls: 9, tokens: 90, cumulativeCalls: 9, cumulativeTokens: 90 },
+    ]);
+  });
+
+  it('clears stale summary data immediately when selecting another usage scope', () => {
+    useUsageStore.setState({
+      summary: { ...dashboard, totalCalls: 12 },
+      activeScopeId: 'workspace:old',
+    });
+
+    useUsageStore.getState().selectUsageScope('workspace:new');
+
+    expect(useUsageStore.getState().activeScopeId).toBe('workspace:new');
+    expect(useUsageStore.getState().summary).toBeNull();
+  });
+
   it('loads usage dashboard response scopes and active dashboard', async () => {
     vi.mocked(api.getUsageScopes).mockResolvedValue({
       scopes: [
@@ -234,7 +291,7 @@ describe('useUsageStore', () => {
 
   it('refreshes only the requested usage section', async () => {
     const calls: string[] = [];
-    vi.mocked(api.refreshUsageIndex).mockImplementation(async () => {
+    vi.mocked(api.tryRefreshUsageIndex).mockImplementation(async () => {
       calls.push('index');
       return {
         scannedFiles: 1,
@@ -270,7 +327,8 @@ describe('useUsageStore', () => {
     await pending;
 
     expect(calls).toEqual(['index', 'calls']);
-    expect(api.refreshUsageIndex).toHaveBeenCalledTimes(1);
+    expect(api.tryRefreshUsageIndex).toHaveBeenCalledTimes(1);
+    expect(api.refreshUsageIndex).not.toHaveBeenCalled();
     expect(api.getUsageCalls).toHaveBeenCalledTimes(1);
     expect(api.getUsageOverview).not.toHaveBeenCalled();
     expect(api.getUsageActivity).not.toHaveBeenCalled();
@@ -282,7 +340,7 @@ describe('useUsageStore', () => {
 
   it('refreshes grouped usage sections after one index refresh', async () => {
     const calls: string[] = [];
-    vi.mocked(api.refreshUsageIndex).mockImplementation(async () => {
+    vi.mocked(api.tryRefreshUsageIndex).mockImplementation(async () => {
       calls.push('index');
       return {
         scannedFiles: 1,
@@ -321,7 +379,8 @@ describe('useUsageStore', () => {
       .getState()
       .refreshUsageSections(['insights', 'overview', 'activity']);
 
-    expect(api.refreshUsageIndex).toHaveBeenCalledTimes(1);
+    expect(api.tryRefreshUsageIndex).toHaveBeenCalledTimes(1);
+    expect(api.refreshUsageIndex).not.toHaveBeenCalled();
     expect(calls[0]).toBe('index');
     expect(calls.slice(1).sort()).toEqual(['activity', 'insights', 'overview']);
     expect(useUsageStore.getState().summary?.insights?.totalThreads).toBe(80);

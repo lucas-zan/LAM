@@ -40,8 +40,8 @@ interface AccountState {
   setDivergedStrategy: (strategy: DivergedSessionStrategy) => void;
   refresh: (options?: { refreshQuotasNow?: boolean }) => Promise<void>;
   refreshActiveSession: (accounts?: CodexAccount[]) => Promise<void>;
-  relayResumeTo: (account: CodexAccount) => Promise<void>;
-  relaySessionTo: (session: CodexSession, account: CodexAccount) => Promise<void>;
+  relayResumeTo: (account: CodexAccount) => Promise<boolean>;
+  relaySessionTo: (session: CodexSession, account: CodexAccount) => Promise<boolean>;
   login: (account?: CodexAccount) => Promise<void>;
   saveAccountNote: (req: AccountNoteUpdate) => Promise<void>;
 }
@@ -121,10 +121,11 @@ export const useAccountStore = create<AccountState>()(
       const app = useAppStore.getState();
       if (!activeSession) {
         app.setError('No active source session found for Resume Here.');
-        return;
+        return false;
       }
-      await get().relaySessionTo(activeSession, account);
-      get().refreshActiveSession(accounts);
+      const success = await get().relaySessionTo(activeSession, account);
+      if (success) get().refreshActiveSession(accounts);
+      return success;
     },
 
     relaySessionTo: async (session, account) => {
@@ -133,7 +134,7 @@ export const useAccountStore = create<AccountState>()(
       try {
         if (account.id === session.accountId) {
           await useSessionStore.getState().openResume(session);
-          return;
+          return true;
         }
         const result = await api.relayResumeSession({
           fromProfileId: session.accountId,
@@ -149,8 +150,10 @@ export const useAccountStore = create<AccountState>()(
         const actionLabel = result.action === 'already_current' ? 'already current' : result.action;
         app.setStatus(`Handoff ${actionLabel}: ${session.id} on ${account.id}`);
         if (result.warnings.length) app.setError(result.warnings.join(' '));
+        return true;
       } catch (err) {
         app.setError(`${formatError(err)}. Existing session was not overwritten.`);
+        return false;
       }
     },
 

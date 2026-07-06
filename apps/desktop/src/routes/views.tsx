@@ -22,6 +22,7 @@ import type {
   UsageQuotaSnapshot,
   AntigravityQuotaResponse,
   TokenExpirationStatus,
+  TerminalTarget,
   UsageRateCardEntry,
 } from '../lib/types';
 import { QuotaWindow } from '../components/quota-window';
@@ -42,6 +43,14 @@ import { UIButton } from '../components/ui-button';
 import { PlanTypeBadge } from '../components/plan-type-badge';
 import { checkProfileTokenExpiration, getUsageRateCard } from '../lib/api';
 import { formatCost } from '../lib/usage-pricing';
+
+const getModelTileClass = (label: string) => {
+  const l = label.toLowerCase();
+  if (l.includes('gemini')) return 'antigravityModelTile--gemini';
+  if (l.includes('claude')) return 'antigravityModelTile--claude';
+  if (l.includes('gpt')) return 'antigravityModelTile--gpt';
+  return '';
+};
 
 export function AntigravityModels({
   quota,
@@ -132,7 +141,7 @@ export function AntigravityModels({
                   </div>
                   <div className="antigravityModelGrid" aria-label={`${group.displayName} models`}>
                     {models.map((model) => (
-                      <div className="antigravityModelTile" key={model.label}>
+                      <div className={`antigravityModelTile ${getModelTileClass(model.label)}`} key={model.label}>
                         <strong>{model.label}</strong>
                         <span>Shares group limits</span>
                       </div>
@@ -1144,6 +1153,9 @@ export function Settings({
   setDivergedStrategy,
   hideDockIcon,
   setHideDockIcon,
+  terminalTargets,
+  terminalTargetId,
+  setTerminalTargetId,
   resetUsageStatistics,
 }: {
   health: HealthCheck | null;
@@ -1153,9 +1165,13 @@ export function Settings({
   setDivergedStrategy: (strategy: DivergedSessionStrategy) => void;
   hideDockIcon: boolean;
   setHideDockIcon: (hide: boolean) => void;
+  terminalTargets: TerminalTarget[];
+  terminalTargetId: string;
+  setTerminalTargetId: (targetId: string) => void;
   resetUsageStatistics: () => void;
 }) {
   const [rateCard, setRateCard] = useState<UsageRateCardEntry[]>([]);
+  const installedTerminalTargets = terminalTargets.filter((target) => target.installed);
   useEffect(() => {
     let active = true;
     getUsageRateCard()
@@ -1210,6 +1226,23 @@ export function Settings({
             <option value="true">Hide Dock icon (Accessory mode)</option>
           </select>
           <em>Hide Dock icon on macOS while maintaining the status bar menu tray.</em>
+        </label>
+        <label className="settingsSelectRow">
+          <span>Handoff terminal</span>
+          <select
+            value={terminalTargetId}
+            onChange={(event) => setTerminalTargetId(event.target.value)}
+          >
+            {(installedTerminalTargets.length
+              ? installedTerminalTargets
+              : [{ id: 'terminal', displayName: 'Terminal.app', kind: 'terminal', installed: true }]
+            ).map((target) => (
+              <option key={target.id} value={target.id}>
+                {target.displayName}
+              </option>
+            ))}
+          </select>
+          <em>Used by Profile relay, resume, and login commands.</em>
         </label>
         <div>
           <span>Usage statistics</span>

@@ -159,6 +159,13 @@ export type ResumeCommand = {
   sideEffects: string[];
 };
 
+export type TerminalTarget = {
+  id: string;
+  displayName: string;
+  kind: 'terminal' | 'app' | string;
+  installed: boolean;
+};
+
 export type RelayResumeRequest = {
   fromProfileId: string;
   toProfileId: string;

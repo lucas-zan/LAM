@@ -31,6 +31,8 @@ interface UsageState {
   activeScopeId: string | null;
   refreshing: boolean;
   sectionLoading: UsageSectionLoading;
+  summaryRequestId: number;
+  sectionRequestIds: Partial<Record<UsageSection, number>>;
   loadUsageSummary: (req?: UsageDashboardRequest) => Promise<void>;
   loadUsageSection: (section: UsageSection, req?: UsageDashboardRequest) => Promise<void>;
   refreshUsageSections: (sections: UsageSection[], req?: UsageDashboardRequest) => Promise<void>;
@@ -75,15 +77,26 @@ function overviewOnly(summary: UsageDashboard): Partial<UsageDashboard> {
   return overview;
 }
 
-export const useUsageStore = create<UsageState>()((set) => ({
+let nextUsageRequestId = 0;
+
+const nextRequestId = () => {
+  nextUsageRequestId += 1;
+  return nextUsageRequestId;
+};
+
+export const useUsageStore = create<UsageState>()((set, get) => ({
   summary: null,
   scopes: [],
   activeScopeId: null,
   refreshing: false,
   sectionLoading: emptySectionLoading(),
+  summaryRequestId: 0,
+  sectionRequestIds: {},
 
   loadUsageSummary: async (req = defaultUsageSummaryRequest()) => {
+    const requestId = nextRequestId();
     set((state) => ({
+      summaryRequestId: requestId,
       sectionLoading: {
         ...state.sectionLoading,
         scopes: true,
@@ -95,12 +108,14 @@ export const useUsageStore = create<UsageState>()((set) => ({
       api
         .getUsageScopes(req)
         .then((response) => {
+          if (get().summaryRequestId !== requestId) return;
           set({ scopes: response.scopes, activeScopeId: response.activeScopeId });
         })
         .catch((err) => {
           useAppStore.getState().setError(formatError(err));
         })
         .finally(() => {
+          if (get().summaryRequestId !== requestId) return;
           set((state) => ({
             sectionLoading: { ...state.sectionLoading, scopes: false },
           }));
@@ -108,12 +123,14 @@ export const useUsageStore = create<UsageState>()((set) => ({
       api
         .getUsageOverview(req)
         .then((overview) => {
+          if (get().summaryRequestId !== requestId) return;
           set((state) => ({ summary: mergeSummary(state.summary, overviewOnly(overview)) }));
         })
         .catch((err) => {
           useAppStore.getState().setError(formatError(err));
         })
         .finally(() => {
+          if (get().summaryRequestId !== requestId) return;
           set((state) => ({
             sectionLoading: { ...state.sectionLoading, overview: false },
           }));
@@ -121,12 +138,14 @@ export const useUsageStore = create<UsageState>()((set) => ({
       api
         .getUsageActivity(req)
         .then((activityBuckets) => {
+          if (get().summaryRequestId !== requestId) return;
           set((state) => ({ summary: mergeSummary(state.summary, { activityBuckets }) }));
         })
         .catch((err) => {
           useAppStore.getState().setError(formatError(err));
         })
         .finally(() => {
+          if (get().summaryRequestId !== requestId) return;
           set((state) => ({
             sectionLoading: { ...state.sectionLoading, activity: false },
           }));
@@ -136,7 +155,12 @@ export const useUsageStore = create<UsageState>()((set) => ({
   },
 
   loadUsageSection: async (section, req = defaultUsageSummaryRequest()) => {
+    const requestId = nextRequestId();
     set((state) => ({
+      sectionRequestIds: {
+        ...state.sectionRequestIds,
+        [section]: requestId,
+      },
       sectionLoading: {
         ...state.sectionLoading,
         [section]: true,
@@ -145,26 +169,31 @@ export const useUsageStore = create<UsageState>()((set) => ({
     try {
       if (section === 'scopes') {
         const response = await api.getUsageScopes(req);
+        if (get().sectionRequestIds[section] !== requestId) return;
         set({ scopes: response.scopes, activeScopeId: response.activeScopeId });
         return;
       }
       if (section === 'overview') {
         const overview = await api.getUsageOverview(req);
+        if (get().sectionRequestIds[section] !== requestId) return;
         set((state) => ({ summary: mergeSummary(state.summary, overviewOnly(overview)) }));
         return;
       }
       if (section === 'activity') {
         const activityBuckets = await api.getUsageActivity(req);
+        if (get().sectionRequestIds[section] !== requestId) return;
         set((state) => ({ summary: mergeSummary(state.summary, { activityBuckets }) }));
         return;
       }
       if (section === 'insights') {
         const insights = await api.getUsageInsights(req);
+        if (get().sectionRequestIds[section] !== requestId) return;
         set((state) => ({ summary: mergeSummary(state.summary, { insights }) }));
         return;
       }
       if (section === 'calls') {
         const callsPage = await api.getUsageCalls(req);
+        if (get().sectionRequestIds[section] !== requestId) return;
         set((state) => ({
           summary: mergeSummary(state.summary, { callsPage, recentCalls: callsPage.rows }),
         }));
@@ -172,16 +201,19 @@ export const useUsageStore = create<UsageState>()((set) => ({
       }
       if (section === 'threads') {
         const threadsPage = await api.getUsageThreads(req);
+        if (get().sectionRequestIds[section] !== requestId) return;
         set((state) => ({
           summary: mergeSummary(state.summary, { threadsPage, topThreads: threadsPage.rows }),
         }));
         return;
       }
       const diagnostics = await api.getUsageDiagnostics(req);
+      if (get().sectionRequestIds[section] !== requestId) return;
       set((state) => ({ summary: mergeSummary(state.summary, { diagnostics }) }));
     } catch (err) {
       useAppStore.getState().setError(formatError(err));
     } finally {
+      if (get().sectionRequestIds[section] !== requestId) return;
       set((state) => ({
         sectionLoading: {
           ...state.sectionLoading,
@@ -200,7 +232,7 @@ export const useUsageStore = create<UsageState>()((set) => ({
       ),
     }));
     try {
-      await api.refreshUsageIndex(req.includeArchived);
+      await api.tryRefreshUsageIndex(req.includeArchived);
       await Promise.all(
         sections.map((section) => useUsageStore.getState().loadUsageSection(section, req)),
       );
@@ -223,7 +255,13 @@ export const useUsageStore = create<UsageState>()((set) => ({
   },
 
   selectUsageScope: (scopeId) => {
-    set({ activeScopeId: scopeId });
+    set({
+      activeScopeId: scopeId,
+      summary: null,
+      sectionLoading: emptySectionLoading(),
+      summaryRequestId: nextRequestId(),
+      sectionRequestIds: {},
+    });
   },
 
   refreshUsage: async (req = defaultUsageSummaryRequest()) => {

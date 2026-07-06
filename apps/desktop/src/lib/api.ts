@@ -25,6 +25,7 @@ import type {
   SyncPlan,
   SyncRequest,
   SyncResult,
+  TerminalTarget,
   UpdateProviderRequest,
   UsageQuotaSnapshot,
   AntigravityQuotaResponse,
@@ -139,6 +140,21 @@ export async function openTerminalForLogin(profileId: string): Promise<void> {
   return invoke<void>("open_terminal_for_login", { profileId });
 }
 
+export async function listTerminalTargets(): Promise<TerminalTarget[]> {
+  if (!inTauri()) return [{ id: 'terminal', displayName: 'Terminal.app', kind: 'terminal', installed: true }];
+  return invoke<TerminalTarget[]>("list_terminal_targets");
+}
+
+export async function getSelectedTerminalTarget(): Promise<string> {
+  if (!inTauri()) return 'terminal';
+  return invoke<string>("get_selected_terminal_target");
+}
+
+export async function setSelectedTerminalTarget(targetId: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("set_selected_terminal_target", { targetId });
+}
+
 export async function getProfileQuota(profileId: string, forceRefresh = false): Promise<UsageQuotaSnapshot> {
   return invoke<UsageQuotaSnapshot>("get_profile_quota", { profileId, forceRefresh });
 }
@@ -232,6 +248,16 @@ export async function refreshUsageIndex(includeArchived = false): Promise<UsageR
     };
   }
   return invoke<UsageRefreshResult>("refresh_usage_index", { includeArchived });
+}
+
+export async function tryRefreshUsageIndex(includeArchived = false): Promise<UsageRefreshResult | null> {
+  if (!inTauri()) return null;
+  return invoke<UsageRefreshResult | null>("try_refresh_usage_index", { includeArchived });
+}
+
+export async function refreshAccountUsageSnapshot(): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("refresh_account_usage_snapshot");
 }
 
 export async function getUsageSummary(req: UsageSummaryRequest): Promise<UsageSummary> {
