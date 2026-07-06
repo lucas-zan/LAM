@@ -4209,3 +4209,346 @@ pre {
     opacity: 1;
   }
 }
+
+/* Redesigned Settings Page Layout */
+.settingsPagePanel {
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+.settingsLayout {
+  display: flex;
+  height: calc(100vh - 100px); /* Subtract header and footer height */
+  min-height: 500px;
+}
+
+/* Sidebar Styling */
+.settingsSidebar {
+  width: 220px;
+  min-width: 220px;
+  background: var(--surface2);
+  border-right: 1px solid var(--line);
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settingsSidebarTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 8px 8px;
+}
+
+.settingsSidebarNav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settingsSidebarBtn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.settingsSidebarBtn svg {
+  stroke: var(--muted);
+  stroke-width: 2px;
+  transition: stroke 0.15s ease;
+}
+
+.settingsSidebarBtn:hover {
+  background: var(--surface3, var(--surface));
+  color: var(--text);
+}
+
+.settingsSidebarBtn:hover svg {
+  stroke: var(--text);
+}
+
+.settingsSidebarBtn.active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.settingsSidebarBtn.active svg {
+  stroke: #ffffff;
+}
+
+/* Content Area Styling */
+.settingsContent {
+  flex: 1;
+  padding: 32px 40px;
+  overflow-y: auto;
+  background: var(--surface);
+}
+
+.settingsTabContent {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  animation: settingsFadeIn 0.25s ease-out;
+}
+
+@keyframes settingsFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.settingsContentHeader {
+  margin-bottom: 8px;
+}
+
+.settingsContentHeader h4 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 6px 0;
+}
+
+.settingsContentHeader p {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* Grouped Card Styling */
+.settingsGroupCard {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.settingsGroupCardHeader {
+  background: var(--surface2);
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settingsGroupCardHeader h5 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settingsCardBody {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Key-Value Items inside Cards */
+.settingsInfoItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13.5px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
+}
+
+.settingsInfoItem:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.infoLabel {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.infoValue {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Status Badges */
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.statusBadge--ok {
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  color: var(--green);
+  border: 1px solid color-mix(in srgb, var(--green) 25%, transparent);
+}
+
+.statusBadge--error {
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+  color: #ef4444;
+  border: 1px solid color-mix(in srgb, #ef4444 25%, transparent);
+}
+
+/* Monospace path with copy button */
+.monospacePath {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface2);
+  padding: 4px 8px 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+
+.monospacePath code {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.infoCopyBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  padding: 4px;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.infoCopyBtn:hover {
+  background: var(--surface3, var(--surface));
+  color: var(--text);
+}
+
+/* Field Layout (labels and selects) */
+.settingsFieldLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settingsFieldLabel span {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settingsFieldLabel select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  outline: 0;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.settingsFieldLabel select:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+}
+
+.settingsFieldLabel select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.settingsFieldLabel em {
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* Danger Zone Styling */
+.settingsDangerZone {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px dashed color-mix(in srgb, #ef4444 35%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, #ef4444 4%, transparent);
+}
+
+.settingsDangerZone h6 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 4px 0;
+}
+
+.settingsDangerZone p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* Rate Card Table Filtering */
+.rateCardFilterRow {
+  display: flex;
+  margin-bottom: 8px;
+}
+
+.rateCardSearchInput {
+  width: 100%;
+  max-width: 320px;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 12.5px;
+  outline: 0;
+  transition: all 0.15s ease;
+}
+
+.rateCardSearchInput:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+}
+
+.rateCardSearchInput:focus {
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.settingsRateCardTable {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.settingsRateCardTable table {
+  margin: 0;
+}

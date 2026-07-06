@@ -100,6 +100,38 @@ export function IconDevice(props: IconProps) {
     </Svg>
   );
 }
+export function IconSliders(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <line x1="4" y1="21" x2="4" y2="14" />
+      <line x1="4" y1="10" x2="4" y2="3" />
+      <line x1="12" y1="21" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12" y2="3" />
+      <line x1="20" y1="21" x2="20" y2="16" />
+      <line x1="20" y1="12" x2="20" y2="3" />
+      <line x1="2" y1="14" x2="6" y2="14" />
+      <line x1="10" y1="8" x2="14" y2="8" />
+      <line x1="18" y1="16" x2="22" y2="16" />
+    </Svg>
+  );
+}
+export function IconCoins(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="8" cy="8" r="6" />
+      <circle cx="18" cy="18" r="6" />
+      <path d="M12 18a6 6 0 0 0-6-6" />
+    </Svg>
+  );
+}
+export function IconTerminal(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </Svg>
+  );
+}
 export function IconPlus(props: IconProps) {
   return <Svg {...props}><path d="M5 12h14M12 5v14" /></Svg>;
 }

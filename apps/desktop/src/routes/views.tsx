@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { sessionDisplayName } from '../lib/format';
 import {
   countAccountsWithAvailableQuota,
@@ -38,6 +38,9 @@ import {
   IconKey,
   IconSync,
   IconTrash,
+  IconSliders,
+  IconCoins,
+  IconDevice,
 } from '../components/icons';
 import { UIButton } from '../components/ui-button';
 import { PlanTypeBadge } from '../components/plan-type-badge';
@@ -1171,6 +1174,10 @@ export function Settings({
   resetUsageStatistics: () => void;
 }) {
   const [rateCard, setRateCard] = useState<UsageRateCardEntry[]>([]);
+  const [activeTab, setActiveTab] = useState<'general' | 'advanced' | 'rate-card' | 'system'>('general');
+  const [rateCardSearch, setRateCardSearch] = useState('');
+  const [copiedHomeRoot, setCopiedHomeRoot] = useState(false);
+
   const installedTerminalTargets = terminalTargets.filter((target) => target.installed);
   useEffect(() => {
     let active = true;
@@ -1186,112 +1193,278 @@ export function Settings({
     };
   }, []);
 
+  const handleCopyHomeRoot = () => {
+    if (health?.homeRoot) {
+      navigator.clipboard.writeText(health.homeRoot);
+      setCopiedHomeRoot(true);
+      setTimeout(() => setCopiedHomeRoot(false), 2000);
+    }
+  };
+
+  const filteredRateCard = useMemo(() => {
+    if (!rateCardSearch.trim()) return rateCard;
+    const q = rateCardSearch.toLowerCase();
+    return rateCard.filter((entry) =>
+      entry.model.toLowerCase().includes(q) || entry.pricingModel.toLowerCase().includes(q)
+    );
+  }, [rateCard, rateCardSearch]);
+
   return (
-    <section className="panel pagePanel">
-      <h3 className="sectionTitle">Settings</h3>
-      <div className="rows">
-        <div>
-          <span>Status</span>
-          <strong>{health?.ok ? 'connected' : 'not connected'}</strong>
-          <em>{health?.version ?? 'unknown'}</em>
-        </div>
-        <div>
-          <span>Home root</span>
-          <strong>{health?.homeRoot ?? 'unknown'}</strong>
-          <em>LAM_HOME or HOME</em>
-        </div>
-        <label className="settingsSelectRow">
-          <span>Diverged session strategy</span>
-          <select
-            value={divergedStrategy}
-            onChange={(event) => setDivergedStrategy(event.target.value as DivergedSessionStrategy)}
-          >
-            <option value="summarize_fork_with_target_account">
-              Summarize fork with target account
-            </option>
-            <option value="stop_and_ask">Stop and ask</option>
-            <option value="timeline_merge_to_fork">Timeline merge to fork</option>
-            <option value="prefer_source">Prefer source with backup</option>
-            <option value="prefer_target">Prefer target and save source fork</option>
-          </select>
-          <em>Used when both accounts continued the same session differently.</em>
-        </label>
-        <label className="settingsSelectRow">
-          <span>Dock icon visibility</span>
-          <select
-            value={hideDockIcon ? 'true' : 'false'}
-            onChange={(event) => setHideDockIcon(event.target.value === 'true')}
-          >
-            <option value="false">Show Dock icon</option>
-            <option value="true">Hide Dock icon (Accessory mode)</option>
-          </select>
-          <em>Hide Dock icon on macOS while maintaining the status bar menu tray.</em>
-        </label>
-        <label className="settingsSelectRow">
-          <span>Handoff terminal</span>
-          <select
-            value={terminalTargetId}
-            onChange={(event) => setTerminalTargetId(event.target.value)}
-          >
-            {(installedTerminalTargets.length
-              ? installedTerminalTargets
-              : [{ id: 'terminal', displayName: 'Terminal.app', kind: 'terminal', installed: true }]
-            ).map((target) => (
-              <option key={target.id} value={target.id}>
-                {target.displayName}
-              </option>
-            ))}
-          </select>
-          <em>Used by Profile relay, resume, and login commands.</em>
-        </label>
-        <div>
-          <span>Usage statistics</span>
-          <strong>LAM-owned tracker state</strong>
-          <UIButton size="sm" onClick={resetUsageStatistics}>
-            Reset Usage Statistics
-          </UIButton>
+    <section className="panel pagePanel settingsPagePanel">
+      <div className="settingsLayout">
+        {/* Left Sidebar */}
+        <aside className="settingsSidebar">
+          <h3 className="settingsSidebarTitle">Settings</h3>
+          <nav className="settingsSidebarNav" aria-label="Settings Categories">
+            <button
+              type="button"
+              className={`settingsSidebarBtn ${activeTab === 'general' ? 'active' : ''}`}
+              onClick={() => setActiveTab('general')}
+            >
+              <IconSliders size={16} />
+              <span>General</span>
+            </button>
+            <button
+              type="button"
+              className={`settingsSidebarBtn ${activeTab === 'advanced' ? 'active' : ''}`}
+              onClick={() => setActiveTab('advanced')}
+            >
+              <IconKey size={16} />
+              <span>Advanced</span>
+            </button>
+            <button
+              type="button"
+              className={`settingsSidebarBtn ${activeTab === 'rate-card' ? 'active' : ''}`}
+              onClick={() => setActiveTab('rate-card')}
+            >
+              <IconCoins size={16} />
+              <span>Rate Card</span>
+            </button>
+            <button
+              type="button"
+              className={`settingsSidebarBtn ${activeTab === 'system' ? 'active' : ''}`}
+              onClick={() => setActiveTab('system')}
+            >
+              <IconDevice size={16} />
+              <span>System</span>
+            </button>
+          </nav>
+        </aside>
+
+        {/* Right Content Pane */}
+        <div className="settingsContent">
+          {activeTab === 'general' && (
+            <div className="settingsTabContent">
+              <div className="settingsContentHeader">
+                <h4>General Settings</h4>
+                <p>Configure core application parameters and system details.</p>
+              </div>
+
+              {/* System Info Card */}
+              <div className="settingsGroupCard">
+                <div className="settingsGroupCardHeader">
+                  <h5>System Info</h5>
+                </div>
+                <div className="settingsCardBody">
+                  <div className="settingsInfoItem">
+                    <span className="infoLabel">Status</span>
+                    <span className="infoValue">
+                      <span className={`statusBadge ${health?.ok ? 'statusBadge--ok' : 'statusBadge--error'}`}>
+                        {health?.ok ? 'Connected' : 'Disconnected'}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="settingsInfoItem">
+                    <span className="infoLabel">Version</span>
+                    <span className="infoValue">{health?.version ?? '0.1.1'}</span>
+                  </div>
+                  <div className="settingsInfoItem">
+                    <span className="infoLabel">Home Root</span>
+                    <span className="infoValue monospacePath">
+                      <code>{health?.homeRoot ?? 'unknown'}</code>
+                      <button
+                        type="button"
+                        className="infoCopyBtn"
+                        title="Copy Home Root Path"
+                        onClick={handleCopyHomeRoot}
+                      >
+                        {copiedHomeRoot ? 'Copied!' : <IconCopy size={12} />}
+                      </button>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Terminal & Handoff Card */}
+              <div className="settingsGroupCard">
+                <div className="settingsGroupCardHeader">
+                  <h5>Terminal & Handoff</h5>
+                </div>
+                <div className="settingsCardBody">
+                  <label className="settingsFieldLabel">
+                    <span>Handoff terminal</span>
+                    <select
+                      value={terminalTargetId}
+                      onChange={(event) => setTerminalTargetId(event.target.value)}
+                    >
+                      {(installedTerminalTargets.length
+                        ? installedTerminalTargets
+                        : [{ id: 'terminal', displayName: 'Terminal.app', kind: 'terminal', installed: true }]
+                      ).map((target) => (
+                        <option key={target.id} value={target.id}>
+                          {target.displayName}
+                        </option>
+                      ))}
+                    </select>
+                    <em>Used by Profile relay, resume, and login commands.</em>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'advanced' && (
+            <div className="settingsTabContent">
+              <div className="settingsContentHeader">
+                <h4>Advanced Settings</h4>
+                <p>Configure conflict strategies, statistics tracking, and background processes.</p>
+              </div>
+
+              {/* Session Strategy Card */}
+              <div className="settingsGroupCard">
+                <div className="settingsGroupCardHeader">
+                  <h5>Session Strategy</h5>
+                </div>
+                <div className="settingsCardBody">
+                  <label className="settingsFieldLabel">
+                    <span>Diverged session strategy</span>
+                    <select
+                      value={divergedStrategy}
+                      onChange={(event) => setDivergedStrategy(event.target.value as DivergedSessionStrategy)}
+                    >
+                      <option value="summarize_fork_with_target_account">
+                        Summarize fork with target account
+                      </option>
+                      <option value="stop_and_ask">Stop and ask</option>
+                      <option value="timeline_merge_to_fork">Timeline merge to fork</option>
+                      <option value="prefer_source">Prefer source with backup</option>
+                      <option value="prefer_target">Prefer target and save source fork</option>
+                    </select>
+                    <em>Used when both accounts continued the same session differently.</em>
+                  </label>
+                </div>
+              </div>
+
+              {/* Data & Tracking Card */}
+              <div className="settingsGroupCard">
+                <div className="settingsGroupCardHeader">
+                  <h5>Data & Tracking</h5>
+                </div>
+                <div className="settingsCardBody">
+                  <div className="settingsInfoItem">
+                    <span className="infoLabel">Usage statistics</span>
+                    <span className="infoValue">LAM-owned tracker state</span>
+                  </div>
+                  <div className="settingsDangerZone">
+                    <div>
+                      <h6>Reset usage statistics history</h6>
+                      <p>Clear all local estimates and cached events from SQLite databases.</p>
+                    </div>
+                    <UIButton variant="danger" size="sm" onClick={resetUsageStatistics}>
+                      Reset Usage Statistics
+                    </UIButton>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'rate-card' && (
+            <div className="settingsTabContent">
+              <div className="settingsContentHeader">
+                <h4>Usage Rate Card</h4>
+                <p>Built-in local estimates for token pricing. Prices are in USD per 1M tokens.</p>
+              </div>
+
+              <div className="rateCardFilterRow">
+                <input
+                  type="text"
+                  placeholder="Search models..."
+                  value={rateCardSearch}
+                  onChange={(e) => setRateCardSearch(e.target.value)}
+                  className="rateCardSearchInput"
+                />
+              </div>
+
+              <div className="usageTableWrap settingsRateCardTable">
+                <table className="usageTable">
+                  <thead>
+                    <tr>
+                      <th>Model</th>
+                      <th>Context</th>
+                      <th>Input</th>
+                      <th>Cached input</th>
+                      <th>Output</th>
+                      <th>Pricing model</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRateCard.map((entry) => (
+                      <tr key={`${entry.model}-${entry.contextWindow}`}>
+                        <td><strong>{entry.model}</strong></td>
+                        <td>{entry.contextWindow}</td>
+                        <td>{formatCost(entry.inputPerMillion)}</td>
+                        <td>{formatCost(entry.cachedInputPerMillion)}</td>
+                        <td>{formatCost(entry.outputPerMillion)}</td>
+                        <td>
+                          {entry.pricingModel}
+                          {entry.estimated ? ' (estimated)' : ''}
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredRateCard.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} style={{ textAlign: 'center', padding: '36px 0', color: 'var(--muted)' }}>
+                          No matching rate card entries found.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'system' && (
+            <div className="settingsTabContent">
+              <div className="settingsContentHeader">
+                <h4>System & Desktop Integration</h4>
+                <p>Configure macOS system integration, Dock behaviour, and tray sync schedules.</p>
+              </div>
+
+              {/* Desktop Integration Card */}
+              <div className="settingsGroupCard">
+                <div className="settingsGroupCardHeader">
+                  <h5>macOS System Integration</h5>
+                </div>
+                <div className="settingsCardBody">
+                  <label className="settingsFieldLabel">
+                    <span>Dock icon visibility</span>
+                    <select
+                      value={hideDockIcon ? 'true' : 'false'}
+                      onChange={(event) => setHideDockIcon(event.target.value === 'true')}
+                    >
+                      <option value="false">Show Dock icon</option>
+                      <option value="true">Hide Dock icon (Accessory mode)</option>
+                    </select>
+                    <em>Hide Dock icon on macOS while maintaining the status bar menu tray.</em>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
-      <section className="usageSection usageRateCardTable">
-        <div>
-          <h3>Usage rate card</h3>
-          <p>Built-in local estimate. Prices are USD per 1M tokens.</p>
-        </div>
-        <div className="usageTableWrap">
-          <table className="usageTable">
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Context</th>
-                <th>Input</th>
-                <th>Cached input</th>
-                <th>Output</th>
-                <th>Pricing model</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rateCard.map((entry) => (
-                <tr key={`${entry.model}-${entry.contextWindow}`}>
-                  <td>{entry.model}</td>
-                  <td>{entry.contextWindow}</td>
-                  <td>{formatCost(entry.inputPerMillion)}</td>
-                  <td>{formatCost(entry.cachedInputPerMillion)}</td>
-                  <td>{formatCost(entry.outputPerMillion)}</td>
-                  <td>
-                    {entry.pricingModel}
-                    {entry.estimated ? ' (estimated)' : ''}
-                  </td>
-                </tr>
-              ))}
-              {rateCard.length === 0 ? (
-                <tr>
-                  <td colSpan={6}>No local rate card available.</td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
     </section>
   );
 }
