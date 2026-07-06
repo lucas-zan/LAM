@@ -372,6 +372,24 @@ describe('UsagePage', () => {
     expect(screen.getByTestId('usage-activity-2026-07-03')).toBeTruthy();
   });
 
+  it('renders the ending month label when all-time activity ends in a short current month', () => {
+    vi.setSystemTime(new Date('2026-07-06T10:00:00Z'));
+
+    renderUsage({
+      summary: dashboardWithActivity([
+        activityBucket('2026-06-30', 4, 400),
+        activityBucket('2026-07-06', 5, 500),
+      ]),
+      usageWindow: { preset: 'all', from: null, to: null },
+    });
+
+    const monthLabels = document.querySelectorAll('.usageHeatmapMonthLabel');
+    expect(Array.from(monthLabels).map((label) => label.textContent)).toEqual(
+      expect.arrayContaining(['Jun', 'Jul']),
+    );
+    expect(Array.from(monthLabels).filter((label) => label.textContent === 'Jul')).toHaveLength(2);
+  });
+
   it('renders custom activity ranges without fixed one-year padding', () => {
     renderUsage({
       summary: dashboardWithActivity([

@@ -661,12 +661,27 @@ export function UsagePage({
     const labels: Array<{ text: string; colIndex: number }> = [];
     const buckets = summary?.activityBuckets ?? [];
     const { startDate, endDate } = resolveActivityRange(usageWindow, buckets);
+    const monthNames = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
 
     const firstDay = startDate.getUTCDay();
     let lastMonth = -1;
     let lastColIndex = -999;
+    const dayCount = Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1;
     const columns = heatmapColumnCount(
-      firstDay + Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1,
+      firstDay + dayCount,
     );
 
     for (let col = 0; col < columns; col++) {
@@ -680,26 +695,23 @@ export function UsagePage({
         if (col - lastColIndex >= 5) {
           lastMonth = month;
           lastColIndex = col;
-          const monthNames = [
-            'Jan',
-            'Feb',
-            'Mar',
-            'Apr',
-            'May',
-            'Jun',
-            'Jul',
-            'Aug',
-            'Sep',
-            'Oct',
-            'Nov',
-            'Dec',
-          ];
           labels.push({
             text: monthNames[month],
             colIndex: col,
           });
         }
       }
+    }
+    const endMonthLabel = monthNames[endDate.getUTCMonth()];
+    const endColIndex = Math.max(
+      0,
+      Math.min(columns - 1, Math.floor((firstDay + dayCount - 1) / 7)),
+    );
+    if (labels.at(-1)?.text !== endMonthLabel) {
+      labels.push({
+        text: endMonthLabel,
+        colIndex: endColIndex,
+      });
     }
     return labels;
   }, [summary?.activityBuckets, usageWindow]);

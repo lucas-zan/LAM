@@ -1335,16 +1335,98 @@ fn build_session_profile_auth_json(
         ));
     }
 
+    let session_value = serde_json::Value::Object(session_json.clone());
+    let access_token = auth_string(session_json, "access_token");
+    let access_payload = access_token
+        .as_deref()
+        .and_then(decode_jwt_payload_value)
+        .unwrap_or(serde_json::Value::Null);
+    let id_payload = auth_string(session_json, "id_token")
+        .as_deref()
+        .and_then(decode_jwt_payload_value)
+        .unwrap_or(serde_json::Value::Null);
+    let profile = json_object_at(&access_payload, &["https://api.openai.com/profile"]);
+    let access_auth = json_object_at(&access_payload, &["https://api.openai.com/auth"]);
+    let id_auth = json_object_at(&id_payload, &["https://api.openai.com/auth"]);
+
+    let account_id = first_json_string(
+        &session_value,
+        &[
+            &["account_id"],
+            &["accountId"],
+            &["chatgpt_account_id"],
+            &["account", "id"],
+        ],
+    )
+    .or_else(|| first_json_string_from_map(id_auth, &["chatgpt_account_id", "account_id"]))
+    .or_else(|| first_json_string_from_map(access_auth, &["chatgpt_account_id", "account_id"]));
+    let user_id = first_json_string(
+        &session_value,
+        &[&["chatgpt_user_id"], &["chatgptUserId"], &["user", "id"]],
+    )
+    .or_else(|| first_json_string_from_map(id_auth, &["chatgpt_user_id", "user_id"]))
+    .or_else(|| first_json_string_from_map(access_auth, &["chatgpt_user_id", "user_id"]));
+    let organization_id =
+        first_json_string(&session_value, &[&["organization_id"], &["organizationId"]])
+            .or_else(|| first_json_string_from_map(id_auth, &["organization_id"]))
+            .or_else(|| first_json_string_from_map(access_auth, &["organization_id"]));
+    let project_id = first_json_string(
+        &session_value,
+        &[
+            &["project_id"],
+            &["projectId"],
+            &["workspace_id"],
+            &["workspaceId"],
+        ],
+    )
+    .or_else(|| first_json_string_from_map(id_auth, &["project_id"]))
+    .or_else(|| first_json_string_from_map(access_auth, &["project_id"]));
+    let email = first_json_string(
+        &session_value,
+        &[&["email"], &["account_claims_email"], &["user", "email"]],
+    )
+    .or_else(|| first_json_string_from_map(profile, &["email"]))
+    .or_else(|| json_string_at(&id_payload, &["email"]));
+    let plan_type = auth_string(session_json, "plan_type")
+        .or_else(|| auth_string(session_json, "chatgpt_plan_type"))
+        .or_else(|| {
+            first_json_string(
+                &session_value,
+                &[&["account", "planType"], &["account", "plan_type"]],
+            )
+        })
+        .or_else(|| first_json_string_from_map(access_auth, &["chatgpt_plan_type"]))
+        .unwrap_or_else(|| "free".to_string());
+
     let mut tokens = serde_json::Map::new();
-    for (out_key, source_key) in [
-        ("access_token", "access_token"),
-        ("id_token", "id_token"),
-        ("refresh_token", "refresh_token"),
-        ("account_id", "account_id"),
-    ] {
-        if let Some(value) = auth_string(session_json, source_key) {
-            tokens.insert(out_key.to_string(), serde_json::Value::String(value));
-        }
+    if let Some(value) = access_token.clone() {
+        tokens.insert("access_token".to_string(), serde_json::Value::String(value));
+    }
+    let id_token = auth_string(session_json, "id_token").or_else(|| {
+        access_token.as_ref().map(|_| {
+            build_compat_id_token(CompatIdTokenInput {
+                account_id: account_id.as_deref(),
+                user_id: user_id.as_deref(),
+                organization_id: organization_id.as_deref(),
+                project_id: project_id.as_deref(),
+                email: email.as_deref(),
+                plan_type: Some(plan_type.as_str()),
+            })
+        })
+    });
+    if let Some(value) = id_token {
+        tokens.insert("id_token".to_string(), serde_json::Value::String(value));
+    }
+    if let Some(value) = auth_string(session_json, "refresh_token")
+        .or_else(|| first_json_string(&session_value, &[&["session_token"], &["sessionToken"]]))
+    {
+        tokens.insert(
+            "refresh_token".to_string(),
+            serde_json::Value::String(value),
+        );
+    }
+    if let Some(value) = account_id.clone() {
+        tokens.insert("account_id".to_string(), serde_json::Value::String(value));
     }
     if !tokens
         .keys()
@@ -1378,15 +1460,26 @@ fn build_session_profile_auth_json(
     );
     auth.insert("websockets".to_string(), serde_json::Value::Bool(true));
 
-    for (out_key, source_key) in [
-        ("email", "email"),
-        ("expired", "expired"),
-        ("plan_type", "plan_type"),
-        ("chatgpt_plan_type", "chatgpt_plan_type"),
-    ] {
-        if let Some(value) = auth_string(session_json, source_key) {
-            auth.insert(out_key.to_string(), serde_json::Value::String(value));
-        }
+    if let Some(value) = email {
+        auth.insert("email".to_string(), serde_json::Value::String(value));
+    }
+    if let Some(value) = auth_string(session_json, "expired") {
+        auth.insert("expired".to_string(), serde_json::Value::String(value));
+    }
+    auth.insert(
+        "plan_type".to_string(),
+        serde_json::Value::String(plan_type.clone()),
+    );
+    auth.insert(
+        "chatgpt_plan_type".to_string(),
+        serde_json::Value::String(plan_type),
+    );
+    if let Some(value) = first_json_string(&session_value, &[&["session_token"], &["sessionToken"]])
+    {
+        auth.insert(
+            "session_token".to_string(),
+            serde_json::Value::String(value),
+        );
     }
 
     serde_json::to_string_pretty(&serde_json::Value::Object(auth)).map_err(|e| {
@@ -1395,6 +1488,140 @@ fn build_session_profile_auth_json(
             format!("Failed to serialize auth.json: {e}"),
         )
     })
+}
+
+struct CompatIdTokenInput<'a> {
+    account_id: Option<&'a str>,
+    user_id: Option<&'a str>,
+    organization_id: Option<&'a str>,
+    project_id: Option<&'a str>,
+    email: Option<&'a str>,
+    plan_type: Option<&'a str>,
+}
+
+fn build_compat_id_token(input: CompatIdTokenInput<'_>) -> String {
+    let now = chrono::Utc::now().timestamp();
+    let account_id = input.account_id.unwrap_or_default();
+    let user_id = input.user_id.unwrap_or(account_id);
+    let payload = serde_json::json!({
+        "aud": ["app_EMoamEEZ73f0CkXaXp7hrann"],
+        "email": input.email.unwrap_or_default(),
+        "exp": now + 3600,
+        "iat": now,
+        "iss": "https://auth.openai.com",
+        "https://api.openai.com/auth": {
+            "account_id": account_id,
+            "chatgpt_account_id": account_id,
+            "chatgpt_user_id": user_id,
+            "user_id": user_id,
+            "organization_id": input.organization_id.unwrap_or_default(),
+            "project_id": input.project_id.unwrap_or_default(),
+            "chatgpt_plan_type": input.plan_type.unwrap_or("free"),
+        },
+        "sub": if user_id.is_empty() { "local-compat" } else { user_id },
+    });
+    format!(
+        "{}.{}.{}",
+        base64url_encode(br#"{"alg":"RS256","typ":"JWT","kid":"compat"}"#),
+        base64url_encode(
+            serde_json::to_string(&payload)
+                .unwrap_or_default()
+                .as_bytes()
+        ),
+        base64url_encode(b"local_compat_signature")
+    )
+}
+
+fn json_string_at(value: &serde_json::Value, path: &[&str]) -> Option<String> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn json_object_at<'a>(
+    value: &'a serde_json::Value,
+    path: &[&str],
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_object()
+}
+
+fn first_json_string(value: &serde_json::Value, paths: &[&[&str]]) -> Option<String> {
+    paths.iter().find_map(|path| json_string_at(value, path))
+}
+
+fn first_json_string_from_map(
+    map: Option<&serde_json::Map<String, serde_json::Value>>,
+    keys: &[&str],
+) -> Option<String> {
+    let map = map?;
+    keys.iter().find_map(|key| {
+        map.get(*key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn decode_jwt_payload_value(token: &str) -> Option<serde_json::Value> {
+    let payload = token.split('.').nth(1)?;
+    let bytes = base64url_decode(payload)?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn base64url_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let b0 = bytes[index];
+        let b1 = bytes.get(index + 1).copied();
+        let b2 = bytes.get(index + 2).copied();
+        out.push(TABLE[(b0 >> 2) as usize] as char);
+        out.push(TABLE[(((b0 & 0b0000_0011) << 4) | (b1.unwrap_or(0) >> 4)) as usize] as char);
+        if let Some(b1) = b1 {
+            out.push(TABLE[(((b1 & 0b0000_1111) << 2) | (b2.unwrap_or(0) >> 6)) as usize] as char);
+        }
+        if let Some(b2) = b2 {
+            out.push(TABLE[(b2 & 0b0011_1111) as usize] as char);
+        }
+        index += 3;
+    }
+    out
+}
+
+fn base64url_decode(value: &str) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut buffer = 0_u32;
+    let mut bits = 0_u8;
+    for byte in value.bytes() {
+        let chunk = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            b'=' => continue,
+            _ => return None,
+        } as u32;
+        buffer = (buffer << 6) | chunk;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            bytes.push(((buffer >> bits) & 0xff) as u8);
+        }
+    }
+    Some(bytes)
 }
 
 /// Builds auth.json content from uploaded credentials and optional PAT

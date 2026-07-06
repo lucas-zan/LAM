@@ -2226,7 +2226,7 @@ fn query_local_headline_stats(
     let peak_daily_tokens = conn
         .query_row(
             "SELECT MAX(day_tokens) FROM (
-                SELECT COALESCE(NULLIF(\"current_date\", ''), substr(event_timestamp, 1, 10)) AS activity_date,
+                SELECT substr(event_timestamp, 1, 10) AS activity_date,
                        SUM(total_tokens) AS day_tokens
                 FROM usage_events
                 WHERE (?1 OR is_archived = 0)
@@ -2296,7 +2296,7 @@ fn query_activity_buckets(
 ) -> Result<Vec<UsageActivityBucket>> {
     let mut stmt = conn
         .prepare(
-            "SELECT COALESCE(NULLIF(\"current_date\", ''), substr(event_timestamp, 1, 10)) AS activity_date,
+            "SELECT substr(event_timestamp, 1, 10) AS activity_date,
                     COUNT(*) AS calls,
                     COALESCE(SUM(total_tokens), 0) AS tokens
              FROM usage_events
@@ -2366,7 +2366,7 @@ fn query_activity_dates(
 ) -> Result<Vec<NaiveDate>> {
     let mut stmt = conn
         .prepare(
-            "SELECT DISTINCT COALESCE(NULLIF(\"current_date\", ''), substr(event_timestamp, 1, 10)) AS activity_date
+            "SELECT DISTINCT substr(event_timestamp, 1, 10) AS activity_date
              FROM usage_events
              WHERE (?1 OR is_archived = 0)
                AND (?2 IS NULL OR event_timestamp >= ?2)
@@ -4814,6 +4814,30 @@ mod tests {
         assert_eq!(summary.activity_buckets[1].date, "2026-06-27");
         assert_eq!(summary.activity_buckets[1].calls, 0);
         assert_eq!(summary.activity_buckets[2].cumulative_tokens, 110);
+    }
+
+    #[test]
+    fn usage_activity_uses_event_timestamp_for_calendar_days() {
+        let temp = TempDir::new().unwrap();
+        write_log(
+            temp.path(),
+            &format!(
+                "{}\n{}\n{}\n{}\n{}\n",
+                json!({"type":"session_meta","timestamp":"2026-06-30T00:00:00Z","payload":{"id":"00000000-0000-0000-0000-000000000001"}}),
+                json!({"type":"turn_context","timestamp":"2026-06-30T00:00:01Z","payload":{"turn_id":"turn-1","cwd":"/repo/LAM","model":"gpt-5","current_date":"2026-07-06"}}),
+                json!({"type":"event_msg","timestamp":"2026-06-30T00:00:02Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":30,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":40},"total_token_usage":{"input_tokens":30,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":40}}}}),
+                json!({"type":"turn_context","timestamp":"2026-07-06T00:00:01Z","payload":{"turn_id":"turn-2","cwd":"/repo/LAM","model":"gpt-5","current_date":"2026-07-06"}}),
+                json!({"type":"event_msg","timestamp":"2026-07-06T00:00:02Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":60},"total_token_usage":{"input_tokens":80,"cached_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":100}}}})
+            ),
+        );
+        refresh_usage_index(temp.path()).unwrap();
+        let summary = get_usage_summary(temp.path(), summary_request("all")).unwrap();
+
+        assert_eq!(summary.headline_stats.peak_daily_tokens, Some(60));
+        assert_eq!(summary.activity_buckets.first().unwrap().date, "2026-06-30");
+        assert_eq!(summary.activity_buckets.last().unwrap().date, "2026-07-06");
+        assert_eq!(summary.activity_buckets.first().unwrap().tokens, 40);
+        assert_eq!(summary.activity_buckets.last().unwrap().tokens, 60);
     }
 
     #[test]

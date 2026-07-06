@@ -6,6 +6,65 @@ use localagentmanager_core::{
 };
 use tempfile::TempDir;
 
+const TEST_B64URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+fn test_base64url(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let b0 = bytes[index];
+        let b1 = bytes.get(index + 1).copied();
+        let b2 = bytes.get(index + 2).copied();
+        out.push(TEST_B64URL[(b0 >> 2) as usize] as char);
+        out.push(
+            TEST_B64URL[(((b0 & 0b0000_0011) << 4) | (b1.unwrap_or(0) >> 4)) as usize] as char,
+        );
+        if let Some(b1) = b1 {
+            out.push(
+                TEST_B64URL[(((b1 & 0b0000_1111) << 2) | (b2.unwrap_or(0) >> 6)) as usize] as char,
+            );
+        }
+        if let Some(b2) = b2 {
+            out.push(TEST_B64URL[(b2 & 0b0011_1111) as usize] as char);
+        }
+        index += 3;
+    }
+    out
+}
+
+fn test_jwt(payload: &serde_json::Value) -> String {
+    format!(
+        "{}.{}.{}",
+        test_base64url(br#"{"alg":"RS256","typ":"JWT","kid":"test"}"#),
+        test_base64url(serde_json::to_string(payload).unwrap().as_bytes()),
+        test_base64url(b"test-signature")
+    )
+}
+
+fn decode_test_jwt_payload(token: &str) -> serde_json::Value {
+    let payload = token.split('.').nth(1).unwrap();
+    let mut bytes = Vec::new();
+    let mut buffer = 0_u32;
+    let mut bits = 0_u8;
+    for byte in payload.bytes() {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            _ => continue,
+        } as u32;
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            bytes.push(((buffer >> bits) & 0xff) as u8);
+        }
+    }
+    serde_json::from_slice(&bytes).unwrap()
+}
+
 #[test]
 fn test_add_and_switch_pat_account() {
     let tmp = TempDir::new().unwrap();
@@ -414,6 +473,86 @@ fn test_add_session_profile_account_accepts_snake_case_session_json() {
     assert_eq!(auth["tokens"]["access_token"], "at-snake");
     assert_eq!(auth["tokens"]["id_token"], "id-snake");
     assert_eq!(auth["tokens"]["account_id"], "account-snake");
+}
+
+#[test]
+fn test_add_session_profile_account_accepts_raw_web_session_json() {
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path();
+    let access_token = test_jwt(&serde_json::json!({
+        "exp": 1783934795_i64,
+        "https://api.openai.com/profile": {
+            "email": "web-session@example.com"
+        },
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": "account-from-access",
+            "chatgpt_user_id": "user-from-access",
+            "organization_id": "org-from-access",
+            "project_id": "project-from-access",
+            "chatgpt_plan_type": "team"
+        }
+    }));
+
+    add_session_profile_account(
+        home,
+        &AddSessionProfileAccountRequest {
+            account_id: "web-session".to_string(),
+            session_json: serde_json::json!({
+                "user": {
+                    "id": "user-from-session",
+                    "email": "web-session@example.com"
+                },
+                "account": {
+                    "id": "account-from-session",
+                    "planType": "plus"
+                },
+                "expires": "2026-10-01T09:26:48.589Z",
+                "accessToken": access_token,
+                "sessionToken": "session-token-value",
+                "authProvider": "openai"
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap();
+
+    let auth: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(home.join(".codex-web-session/auth.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        auth["tokens"]["access_token"].as_str(),
+        Some(access_token.as_str())
+    );
+    assert_eq!(auth["tokens"]["refresh_token"], "session-token-value");
+    assert_eq!(auth["tokens"]["account_id"], "account-from-session");
+    assert_eq!(auth["email"], "web-session@example.com");
+    assert_eq!(auth["expired"], "2026-10-01T09:26:48.589Z");
+    assert_eq!(auth["chatgpt_plan_type"], "plus");
+
+    let id_token = auth["tokens"]["id_token"].as_str().unwrap();
+    assert_ne!(id_token, access_token);
+    let id_payload = decode_test_jwt_payload(id_token);
+    assert_eq!(id_payload["email"], "web-session@example.com");
+    assert_eq!(
+        id_payload["https://api.openai.com/auth"]["chatgpt_account_id"],
+        "account-from-session"
+    );
+    assert_eq!(
+        id_payload["https://api.openai.com/auth"]["account_id"],
+        "account-from-session"
+    );
+    assert_eq!(
+        id_payload["https://api.openai.com/auth"]["chatgpt_user_id"],
+        "user-from-session"
+    );
+    assert_eq!(
+        id_payload["https://api.openai.com/auth"]["chatgpt_plan_type"],
+        "plus"
+    );
 }
 
 #[test]
