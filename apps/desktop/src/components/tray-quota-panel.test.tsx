@@ -231,6 +231,77 @@ describe('TrayQuotaPanel', () => {
     expect(api.relayResumeSession).not.toHaveBeenCalled();
   });
 
+  it('renders API-key-like Codex auth as generic Auth in tray rows', async () => {
+    vi.mocked(api.listCachedAccounts).mockResolvedValue([{ ...account, authMode: 'api_key' }]);
+    vi.mocked(api.listAccounts).mockResolvedValue([{ ...account, authMode: 'api_key' }]);
+
+    render(<TrayQuotaPanel />);
+
+    await waitFor(() => expect(screen.getAllByText('Auth').length).toBeGreaterThan(0));
+    expect(screen.queryByText('API Key')).toBeNull();
+  });
+
+  it('shows Antigravity model rows with weekly and five-hour quota windows', async () => {
+    vi.mocked(api.getAntigravityQuota).mockResolvedValue({
+      ok: true,
+      models: [
+        { label: 'Gemini Flash', remainingFraction: 0.91 },
+        { label: 'Claude Sonnet', remainingFraction: 0.66 },
+      ],
+      groups: [
+        {
+          displayName: 'Gemini Models',
+          description: 'Models within this group: Gemini Flash, Gemini Pro',
+          buckets: [
+            {
+              bucketId: 'gemini-weekly',
+              displayName: 'Weekly Limit',
+              window: 'weekly',
+              remainingFraction: 0.91,
+              resetTime: '2026-07-07T01:21:15Z',
+            },
+            {
+              bucketId: 'gemini-5h',
+              displayName: '5h',
+              window: '5h',
+              remainingFraction: 0.73,
+              resetTime: '2026-07-03T07:06:36Z',
+            },
+          ],
+        },
+        {
+          displayName: 'Claude and GPT models',
+          description: 'Models within this group: Claude Opus, Claude Sonnet, GPT-OSS',
+          buckets: [
+            {
+              bucketId: '3p-weekly',
+              displayName: 'Weekly Limit',
+              window: 'weekly',
+              remainingFraction: 0.66,
+              resetTime: '2026-07-06T05:08:03Z',
+            },
+            {
+              bucketId: '3p-5h',
+              displayName: '5h',
+              window: '5h',
+              remainingFraction: 1,
+              resetTime: '2026-07-03T11:11:26Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    render(<TrayQuotaPanel />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: /antigravity/i }));
+
+    await waitFor(() => expect(screen.getByText('Gemini Flash')).toBeTruthy());
+    expect(screen.getByText('Claude Sonnet')).toBeTruthy();
+    expect(screen.getAllByText('Weekly Limit').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('5h').length).toBeGreaterThan(0);
+  });
+
   it('shows footer actions in Quit Stats Open order and opens usage stats only from Stats', async () => {
     render(<TrayQuotaPanel />);
     await waitFor(() => expect(screen.getAllByText('60%').length).toBeGreaterThan(0));

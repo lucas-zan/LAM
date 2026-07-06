@@ -1,19 +1,25 @@
 use localagentmanager_core::{
     add_pat_account as core_add_pat_account,
+    add_session_profile_account as core_add_session_profile_account,
     attach_provider_to_profile as core_attach_provider_to_profile,
     build_login_command as core_build_login_command,
     build_resume_command as core_build_resume_command, check_token_expiration,
     compact_usage_db as core_compact_usage_db, create_account_plan as core_create_account_plan,
     create_provider as core_create_provider, create_relay_plan as core_create_relay_plan,
-    delete_provider as core_delete_provider,
+    delete_account as core_delete_account, delete_provider as core_delete_provider,
     execute_attach_provider_to_profile as core_execute_attach_provider_to_profile,
     execute_create_account as core_execute_create_account,
     execute_create_relay as core_execute_create_relay,
     execute_rename_account as core_execute_rename_account, execute_sync as core_execute_sync,
     export_cpa_credentials as core_export_cpa_credentials,
-    get_profile_quota as core_get_profile_quota, get_usage_dashboard as core_get_usage_dashboard,
-    get_usage_summary as core_get_usage_summary, list_accounts as core_list_accounts,
-    list_cached_accounts as core_list_cached_accounts,
+    get_profile_quota as core_get_profile_quota, get_usage_activity as core_get_usage_activity,
+    get_usage_calls as core_get_usage_calls, get_usage_dashboard as core_get_usage_dashboard,
+    get_usage_dashboard_response as core_get_usage_dashboard_response,
+    get_usage_diagnostics as core_get_usage_diagnostics,
+    get_usage_insights as core_get_usage_insights, get_usage_overview as core_get_usage_overview,
+    get_usage_rate_card as core_get_usage_rate_card, get_usage_scopes as core_get_usage_scopes,
+    get_usage_summary as core_get_usage_summary, get_usage_threads as core_get_usage_threads,
+    list_accounts as core_list_accounts, list_cached_accounts as core_list_cached_accounts,
     list_cached_quotas as core_list_cached_quotas, list_providers as core_list_providers,
     list_sessions as core_list_sessions, open_terminal_for_login as core_open_terminal_for_login,
     open_terminal_with_command as core_open_terminal_with_command,
@@ -28,14 +34,16 @@ use localagentmanager_core::{
     sync_plan as core_sync_plan, test_provider as core_test_provider,
     update_pat_session_auth as core_update_pat_session_auth,
     update_provider as core_update_provider, AccountNoteUpdate, AddPatAccountRequest,
-    AddPatAccountResult, AppError, AttachProviderRequest, AttachProviderResult, AuthMetadata,
-    CodexAccount, CodexSession, CpaExport, CreateAccountRequest, CreateProviderRequest,
-    CreateRelayRequest, CreateResult, OperationPlan, ProviderProfile, QuotaRefreshResult,
+    AddPatAccountResult, AddSessionProfileAccountRequest, AppError, AttachProviderRequest,
+    AttachProviderResult, AuthMetadata, CodexAccount, CodexSession, CpaExport,
+    CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, CreateResult,
+    DeleteAccountRequest, DeleteAccountResult, OperationPlan, ProviderProfile, QuotaRefreshResult,
     RelayResumeRequest, RelayResumeResult, RenameAccountRequest, RenameAccountResult,
     ResetQuotaResult, ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult,
-    TokenExpirationStatus, UpdateProviderRequest, UploadedCredentials, UsageDashboard,
-    UsageDashboardRequest, UsageQuotaSnapshot, UsageRefreshResult, UsageSummary,
-    UsageSummaryRequest,
+    TokenExpirationStatus, UpdateProviderRequest, UploadedCredentials, UsageActivityBucket,
+    UsageCallRow, UsageDashboard, UsageDashboardRequest, UsageDashboardResponse, UsageDiagnostics,
+    UsageInsights, UsagePagedResponse, UsageQuotaSnapshot, UsageRateCardEntry, UsageRefreshResult,
+    UsageScopesResponse, UsageSummary, UsageSummaryRequest, UsageThreadSummary,
 };
 use std::sync::Mutex;
 use tauri::Emitter;
@@ -259,6 +267,11 @@ pub fn execute_rename_account(req: RenameAccountRequest) -> Result<RenameAccount
 }
 
 #[tauri::command]
+pub fn delete_account(req: DeleteAccountRequest) -> Result<DeleteAccountResult, AppError> {
+    core_delete_account(&home_root()?, &req)
+}
+
+#[tauri::command]
 pub fn update_account_note(req: AccountNoteUpdate) -> Result<CodexAccount, AppError> {
     localagentmanager_core::update_account_note(&home_root()?, &req)
 }
@@ -361,6 +374,69 @@ pub async fn get_usage_summary(req: UsageSummaryRequest) -> Result<UsageSummary,
 pub async fn get_usage_dashboard(req: UsageDashboardRequest) -> Result<UsageDashboard, AppError> {
     let home = home_root()?;
     run_blocking(move || core_get_usage_dashboard(&home, req)).await
+}
+
+#[tauri::command]
+pub async fn get_usage_dashboard_response(
+    req: UsageDashboardRequest,
+) -> Result<UsageDashboardResponse, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_get_usage_dashboard_response(&home, req)).await
+}
+
+#[tauri::command]
+pub async fn get_usage_scopes(req: UsageDashboardRequest) -> Result<UsageScopesResponse, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_get_usage_scopes(&home, req)).await
+}
+
+#[tauri::command]
+pub async fn get_usage_overview(req: UsageDashboardRequest) -> Result<UsageDashboard, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_get_usage_overview(&home, req)).await
+}
+
+#[tauri::command]
+pub async fn get_usage_activity(
+    req: UsageDashboardRequest,
+) -> Result<Vec<UsageActivityBucket>, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_get_usage_activity(&home, req)).await
+}
+
+#[tauri::command]
+pub async fn get_usage_insights(req: UsageDashboardRequest) -> Result<UsageInsights, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_get_usage_insights(&home, req)).await
+}
+
+#[tauri::command]
+pub async fn get_usage_calls(
+    req: UsageDashboardRequest,
+) -> Result<UsagePagedResponse<UsageCallRow>, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_get_usage_calls(&home, req)).await
+}
+
+#[tauri::command]
+pub async fn get_usage_threads(
+    req: UsageDashboardRequest,
+) -> Result<UsagePagedResponse<UsageThreadSummary>, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_get_usage_threads(&home, req)).await
+}
+
+#[tauri::command]
+pub async fn get_usage_diagnostics(
+    req: UsageDashboardRequest,
+) -> Result<UsageDiagnostics, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_get_usage_diagnostics(&home, req)).await
+}
+
+#[tauri::command]
+pub async fn get_usage_rate_card() -> Result<Vec<UsageRateCardEntry>, AppError> {
+    Ok(core_get_usage_rate_card())
 }
 
 #[tauri::command]
@@ -614,6 +690,13 @@ pub fn check_profile_token_expiration(
 #[tauri::command]
 pub fn add_pat_account(req: AddPatAccountRequest) -> Result<AddPatAccountResult, AppError> {
     core_add_pat_account(&home_root()?, &req)
+}
+
+#[tauri::command]
+pub fn add_session_profile_account(
+    req: AddSessionProfileAccountRequest,
+) -> Result<CreateResult, AppError> {
+    core_add_session_profile_account(&home_root()?, &req)
 }
 
 #[tauri::command]

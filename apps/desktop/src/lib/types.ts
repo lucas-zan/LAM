@@ -97,6 +97,16 @@ export type RenameAccountResult = {
   warnings: string[];
 };
 
+export type DeleteAccountRequest = {
+  profileId: string;
+};
+
+export type DeleteAccountResult = {
+  profileId: string;
+  removedHomePath: string;
+  removedWrapperPath?: string | null;
+};
+
 export type AccountNoteUpdate = {
   profileId: string;
   renewalDate?: string | null;
@@ -241,6 +251,8 @@ export type UsageWindow = {
 export type UsageSummaryRequest = {
   window: UsageWindow;
   includeArchived: boolean;
+  scopeId?: string | null;
+  accountId?: string | null;
 };
 
 export type UsageDashboardRequest = UsageSummaryRequest & {
@@ -251,7 +263,19 @@ export type UsageDashboardRequest = UsageSummaryRequest & {
   sortKey?: string | null;
   sortDirection?: 'asc' | 'desc' | null;
   limit?: number | null;
+  offset?: number | null;
 };
+
+export type UsageSection =
+  | 'scopes'
+  | 'overview'
+  | 'activity'
+  | 'insights'
+  | 'calls'
+  | 'threads'
+  | 'diagnostics';
+
+export type UsageSectionLoading = Record<UsageSection, boolean>;
 
 export type UsagePricingCoverage = {
   pricedTokens: number;
@@ -290,6 +314,34 @@ export type UsageActivityBucket = {
   cumulativeTokens: number;
 };
 
+export type UsageInsights = {
+  fastModePercent?: number | null;
+  mostUsedReasoning?: string | null;
+  mostUsedReasoningPercent?: number | null;
+  skillsExplored: number;
+  totalSkillsUsed: number;
+  totalThreads: number;
+};
+
+export type UsagePagedResponse<T> = {
+  rows: T[];
+  total: number;
+  limit: number;
+  offset: number;
+  nextOffset?: number | null;
+};
+
+export type UsageRateCardEntry = {
+  model: string;
+  pricingModel: string;
+  contextWindow: string;
+  estimated: boolean;
+  inputPerMillion: number;
+  cachedInputPerMillion: number;
+  outputPerMillion: number;
+  notes?: string | null;
+};
+
 export type UsageSummary = {
   refreshedAt?: string | null;
   scannedFiles: number;
@@ -309,14 +361,39 @@ export type UsageSummary = {
   activityBuckets?: UsageActivityBucket[];
   topThreads: UsageThreadSummary[];
   recentCalls: UsageCallRow[];
+  insights?: UsageInsights | null;
+  callsPage?: UsagePagedResponse<UsageCallRow> | null;
+  threadsPage?: UsagePagedResponse<UsageThreadSummary> | null;
 };
 
 export type UsageDashboard = UsageSummary & {
+  scope?: UsageScope | null;
   modelOptions: string[];
   effortOptions: string[];
   pricingConfidenceOptions: string[];
   statusChips: Array<{ label: string; value: string }>;
   investigationPresets: Array<{ id: string; label: string; description: string }>;
+};
+
+export type UsageScopeKind = 'total' | 'workspace' | 'account';
+
+export type UsageScope = {
+  id: string;
+  label: string;
+  kind: UsageScopeKind;
+  accountId?: string | null;
+  isDefault: boolean;
+};
+
+export type UsageDashboardResponse = {
+  scopes: UsageScope[];
+  activeScopeId: string;
+  dashboard: UsageDashboard;
+};
+
+export type UsageScopesResponse = {
+  scopes: UsageScope[];
+  activeScopeId: string;
 };
 
 export type UsageThreadSummary = {
@@ -353,6 +430,12 @@ export type UsageCallRow = {
   sessionUpdatedAt?: string | null;
   eventTimestamp: string;
   sourceFile: string;
+  workspaceId?: string | null;
+  workspaceLabel?: string | null;
+  workspaceHome?: string | null;
+  attributedAccountId?: string | null;
+  attributedAccountLabel?: string | null;
+  attributionSource?: string | null;
   lineNumber: number;
   turnId?: string | null;
   turnTimestamp?: string | null;
@@ -451,9 +534,27 @@ export type AntigravityModelQuota = {
   resetTime?: string | null;
 };
 
+export type AntigravityQuotaBucket = {
+  bucketId?: string | null;
+  displayName: string;
+  description?: string | null;
+  window?: string | null;
+  remainingFraction?: number | null;
+  resetTime?: string | null;
+  disabled?: boolean | null;
+};
+
+export type AntigravityQuotaGroup = {
+  displayName: string;
+  description?: string | null;
+  buckets: AntigravityQuotaBucket[];
+};
+
 export type AntigravityQuotaResponse = {
   ok: boolean;
   models: AntigravityModelQuota[];
+  description?: string | null;
+  groups?: AntigravityQuotaGroup[];
   error?: string | null;
 };
 
@@ -492,6 +593,12 @@ export type AddPatAccountRequest = {
   authJson: Record<string, unknown>;
   personalAccessToken?: string | null;
   tokenExpiration?: string | null;
+};
+
+export type AddSessionProfileAccountRequest = {
+  accountId: string;
+  sessionJson: Record<string, unknown>;
+  overwriteWrapper: boolean;
 };
 
 export type AddPatAccountResult = {

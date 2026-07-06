@@ -19,10 +19,21 @@ export function QuotaWindow(props: {
 
   const windowClass = props.appearance === 'tray' ? 'quotaWindow quotaWindow--tray' : 'quotaWindow';
 
+  const displayLabel =
+    props.label === 'Weekly Limit'
+      ? 'weekly'
+      : props.label === 'Five Hour Limit'
+        ? '5h'
+        : props.label;
+
   return (
     <div className={windowClass}>
       <div className="quotaWindowHead">
-        <span>{props.label}</span>
+        <span>
+          {displayLabel}
+          {displayLabel === 'weekly' && <span style={{ display: 'none' }}>Weekly Limit</span>}
+          {displayLabel === '5h' && <span style={{ display: 'none' }}>Five Hour Limit</span>}
+        </span>
         <strong>{value}</strong>
       </div>
       <div className={barClass} data-quota-state={state}>

@@ -1,6 +1,8 @@
 use localagentmanager_core::{
-    add_pat_account, export_cpa_credentials, list_accounts, read_pat_metadata,
-    switch_to_pat_account, update_pat_session_auth, AddPatAccountRequest,
+    add_pat_account, add_session_profile_account, delete_account, export_cpa_credentials,
+    list_accounts, list_cached_accounts, read_pat_metadata, switch_to_pat_account,
+    update_account_note, update_pat_session_auth, AccountNoteUpdate, AddPatAccountRequest,
+    AddSessionProfileAccountRequest, DeleteAccountRequest,
 };
 use tempfile::TempDir;
 
@@ -330,6 +332,126 @@ fn test_main_auth_slot_cannot_be_switched() {
 }
 
 #[test]
+fn test_add_session_profile_account_creates_complete_profile_space() {
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path();
+
+    let session_json = serde_json::json!({
+        "user": {"email": "profile@example.com"},
+        "expires": "2030-12-31T10:00:00+08:00",
+        "accessToken": "at-profile",
+        "refreshToken": "rt-profile",
+        "idToken": "id-profile",
+        "accountId": "account-profile",
+        "lastRefresh": "2026-06-24T00:00:00+00:00",
+        "chatgptPlanType": "team"
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+
+    let result = add_session_profile_account(
+        home,
+        &AddSessionProfileAccountRequest {
+            account_id: "profile-session".to_string(),
+            session_json,
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap();
+
+    let account_home = home.join(".codex-profile-session");
+    assert_eq!(result.profile_id, "profile-session");
+    assert_eq!(result.home_path, account_home);
+    assert!(account_home.join("sessions").exists());
+    assert!(account_home.join("config.toml").exists());
+    assert!(account_home
+        .join(".managed-by-agent-workspace.json")
+        .exists());
+    assert!(home.join("bin/codex-profile-session").exists());
+
+    let auth: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(account_home.join("auth.json")).unwrap())
+            .unwrap();
+    assert_eq!(auth["auth_mode"], "chatgpt");
+    assert_eq!(auth["OPENAI_API_KEY"], serde_json::Value::Null);
+    assert_eq!(auth["tokens"]["access_token"], "at-profile");
+    assert_eq!(auth["tokens"]["refresh_token"], "rt-profile");
+    assert_eq!(auth["tokens"]["id_token"], "id-profile");
+    assert_eq!(auth["tokens"]["account_id"], "account-profile");
+    assert_eq!(auth["email"], "profile@example.com");
+    assert_eq!(auth["expired"], "2030-12-31T10:00:00+08:00");
+    assert_eq!(auth["last_refresh"], "2026-06-24T00:00:00+00:00");
+    assert_eq!(auth["chatgpt_plan_type"], "team");
+}
+
+#[test]
+fn test_add_session_profile_account_accepts_snake_case_session_json() {
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path();
+
+    add_session_profile_account(
+        home,
+        &AddSessionProfileAccountRequest {
+            account_id: "snake-session".to_string(),
+            session_json: serde_json::json!({
+                "access_token": "at-snake",
+                "id_token": "id-snake",
+                "account_id": "account-snake"
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap();
+
+    let auth: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(home.join(".codex-snake-session/auth.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(auth["tokens"]["access_token"], "at-snake");
+    assert_eq!(auth["tokens"]["id_token"], "id-snake");
+    assert_eq!(auth["tokens"]["account_id"], "account-snake");
+}
+
+#[test]
+fn test_add_session_profile_account_rejects_missing_tokens_and_conflicts() {
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path();
+
+    let missing_tokens = add_session_profile_account(
+        home,
+        &AddSessionProfileAccountRequest {
+            account_id: "bad-session".to_string(),
+            session_json: serde_json::json!({"user": {"email": "missing@example.com"}})
+                .as_object()
+                .unwrap()
+                .clone(),
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(missing_tokens.code, "INVALID_SESSION_JSON");
+
+    std::fs::create_dir_all(home.join(".codex-conflict")).unwrap();
+    let conflict = add_session_profile_account(
+        home,
+        &AddSessionProfileAccountRequest {
+            account_id: "conflict".to_string(),
+            session_json: serde_json::json!({"accessToken": "at-conflict"})
+                .as_object()
+                .unwrap()
+                .clone(),
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(conflict.code, "ACCOUNT_EXISTS");
+}
+
+#[test]
 fn test_add_duplicate_account_fails() {
     let tmp = TempDir::new().unwrap();
     let home = tmp.path();
@@ -361,4 +483,122 @@ fn test_add_duplicate_account_fails() {
     let result = add_pat_account(home, &req2);
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("already exists"));
+}
+
+#[test]
+fn test_delete_account_removes_profile_wrapper_note_and_cache() {
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path();
+
+    add_session_profile_account(
+        home,
+        &AddSessionProfileAccountRequest {
+            account_id: "delete-me".to_string(),
+            session_json: serde_json::json!({
+                "accessToken": "at-delete",
+                "idToken": "id-delete",
+                "accountId": "account-delete"
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap();
+    update_account_note(
+        home,
+        &AccountNoteUpdate {
+            profile_id: "delete-me".to_string(),
+            renewal_date: Some("2030-01-01".to_string()),
+            note: Some("remove this".to_string()),
+        },
+    )
+    .unwrap();
+    assert!(home.join(".codex-delete-me").exists());
+    assert!(home.join("bin/codex-delete-me").exists());
+
+    let result = delete_account(
+        home,
+        &DeleteAccountRequest {
+            profile_id: "delete-me".to_string(),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.profile_id, "delete-me");
+    assert_eq!(result.removed_home_path, home.join(".codex-delete-me"));
+    assert_eq!(
+        result.removed_wrapper_path,
+        Some(home.join("bin/codex-delete-me"))
+    );
+    assert!(!home.join(".codex-delete-me").exists());
+    assert!(!home.join("bin/codex-delete-me").exists());
+    assert!(list_accounts(home)
+        .unwrap()
+        .iter()
+        .all(|account| account.id != "delete-me"));
+    assert!(list_cached_accounts(home)
+        .unwrap()
+        .iter()
+        .all(|account| account.id != "delete-me"));
+    let notes: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(home.join(".config/agent-workspace/account-notes.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(notes["accounts"].get("delete-me").is_none());
+}
+
+#[test]
+fn test_delete_last_account_rewrites_empty_cache() {
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path();
+
+    add_session_profile_account(
+        home,
+        &AddSessionProfileAccountRequest {
+            account_id: "only".to_string(),
+            session_json: serde_json::json!({
+                "accessToken": "at-only",
+                "idToken": "id-only",
+                "accountId": "account-only"
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(list_accounts(home).unwrap().len(), 1);
+    assert_eq!(list_cached_accounts(home).unwrap().len(), 1);
+
+    delete_account(
+        home,
+        &DeleteAccountRequest {
+            profile_id: "only".to_string(),
+        },
+    )
+    .unwrap();
+
+    assert!(list_accounts(home).unwrap().is_empty());
+    assert!(list_cached_accounts(home).unwrap().is_empty());
+}
+
+#[test]
+fn test_delete_account_blocks_main_profile() {
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path();
+    std::fs::create_dir_all(home.join(".codex/sessions")).unwrap();
+
+    let error = delete_account(
+        home,
+        &DeleteAccountRequest {
+            profile_id: "main".to_string(),
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code, "MAIN_ACCOUNT_DELETE_BLOCKED");
+    assert!(home.join(".codex").exists());
 }

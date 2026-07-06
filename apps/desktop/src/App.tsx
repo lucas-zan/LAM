@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { useAppStore } from './stores/app';
 import { useAccountStore } from './stores/accounts';
@@ -8,7 +8,7 @@ import { useUsageStore } from './stores/usage';
 import { useProviderStore } from './stores/providers';
 import * as api from './lib/api';
 import * as Shell from './components/shell';
-import { IconClock, IconLogo, IconRefresh, IconPlus, IconSync } from './components/icons';
+import { IconClock, IconLogo, IconRefresh, IconPlus, IconSync, IconTrash } from './components/icons';
 import { SyncModal } from './components/sync-modal';
 import { ThemeToggle } from './components/theme-toggle';
 import { UIButton } from './components/ui-button';
@@ -66,6 +66,29 @@ function chatgptPlanTypeFromIdToken(idToken: unknown) {
   }
 }
 
+function usageSummaryRequestKey(req: UsageDashboardRequest) {
+  return JSON.stringify({
+    window: req.window,
+    includeArchived: req.includeArchived,
+    sortKey: req.sortKey,
+    sortDirection: req.sortDirection,
+    limit: req.limit ?? null,
+    scopeId: req.scopeId ?? null,
+    accountId: req.accountId ?? null,
+  });
+}
+
+function usageSummaryBaseRequestKey(req: UsageDashboardRequest) {
+  return JSON.stringify({
+    window: req.window,
+    includeArchived: req.includeArchived,
+    sortKey: req.sortKey,
+    sortDirection: req.sortDirection,
+    limit: req.limit ?? null,
+    accountId: req.accountId ?? null,
+  });
+}
+
 export function App() {
   const {
     route,
@@ -109,9 +132,16 @@ export function App() {
   } = useQuotaStore();
   const {
     summary: usageSummary,
+    scopes: usageScopes,
+    activeScopeId: activeUsageScopeId,
     refreshing: refreshingUsage,
+    sectionLoading: usageSectionLoading,
     loadUsageSummary,
+    loadUsageSection,
+    refreshUsageSections,
+    refreshUsageSection,
     refreshUsage,
+    selectUsageScope,
   } = useUsageStore();
   const {
     providers,
@@ -152,6 +182,12 @@ export function App() {
   const [newPatToken, setNewPatToken] = useState('');
   const [newPatSessionOpen, setNewPatSessionOpen] = useState(false);
   const [newPatSessionJson, setNewPatSessionJson] = useState('');
+  const [profileSessionImportOpen, setProfileSessionImportOpen] = useState(false);
+  const [profileSessionName, setProfileSessionName] = useState('');
+  const [profileSessionJson, setProfileSessionJson] = useState('');
+  const [profileSessionOverwriteWrapper, setProfileSessionOverwriteWrapper] = useState(false);
+  const [deleteAccountTarget, setDeleteAccountTarget] = useState<CodexAccount | null>(null);
+  const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
   const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
   const [createMode, setCreateMode] = useState<'oauth' | 'pat'>('oauth');
@@ -159,6 +195,8 @@ export function App() {
   const [usageTab, setUsageTab] = useState<'insights' | 'calls' | 'threads' | 'diagnostics'>('insights');
   const [usageWindow, setUsageWindow] = useState<UsageWindow>({ preset: 'all', from: null, to: null });
   const [includeArchivedUsage, setIncludeArchivedUsage] = useState(false);
+  const loadedUsageSummaryKeyRef = useRef<string | null>(null);
+  const defaultScopeUsageSummaryBaseKeyRef = useRef<string | null>(null);
 
   // Load auth mode and settings on mount
   useEffect(() => {
@@ -216,13 +254,36 @@ export function App() {
       sortKey: 'time',
       sortDirection: 'desc',
       limit: null,
+      scopeId: activeUsageScopeId,
     }),
-    [usageWindow, includeArchivedUsage],
+    [usageWindow, includeArchivedUsage, activeUsageScopeId],
   );
 
   useEffect(() => {
-    if (authMode === 'pat') void loadUsageSummary(usageRequest);
-  }, [authMode, loadUsageSummary, usageRequest]);
+    if (route !== 'usage') return;
+    const key = usageSummaryRequestKey(usageRequest);
+    const baseKey = usageSummaryBaseRequestKey(usageRequest);
+    if (loadedUsageSummaryKeyRef.current === key) return;
+    if (usageRequest.scopeId && defaultScopeUsageSummaryBaseKeyRef.current === baseKey) {
+      loadedUsageSummaryKeyRef.current = key;
+      return;
+    }
+    loadedUsageSummaryKeyRef.current = key;
+    if (!usageRequest.scopeId) {
+      defaultScopeUsageSummaryBaseKeyRef.current = baseKey;
+    }
+    void loadUsageSummary(usageRequest);
+  }, [loadUsageSummary, route, usageRequest]);
+
+  const setUsageScope = useCallback((scopeId: string) => {
+    const nextRequest = {
+      ...usageRequest,
+      scopeId,
+    };
+    loadedUsageSummaryKeyRef.current = usageSummaryRequestKey(nextRequest);
+    selectUsageScope(scopeId);
+    void loadUsageSummary(nextRequest);
+  }, [loadUsageSummary, selectUsageScope, usageRequest]);
 
   useEffect(() => {
     if (!api.inTauri()) return;
@@ -430,6 +491,33 @@ export function App() {
     await useSessionStore.getState().loadSessions(result.profileId);
   }
 
+  function deleteProfileAccount(account: CodexAccount) {
+    if (account.id === 'main') return;
+    setDeleteAccountTarget(account);
+  }
+
+  async function confirmDeleteProfileAccount() {
+    const account = deleteAccountTarget;
+    if (!account || account.id === 'main') return;
+    setDeletingAccountId(account.id);
+    try {
+      await api.deleteAccount({ profileId: account.id });
+      useAppStore.getState().setStatus(`Deleted ${account.displayName}`);
+      setDeleteAccountTarget(null);
+      await refresh();
+      const remaining = useAccountStore.getState().accounts;
+      const fallback = remaining.find((item) => item.id !== account.id)?.id ?? '';
+      if (fallback) {
+        setSelectedAccountId(fallback);
+        await useSessionStore.getState().loadSessions(fallback);
+      }
+    } catch (err) {
+      useAppStore.getState().setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingAccountId(null);
+    }
+  }
+
   async function handleSwitchAccount(account: CodexAccount) {
     if (authMode === 'pat') {
       try {
@@ -616,15 +704,31 @@ export function App() {
         </div>
         <div className="titlebarCenter">
           <div className="titlebarCenterCluster">
-            <label className="authModeToggle">
-              <span className="authModeLabel">PAT Mode</span>
+            <div className="authModeTabs">
               <input
                 type="checkbox"
+                aria-label="PAT Mode"
                 checked={authMode === 'pat'}
-                onChange={(e) => handleSetAuthMode(e.target.checked ? 'pat' : 'oauth')}
+                readOnly
+                style={{ display: 'none' }}
               />
-              <span className="toggleSlider"></span>
-            </label>
+              <div
+                role="tab"
+                aria-selected={authMode === 'oauth'}
+                className={`authModeTab ${authMode === 'oauth' ? 'active' : ''}`}
+                onClick={() => handleSetAuthMode('oauth')}
+              >
+                Profile
+              </div>
+              <div
+                role="tab"
+                aria-selected={authMode === 'pat'}
+                className={`authModeTab ${authMode === 'pat' ? 'active' : ''}`}
+                onClick={() => handleSetAuthMode('pat')}
+              >
+                PAT
+              </div>
+            </div>
           </div>
         </div>
         <div className="titlebarActions">
@@ -663,6 +767,7 @@ export function App() {
             select={setSelectedAccountId}
             openSync={openSyncModal}
             rename={openRenameAccountModal}
+            deleteAccount={deleteProfileAccount}
             login={(account) =>
               authMode === 'pat' && account.hasPersonalAccessToken
                 ? openUpdatePatSessionModal(account)
@@ -702,6 +807,8 @@ export function App() {
           <UsagePage
             authMode={authMode}
             summary={usageSummary}
+            scopes={usageScopes}
+            activeScopeId={activeUsageScopeId}
             refreshing={refreshingUsage}
             usageWindow={usageWindow}
             includeArchivedUsage={includeArchivedUsage}
@@ -710,6 +817,11 @@ export function App() {
             setUsagePreset={setUsagePreset}
             setUsageWindow={setUsageWindow}
             setIncludeArchivedUsage={setIncludeArchivedUsage}
+            setUsageScope={setUsageScope}
+            sectionLoading={usageSectionLoading}
+            loadUsageSection={(section, req) => void loadUsageSection(section, req)}
+            refreshUsageSections={(sections, req) => void refreshUsageSections(sections, req)}
+            refreshUsageSection={(section, req) => void refreshUsageSection(section, req)}
             refreshUsage={() => void refreshUsage(usageRequest)}
           />
         ) : null}
@@ -763,6 +875,47 @@ export function App() {
         </span>
       </div>
 
+      {deleteAccountTarget ? (
+        <Shell.Modal
+          title="Delete Account"
+          close={() => {
+            if (!deletingAccountId) setDeleteAccountTarget(null);
+          }}
+        >
+          <div className="deleteAccountConfirm">
+            <p>
+              Delete <strong>{deleteAccountTarget.displayName}</strong> and all local files under:
+            </p>
+            <code>{deleteAccountTarget.codexHome}</code>
+            <p>
+              This will terminate local processes using this profile, remove the profile directory,
+              remove its wrapper, and refresh the account list.
+            </p>
+            <div className="modalFoot">
+              <UIButton
+                type="button"
+                variant="ghost"
+                disabled={Boolean(deletingAccountId)}
+                onClick={() => setDeleteAccountTarget(null)}
+              >
+                Cancel
+              </UIButton>
+              <div className="modalFootPrimary">
+                <UIButton
+                  type="button"
+                  variant="danger"
+                  disabled={Boolean(deletingAccountId)}
+                  onClick={confirmDeleteProfileAccount}
+                >
+                  <IconTrash size={14} />
+                  {deletingAccountId ? 'Deleting...' : 'Delete Account'}
+                </UIButton>
+              </div>
+            </div>
+          </div>
+        </Shell.Modal>
+      ) : null}
+
       {modal === 'account' ? (
         <Shell.Modal title="Add Account" close={closeModal}>
           <div className="createModeTabs">
@@ -781,83 +934,185 @@ export function App() {
           </div>
 
           {createMode === 'oauth' ? (
-            <>
-              <div className="formGrid">
+            profileSessionImportOpen ? (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const name = profileSessionName.trim();
+                  if (!name) {
+                    useAppStore.getState().setError('Please provide an account name');
+                    return;
+                  }
+                  try {
+                    const sessionJson = JSON.parse(profileSessionJson);
+                    const result = await api.addSessionProfileAccount({
+                      accountId: name,
+                      sessionJson,
+                      overwriteWrapper: profileSessionOverwriteWrapper,
+                    });
+                    await refresh();
+                    setSelectedAccountId(result.profileId);
+                    await useSessionStore.getState().loadSessions(result.profileId);
+                    useAppStore
+                      .getState()
+                      .setStatus(`Imported session profile '${result.profileId}'`);
+                    closeModal();
+                  } catch (err) {
+                    useAppStore.getState().setError(
+                      err instanceof Error ? err.message : 'Failed to import session profile'
+                    );
+                  }
+                }}
+              >
+                <div className="formGrid">
+                  <label>
+                    Account name
+                    <input
+                      value={profileSessionName}
+                      onChange={(e) => setProfileSessionName(e.target.value)}
+                      placeholder="luna"
+                      required
+                    />
+                  </label>
+                </div>
                 <label>
-                  Account name
-                  <input
-                    value={accountReq.name}
-                    onChange={(e) => setAccountReq({ ...accountReq, name: e.target.value })}
+                  Session JSON
+                  <textarea
+                    value={profileSessionJson}
+                    onChange={(e) => setProfileSessionJson(e.target.value)}
+                    rows={12}
+                    placeholder='{"accessToken":"...","idToken":"..."}'
+                    required
                   />
                 </label>
-                <label>
-                  Copy config from
-                  <select
-                    value={accountReq.copyConfigFrom ?? ''}
-                    onChange={(e) =>
-                      setAccountReq({ ...accountReq, copyConfigFrom: e.target.value || null })
-                    }
-                  >
-                    <option value="">None</option>
-                    {accounts
-                      .filter((a) => a.hasConfig)
-                      .map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.id}
-                        </option>
-                      ))}
-                  </select>
+                <div className="previewBox">
+                  <div className="previewLine">
+                    <span>CODEX_HOME</span>
+                    <strong>~/.codex-{profileSessionName || 'name'}</strong>
+                  </div>
+                  <div className="previewLine">
+                    <span>Auth</span>
+                    <strong>Converted Codex auth.json</strong>
+                  </div>
+                </div>
+                <label className="syncOption">
+                  <input
+                    type="checkbox"
+                    checked={profileSessionOverwriteWrapper}
+                    onChange={(e) => setProfileSessionOverwriteWrapper(e.target.checked)}
+                  />
+                  <span>
+                    <strong>Overwrite wrapper if it exists</strong>
+                    <span>The imported profile remains a separate CODEX_HOME.</span>
+                  </span>
                 </label>
-              </div>
-              <div className="previewBox">
-                <div className="previewLine">
-                  <span>CODEX_HOME</span>
-                  <strong>~/.codex-{accountReq.name || 'name'}</strong>
-                </div>
-                <div className="previewLine">
-                  <span>Wrapper</span>
-                  <strong>~/bin/codex-{accountReq.name || 'name'}</strong>
-                </div>
-              </div>
-              <label className="syncOption">
-                <input
-                  type="checkbox"
-                  checked={accountReq.overwriteWrapper}
-                  onChange={(e) => setAccountReq({ ...accountReq, overwriteWrapper: e.target.checked })}
-                />
-                <span>
-                  <strong>Overwrite wrapper if it exists</strong>
-                  <span>Keeps CODEX_HOME untouched; only wrapper script is replaced.</span>
-                </span>
-              </label>
-              <Views.PlanView plan={plan} />
-              <div className="modalFoot">
-                <UIButton type="button" variant="ghost" onClick={closeModal}>
-                  Cancel
-                </UIButton>
-                <div className="modalFootPrimary">
+                <div className="modalFoot">
                   <UIButton
                     type="button"
-                    onClick={async () => setPlan(await api.planCreateAccount(accountReq))}
+                    variant="ghost"
+                    onClick={() => setProfileSessionImportOpen(false)}
                   >
-                    Dry Run
+                    Back
                   </UIButton>
-                  <UIButton
-                    type="button"
-                    variant="primary"
-                    disabled={!plan}
-                    onClick={async () => {
-                      await api.executeCreateAccount(accountReq);
-                      closeModal();
-                      setPlan(null);
-                      await refresh();
-                    }}
-                  >
-                    Create
-                  </UIButton>
+                  <div className="modalFootPrimary">
+                    <UIButton type="submit" variant="primary">
+                      <IconSync size={14} /> Import Profile
+                    </UIButton>
+                  </div>
                 </div>
-              </div>
-            </>
+              </form>
+            ) : (
+              <>
+                <div className="formGrid">
+                  <label>
+                    Account name
+                    <input
+                      value={accountReq.name}
+                      onChange={(e) => setAccountReq({ ...accountReq, name: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    Copy config from
+                    <select
+                      value={accountReq.copyConfigFrom ?? ''}
+                      onChange={(e) =>
+                        setAccountReq({ ...accountReq, copyConfigFrom: e.target.value || null })
+                      }
+                    >
+                      <option value="">None</option>
+                      {accounts
+                        .filter((a) => a.hasConfig)
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.id}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="previewBox">
+                  <div className="previewLine">
+                    <span>CODEX_HOME</span>
+                    <strong>~/.codex-{accountReq.name || 'name'}</strong>
+                  </div>
+                  <div className="previewLine">
+                    <span>Wrapper</span>
+                    <strong>~/bin/codex-{accountReq.name || 'name'}</strong>
+                  </div>
+                </div>
+                <label className="syncOption">
+                  <input
+                    type="checkbox"
+                    checked={accountReq.overwriteWrapper}
+                    onChange={(e) =>
+                      setAccountReq({ ...accountReq, overwriteWrapper: e.target.checked })
+                    }
+                  />
+                  <span>
+                    <strong>Overwrite wrapper if it exists</strong>
+                    <span>Keeps CODEX_HOME untouched; only wrapper script is replaced.</span>
+                  </span>
+                </label>
+                <Views.PlanView plan={plan} />
+                <div className="modalFoot">
+                  <UIButton type="button" variant="ghost" onClick={closeModal}>
+                    Cancel
+                  </UIButton>
+                  <div className="modalFootPrimary">
+                    <UIButton
+                      type="button"
+                      onClick={() => {
+                        setProfileSessionName(accountReq.name === 'luna' ? '' : accountReq.name);
+                        setProfileSessionJson('');
+                        setProfileSessionOverwriteWrapper(accountReq.overwriteWrapper);
+                        setProfileSessionImportOpen(true);
+                      }}
+                    >
+                      Import Session
+                    </UIButton>
+                    <UIButton
+                      type="button"
+                      onClick={async () => setPlan(await api.planCreateAccount(accountReq))}
+                    >
+                      Dry Run
+                    </UIButton>
+                    <UIButton
+                      type="button"
+                      variant="primary"
+                      disabled={!plan}
+                      onClick={async () => {
+                        await api.executeCreateAccount(accountReq);
+                        closeModal();
+                        setPlan(null);
+                        await refresh();
+                      }}
+                    >
+                      Create
+                    </UIButton>
+                  </div>
+                </div>
+              </>
+            )
           ) : (
             <div>
               <p className="modalHint">Upload auth.json, or paste a ChatGPT session when using PAT.</p>

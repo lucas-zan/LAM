@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { compareCalls, sortedThreadCalls, sortThreads } from './usage-dashboard-analysis';
 import { uncachedInputTokens } from './usage-dashboard-data';
 import { compareValues, formatTimestamp } from './usage-dashboard-format';
-import { estimateUsageCost, formatCost } from './usage-pricing';
+import { formatCost } from './usage-pricing';
 import { summarizeUsageDiagnostics } from './usage-diagnostics';
 import type { UsageCallRow, UsageThreadSummary } from './types';
 
@@ -90,21 +90,9 @@ describe('usage dashboard helpers', () => {
     expect(compareValues('a', 'b')).toBeLessThan(0);
   });
 
-  it('estimates cost from aggregate token counters and local rate cards', () => {
-    const estimate = estimateUsageCost(call({
-      model: 'gpt-5.3-codex',
-      inputTokens: 1_000_000,
-      cachedInputTokens: 250_000,
-      uncachedInputTokens: 750_000,
-      outputTokens: 100_000,
-    }));
-
-    expect(estimate.pricedTokens).toBe(1_100_000);
-    expect(estimate.unpricedTokens).toBe(0);
-    expect(estimate.pricingModel).toBe('gpt-5.3-codex');
-    expect(estimate.pricingEstimated).toBe(false);
-    expect(formatCost(estimate.estimatedCostUsd)).toMatch(/^\$/);
-    expect(estimateUsageCost(call({ model: 'codex-auto-review' })).pricingEstimated).toBe(true);
+  it('formats backend-estimated costs without a frontend rate card', () => {
+    expect(formatCost(12.345)).toBe('$12.35');
+    expect(formatCost(null)).toBe('$0.00');
   });
 
   it('summarizes diagnostics without raw content', () => {

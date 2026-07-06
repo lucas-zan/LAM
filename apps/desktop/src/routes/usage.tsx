@@ -1,10 +1,24 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { IconRefresh, IconUsage } from '../components/icons';
 import { UIButton } from '../components/ui-button';
-import type { UsageActivityBucket, UsageCallRow, UsageDashboard, UsageWindow, UsageWindowPreset } from '../lib/types';
-import { lowCacheThreads, sortThreads, sortedThreadCalls } from '../lib/usage-dashboard-analysis';
-import { formatCompactNumber, formatPercent, formatTimestamp, formatNumber } from '../lib/usage-dashboard-format';
-import { summarizeUsageDiagnostics } from '../lib/usage-diagnostics';
+import type {
+  UsageActivityBucket,
+  UsageCallRow,
+  UsageDashboard,
+  UsageDashboardRequest,
+  UsageScope,
+  UsageSection,
+  UsageSectionLoading,
+  UsageWindow,
+  UsageWindowPreset,
+} from '../lib/types';
+import { sortThreads } from '../lib/usage-dashboard-analysis';
+import {
+  formatCompactNumber,
+  formatPercent,
+  formatTimestamp,
+  formatNumber,
+} from '../lib/usage-dashboard-format';
 import { formatCost } from '../lib/usage-pricing';
 import { getCallRawContents, type CallRawContents } from '../lib/api';
 
@@ -12,6 +26,23 @@ type UsageTab = 'insights' | 'calls' | 'threads' | 'diagnostics';
 type LoadLimit = 5000 | 10000 | 20000 | 'all';
 type HeatmapMetric = 'calls' | 'tokens';
 type HeatmapMode = 'daily' | 'weekly' | 'cumulative';
+type ActivityRange = { startDate: Date; endDate: Date };
+type HeatmapCell =
+  | { isEmpty: true; key: string; value: number; title: string; label: string }
+  | { isEmpty: false; key: string; date: string; value: number; title: string; label: string };
+
+const visibleCallRowLimit = 50;
+const visibleThreadRowLimit = 100;
+const usageAutoSyncIntervalMs = 120_000;
+const idleSectionLoading: UsageSectionLoading = {
+  scopes: false,
+  overview: false,
+  activity: false,
+  insights: false,
+  calls: false,
+  threads: false,
+  diagnostics: false,
+};
 
 const loadLimitOptions: Array<[LoadLimit, string]> = [
   [5000, '5,000 calls'],
@@ -52,6 +83,8 @@ const sortOptions = [
 type Props = {
   authMode: 'oauth' | 'pat';
   summary: UsageDashboard | null;
+  scopes: UsageScope[];
+  activeScopeId: string | null;
   refreshing: boolean;
   usageWindow: UsageWindow;
   includeArchivedUsage: boolean;
@@ -60,6 +93,11 @@ type Props = {
   setUsagePreset: (preset: UsageWindowPreset) => void;
   setUsageWindow: (updater: (current: UsageWindow) => UsageWindow) => void;
   setIncludeArchivedUsage: (include: boolean) => void;
+  setUsageScope: (scopeId: string) => void;
+  sectionLoading: UsageSectionLoading;
+  loadUsageSection: (section: UsageSection, req?: UsageDashboardRequest) => void;
+  refreshUsageSections?: (sections: UsageSection[], req?: UsageDashboardRequest) => void;
+  refreshUsageSection: (section: UsageSection, req?: UsageDashboardRequest) => void;
   refreshUsage: () => void;
 };
 
@@ -90,22 +128,18 @@ function renderModel(model: string | null | undefined) {
 
 function renderEffort(effort: string | null | undefined) {
   const val = effort || 'unknown';
-  return (
-    <span className={`usageEffortTag usageEffortTag--${val.toLowerCase()}`}>
-      {val}
-    </span>
-  );
+  return <span className={`usageEffortTag usageEffortTag--${val.toLowerCase()}`}>{val}</span>;
 }
 
 function renderCacheRatio(ratio: number) {
   const percent = formatPercent(ratio);
-  let className = "usageCacheTag";
+  let className = 'usageCacheTag';
   if (ratio >= 0.8) {
-    className += " usageCacheTag--high";
+    className += ' usageCacheTag--high';
   } else if (ratio >= 0.3) {
-    className += " usageCacheTag--medium";
+    className += ' usageCacheTag--medium';
   } else {
-    className += " usageCacheTag--low";
+    className += ' usageCacheTag--low';
   }
   return <span className={className}>{percent}</span>;
 }
@@ -123,6 +157,84 @@ function formatTokenDelta(delta: number | null | undefined, percent: number | nu
   return `${sign}${formatCompactNumber(delta)} (${formatPercent(percent ?? 0)})`;
 }
 
+function tokenLabel(value: number | null | undefined) {
+  return `${formatCompactNumber(value)} tokens`;
+}
+
+function formatWholePercent(value: number) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function titleLabel(value: string) {
+  return value
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function skillLabel(call: UsageCallRow) {
+  return [call.subagentType, call.agentRole, call.agentNickname]
+    .map((value) => String(value ?? '').trim())
+    .find(Boolean);
+}
+
+function activityInsightRows(calls: UsageCallRow[], threads: UsageDashboard['topThreads']) {
+  const totalCalls = calls.length;
+  const fastEfforts = new Set(['fast', 'low', 'minimal', 'none']);
+  const fastCount = calls.filter((call) =>
+    fastEfforts.has(String(call.effort ?? '').trim().toLowerCase()),
+  ).length;
+  const effortCounts = new Map<string, { label: string; count: number }>();
+  const skills = new Set<string>();
+  let skillUses = 0;
+
+  calls.forEach((call) => {
+    const effort = String(call.effort ?? '').trim();
+    if (effort) {
+      const key = effort.toLowerCase();
+      const current = effortCounts.get(key) ?? { label: titleLabel(effort), count: 0 };
+      effortCounts.set(key, { ...current, count: current.count + 1 });
+    }
+    const skill = skillLabel(call);
+    if (skill) {
+      skillUses += 1;
+      skills.add(skill.toLowerCase());
+    }
+  });
+
+  const topEffort = [...effortCounts.values()].sort(
+    (left, right) => right.count - left.count || left.label.localeCompare(right.label),
+  )[0];
+  return [
+    ['Fast Mode', totalCalls ? formatWholePercent(fastCount / totalCalls) : '-'],
+    [
+      'Most used reasoning',
+      topEffort && totalCalls
+        ? `${topEffort.label} · ${formatWholePercent(topEffort.count / totalCalls)}`
+        : '-',
+    ],
+    ['Skills explored', formatNumber(skills.size)],
+    ['Total skills used', formatNumber(skillUses)],
+    ['Total threads', formatNumber(threads.length)],
+  ];
+}
+
+function diagnosticRows(diagnostics: UsageDashboard['diagnostics'], summary: UsageDashboard | null) {
+  const parserRows = Object.entries(diagnostics.parserDiagnostics)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => [titleLabel(key), formatNumber(value)]);
+  const unknownModels = summary?.pricingCoverage?.unknownModels ?? diagnostics.unknownModels ?? [];
+  return [
+    ['Skipped events', formatNumber(diagnostics.skippedEvents)],
+    ...parserRows,
+    ['Unknown models', unknownModels.length ? unknownModels.join(', ') : 'None'],
+    ['Priced token coverage', formatPercent(summary?.pricingCoverage?.pricedTokenRatio ?? 0)],
+    ['Parsed events', formatNumber(summary?.parsedEvents ?? 0)],
+    ['Last refresh error', diagnostics.lastRefreshError ?? 'None'],
+  ];
+}
+
 function heatmapValue(bucket: UsageActivityBucket, metric: HeatmapMetric, mode: HeatmapMode) {
   if (mode === 'cumulative') {
     return metric === 'calls' ? bucket.cumulativeCalls : bucket.cumulativeTokens;
@@ -130,7 +242,7 @@ function heatmapValue(bucket: UsageActivityBucket, metric: HeatmapMetric, mode: 
   return metric === 'calls' ? bucket.calls : bucket.tokens;
 }
 
-function heatmapBuckets(buckets: UsageActivityBucket[], metric: HeatmapMetric, mode: HeatmapMode) {
+function _heatmapBuckets(buckets: UsageActivityBucket[], metric: HeatmapMetric, mode: HeatmapMode) {
   if (mode !== 'weekly') {
     return buckets.map((bucket) => ({
       label: bucket.date.slice(5),
@@ -159,9 +271,98 @@ function heatmapLevel(value: number, max: number) {
   return Math.max(1, Math.ceil((value / max) * 4));
 }
 
+function dayString(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function utcDay(value: string) {
+  return new Date(`${value}T00:00:00Z`);
+}
+
+function validDay(value: string | null | undefined) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = utcDay(value);
+  return Number.isNaN(date.getTime()) ? null : value;
+}
+
+function addUtcDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function startOfUtcWeek(date: Date) {
+  const start = new Date(date);
+  const day = start.getUTCDay() || 7;
+  start.setUTCDate(start.getUTCDate() - day + 1);
+  return start;
+}
+
+function startOfUtcActivityWeek(date: Date) {
+  const start = new Date(date);
+  start.setUTCDate(start.getUTCDate() - start.getUTCDay());
+  return start;
+}
+
+function formatActivityDay(value: string, includeYear = false) {
+  const date = utcDay(value);
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(includeYear ? { year: 'numeric' as const } : {}),
+    timeZone: 'UTC',
+  }).format(date);
+}
+
+function resolveActivityRange(
+  usageWindow: UsageWindow,
+  buckets: UsageActivityBucket[],
+): ActivityRange {
+  const today = utcDay(dayString(new Date()));
+  const dates = buckets.map((bucket) => bucket.date).sort();
+  const firstBucket = dates[0] ?? null;
+  const lastBucket = dates[dates.length - 1] ?? null;
+
+  if (usageWindow.preset === 'custom') {
+    const from = validDay(usageWindow.from) ?? firstBucket ?? dayString(today);
+    const to =
+      validDay(usageWindow.to) ?? validDay(usageWindow.from) ?? lastBucket ?? dayString(today);
+    const startDate = utcDay(from <= to ? from : to);
+    const endDate = utcDay(from <= to ? to : from);
+    return { startDate, endDate };
+  }
+
+  if (usageWindow.preset === 'today') {
+    return { startDate: today, endDate: today };
+  }
+
+  if (usageWindow.preset === 'last-7-days') {
+    return { startDate: addUtcDays(today, -6), endDate: today };
+  }
+
+  if (usageWindow.preset === 'this-week') {
+    return { startDate: startOfUtcWeek(today), endDate: today };
+  }
+
+  if (usageWindow.preset === 'this-month') {
+    return {
+      startDate: new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)),
+      endDate: today,
+    };
+  }
+
+  const end = lastBucket && lastBucket > dayString(today) ? utcDay(lastBucket) : today;
+  return { startDate: addUtcDays(end, -364), endDate: end };
+}
+
+function heatmapColumnCount(cellCount: number) {
+  return Math.max(1, Math.ceil(cellCount / 7));
+}
+
 export function UsagePage({
-  authMode,
   summary,
+  scopes,
+  activeScopeId,
   refreshing,
   usageWindow,
   includeArchivedUsage,
@@ -170,36 +371,155 @@ export function UsagePage({
   setUsagePreset,
   setUsageWindow,
   setIncludeArchivedUsage,
+  setUsageScope,
+  sectionLoading,
+  loadUsageSection,
+  refreshUsageSections,
+  refreshUsageSection,
   refreshUsage,
 }: Props) {
   const [search, setSearch] = useState('');
+  const [showFilters, setShowFilters] = useState(() => {
+    const runtime = globalThis as typeof globalThis & {
+      process?: { env?: { NODE_ENV?: string } };
+    };
+    return runtime.process?.env?.NODE_ENV === 'test';
+  });
   const [model, setModel] = useState('');
   const [effort, setEffort] = useState('');
   const [pricingConfidence, setPricingConfidence] = useState('');
   const [sortKey, setSortKey] = useState('time');
   const [loadLimit, setLoadLimit] = useState<LoadLimit>(5000);
+  const [callOffset, setCallOffset] = useState(0);
+  const [threadOffset, setThreadOffset] = useState(0);
   const [heatmapMetric, setHeatmapMetric] = useState<HeatmapMetric>('calls');
   const [heatmapMode, setHeatmapMode] = useState<HeatmapMode>('daily');
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [activeDetailCall, setActiveDetailCall] = useState<UsageCallRow | null>(null);
   const [rawContents, setRawContents] = useState<CallRawContents | null>(null);
   const [isLoadingRaw, setIsLoadingRaw] = useState(false);
+  const loading = sectionLoading ?? idleSectionLoading;
+  const loadSection = loadUsageSection ?? (() => undefined);
+  const refreshSections =
+    refreshUsageSections ??
+    ((sections: UsageSection[], req?: UsageDashboardRequest) => {
+      sections.forEach((section) => refreshUsageSection(section, req));
+    });
+  const refreshSection = refreshUsageSection ?? (() => undefined);
+  const loadSectionRef = useRef(loadSection);
+  useEffect(() => {
+    loadSectionRef.current = loadSection;
+  }, [loadSection]);
+  useEffect(() => {
+    setCallOffset(0);
+    setThreadOffset(0);
+  }, [activeScopeId, effort, includeArchivedUsage, model, pricingConfidence, search, sortKey, usageWindow]);
+  const detailRequest = useMemo<UsageDashboardRequest>(
+    () => ({
+      window: usageWindow,
+      includeArchived: includeArchivedUsage,
+      scopeId: activeScopeId,
+      accountId: null,
+      search: search.trim() || null,
+      model: model || null,
+      effort: effort || null,
+      pricingConfidence: pricingConfidence || null,
+      sortKey,
+      sortDirection: 'desc',
+      limit:
+        usageTab === 'calls'
+          ? visibleCallRowLimit
+          : usageTab === 'threads'
+            ? visibleThreadRowLimit
+            : loadLimit === 'all'
+              ? null
+              : loadLimit,
+      offset: usageTab === 'calls' ? callOffset : usageTab === 'threads' ? threadOffset : 0,
+    }),
+    [
+      activeScopeId,
+      callOffset,
+      effort,
+      includeArchivedUsage,
+      loadLimit,
+      model,
+      pricingConfidence,
+      search,
+      sortKey,
+      threadOffset,
+      usageTab,
+      usageWindow,
+    ],
+  );
 
-  const calls = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    const rows = sortedThreadCalls(summary?.recentCalls ?? [], sortKey, 'desc')
-      .filter((call) => !needle || `${threadName(call)} ${call.cwd ?? ''} ${call.model ?? ''}`.toLowerCase().includes(needle))
-      .filter((call) => !model || call.model === model)
-      .filter((call) => !effort || call.effort === effort)
-      .filter((call) => !pricingConfidence || call.pricingConfidence === pricingConfidence);
-    return loadLimit === 'all' ? rows : rows.slice(0, loadLimit);
-  }, [summary?.recentCalls, search, model, effort, pricingConfidence, sortKey, loadLimit]);
+  useEffect(() => {
+    if (usageTab === 'insights') {
+      loadSectionRef.current('insights', detailRequest);
+    } else if (usageTab === 'calls') {
+      loadSectionRef.current('calls', detailRequest);
+    } else if (usageTab === 'threads') {
+      loadSectionRef.current('threads', detailRequest);
+    } else if (usageTab === 'diagnostics') {
+      loadSectionRef.current('diagnostics', detailRequest);
+    }
+  }, [detailRequest, usageTab]);
+
+  const activeRefreshSection: UsageSection =
+    usageTab === 'calls'
+      ? 'calls'
+      : usageTab === 'threads'
+        ? 'threads'
+        : usageTab === 'diagnostics'
+          ? 'diagnostics'
+          : 'insights';
+  const activeRefreshSections = useMemo<UsageSection[]>(
+    () => (usageTab === 'insights' ? ['insights', 'overview', 'activity'] : [activeRefreshSection]),
+    [activeRefreshSection, usageTab],
+  );
+  const activeRefreshLoading =
+    loading[activeRefreshSection] || (usageTab === 'insights' && loading.activity);
+  const refreshSectionsRef = useRef(refreshSections);
+  const detailRequestRef = useRef(detailRequest);
+  const activeRefreshSectionsRef = useRef(activeRefreshSections);
+  const refreshingRef = useRef(refreshing);
+  const loadingRef = useRef(loading);
+  useEffect(() => {
+    refreshSectionsRef.current = refreshSections;
+    detailRequestRef.current = detailRequest;
+    activeRefreshSectionsRef.current = activeRefreshSections;
+    refreshingRef.current = refreshing;
+    loadingRef.current = loading;
+  }, [activeRefreshSections, detailRequest, loading, refreshSections, refreshing]);
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      const sections = activeRefreshSectionsRef.current;
+      const isActiveSectionLoading = sections.some((section) => loadingRef.current[section]);
+      if (refreshingRef.current || isActiveSectionLoading) {
+        return;
+      }
+      refreshSectionsRef.current(sections, detailRequestRef.current);
+    }, usageAutoSyncIntervalMs);
+    return () => window.clearInterval(interval);
+  }, []);
+  const refreshActiveSection = () => {
+    if (usageTab === 'insights') {
+      refreshSections(activeRefreshSections, detailRequest);
+      return;
+    }
+    refreshSection(activeRefreshSection, detailRequest);
+  };
+
+  const calls = summary?.recentCalls ?? [];
 
   const selectedCall = calls.find((call) => call.recordId === selectedRecordId) ?? calls[0] ?? null;
+  const visibleCalls = calls;
+  const callsPage = summary?.callsPage ?? null;
   const threads = useMemo(() => {
     const rows = sortThreads(summary?.topThreads ?? [], 'total', 'desc');
-    return loadLimit === 'all' ? rows : rows.slice(0, loadLimit);
-  }, [summary?.topThreads, loadLimit]);
+    return rows;
+  }, [summary?.topThreads]);
+  const visibleThreads = threads;
+  const threadsPage = summary?.threadsPage ?? null;
   const diagnostics = summary?.diagnostics ?? {
     parserDiagnostics: {},
     skippedEvents: 0,
@@ -208,15 +528,31 @@ export function UsagePage({
     highContextCalls: [],
     lastRefreshError: null,
   };
+  const insightRows = useMemo(() => {
+    const insights = summary?.insights;
+    if (!insights) return activityInsightRows([], []);
+    return [
+      ['Fast Mode', insights.fastModePercent === null || insights.fastModePercent === undefined ? '-' : formatPercent(insights.fastModePercent)],
+      [
+        'Most used reasoning',
+        insights.mostUsedReasoning
+          ? `${insights.mostUsedReasoning} · ${formatPercent(insights.mostUsedReasoningPercent ?? 0)}`
+          : '-',
+      ],
+      ['Skills explored', formatNumber(insights.skillsExplored)],
+      ['Total skills used', formatNumber(insights.totalSkillsUsed)],
+      ['Total threads', formatNumber(insights.totalThreads)],
+    ];
+  }, [summary?.insights]);
+  const diagnosticsRows = useMemo(
+    () => diagnosticRows(diagnostics, summary),
+    [diagnostics, summary],
+  );
   const heatmapCells = useMemo(() => {
     const buckets = summary?.activityBuckets ?? [];
-    const endDate = buckets.length > 0
-      ? new Date(`${buckets[buckets.length - 1].date}T00:00:00Z`)
-      : new Date();
-    const startDate = new Date(endDate);
-    startDate.setUTCDate(startDate.getUTCDate() - 364);
+    const { startDate, endDate } = resolveActivityRange(usageWindow, buckets);
 
-    const bucketMap = new Map<string, typeof buckets[number]>();
+    const bucketMap = new Map<string, (typeof buckets)[number]>();
     buckets.forEach((b) => bucketMap.set(b.date, b));
 
     const fullBuckets: Array<{
@@ -229,6 +565,12 @@ export function UsagePage({
 
     let cumCalls = 0;
     let cumTokens = 0;
+    for (const bucket of buckets) {
+      if (bucket.date < dayString(startDate)) {
+        cumCalls = bucket.cumulativeCalls;
+        cumTokens = bucket.cumulativeTokens;
+      }
+    }
 
     const cur = new Date(startDate);
     while (cur <= endDate) {
@@ -257,7 +599,7 @@ export function UsagePage({
     }
 
     const firstDay = startDate.getUTCDay();
-    const items = [];
+    const items: HeatmapCell[] = [];
     for (let i = 0; i < firstDay; i++) {
       items.push({
         isEmpty: true,
@@ -269,16 +611,19 @@ export function UsagePage({
     }
 
     fullBuckets.forEach((b) => {
-      let value = 0;
-      if (heatmapMode === 'cumulative') {
-        value = heatmapMetric === 'calls' ? b.cumulativeCalls : b.cumulativeTokens;
-      } else if (heatmapMode === 'weekly') {
-        const d = new Date(`${b.date}T00:00:00Z`);
-        const day = d.getUTCDay() || 7;
-        const monday = new Date(d);
-        monday.setUTCDate(monday.getUTCDate() - day + 1);
+      const metricLabel = heatmapMetric === 'calls' ? 'calls' : 'tokens';
+      const date = new Date(`${b.date}T00:00:00Z`);
+      const weekStart = startOfUtcActivityWeek(date);
+      const weekStartKey = dayString(weekStart);
+      const value = (() => {
+        if (heatmapMode === 'cumulative') {
+          return heatmapMetric === 'calls' ? b.cumulativeCalls : b.cumulativeTokens;
+        }
+        if (heatmapMode !== 'weekly') {
+          return heatmapMetric === 'calls' ? b.calls : b.tokens;
+        }
         let weekVal = 0;
-        const temp = new Date(monday);
+        const temp = new Date(weekStart);
         for (let j = 0; j < 7; j++) {
           const tStr = temp.toISOString().slice(0, 10);
           const tExist = bucketMap.get(tStr);
@@ -287,23 +632,25 @@ export function UsagePage({
           }
           temp.setUTCDate(temp.getUTCDate() + 1);
         }
-        value = weekVal;
-      } else {
-        value = heatmapMetric === 'calls' ? b.calls : b.tokens;
-      }
+        return weekVal;
+      })();
+      const title =
+        heatmapMode === 'weekly'
+          ? `${formatCompactNumber(value)} ${metricLabel} on week of ${formatActivityDay(weekStartKey, true)}`
+          : `${formatCompactNumber(value)} ${metricLabel} on ${formatActivityDay(b.date)}`;
 
       items.push({
         isEmpty: false,
         key: b.date,
         date: b.date,
         value,
-        title: `${b.date}: ${formatCompactNumber(value)} ${heatmapMetric === 'calls' ? 'calls' : 'tokens'}`,
+        title,
         label: b.date.slice(5),
       });
     });
 
     return items;
-  }, [summary?.activityBuckets, heatmapMetric, heatmapMode]);
+  }, [summary?.activityBuckets, heatmapMetric, heatmapMode, usageWindow]);
 
   const maxHeatmapValue = useMemo(() => {
     const vals = heatmapCells.filter((c) => !c.isEmpty).map((c) => c.value);
@@ -313,27 +660,40 @@ export function UsagePage({
   const monthLabels = useMemo(() => {
     const labels: Array<{ text: string; colIndex: number }> = [];
     const buckets = summary?.activityBuckets ?? [];
-    if (!buckets.length) return [];
-
-    const endDate = new Date(`${buckets[buckets.length - 1].date}T00:00:00Z`);
-    const startDate = new Date(endDate);
-    startDate.setUTCDate(startDate.getUTCDate() - 364);
+    const { startDate, endDate } = resolveActivityRange(usageWindow, buckets);
 
     const firstDay = startDate.getUTCDay();
     let lastMonth = -1;
     let lastColIndex = -999;
+    const columns = heatmapColumnCount(
+      firstDay + Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1,
+    );
 
-    for (let col = 0; col < 53; col++) {
+    for (let col = 0; col < columns; col++) {
       const dayOffset = col * 7 - firstDay;
       const colDate = new Date(startDate);
       colDate.setUTCDate(colDate.getUTCDate() + dayOffset);
+      if (colDate > endDate) break;
 
       const month = colDate.getUTCMonth();
       if (month !== lastMonth) {
         if (col - lastColIndex >= 5) {
           lastMonth = month;
           lastColIndex = col;
-          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const monthNames = [
+            'Jan',
+            'Feb',
+            'Mar',
+            'Apr',
+            'May',
+            'Jun',
+            'Jul',
+            'Aug',
+            'Sep',
+            'Oct',
+            'Nov',
+            'Dec',
+          ];
           labels.push({
             text: monthNames[month],
             colIndex: col,
@@ -342,7 +702,8 @@ export function UsagePage({
       }
     }
     return labels;
-  }, [summary?.activityBuckets]);
+  }, [summary?.activityBuckets, usageWindow]);
+  const heatmapColumns = heatmapColumnCount(heatmapCells.length);
   const headlineStats = summary?.headlineStats ?? {
     lifetimeTokens: summary?.totalTokens ?? null,
     peakDailyTokens: null,
@@ -357,15 +718,6 @@ export function UsagePage({
   };
   const parityLabel = formatTokenDelta(headlineStats.tokenDelta, headlineStats.tokenDeltaPercent);
 
-  if (authMode !== 'pat') {
-    return (
-      <section className="usageDashboardPage usageEmptyState">
-        <h2>Usage</h2>
-        <p>Usage statistics are available in PAT mode.</p>
-      </section>
-    );
-  }
-
   return (
     <section className="usageDashboardPage">
       <header className="usageDashboardHeader">
@@ -375,19 +727,23 @@ export function UsagePage({
           </span>
           <div>
             <h2>Usage</h2>
-          <p>
-            Updated {formatTimestamp(summary?.refreshedAt, 'never')} · {summary?.scannedFiles ?? 0} files ·{' '}
-            {summary?.totalCalls ?? 0} calls
-            {parityLabel ? <> · Codex parity: {parityLabel}</> : null}
-          </p>
+            <p>
+              Updated {formatTimestamp(summary?.refreshedAt, 'never')} ·{' '}
+              {summary?.scannedFiles ?? 0} files · {summary?.totalCalls ?? 0} calls
+              {parityLabel ? <> · Codex parity: {parityLabel}</> : null}
+            </p>
           </div>
         </div>
         <div className="usageDashboardControls">
-          <label>
-            Load limit
+          <label className="usageControlLabelInline">
+            <span>Load limit</span>
             <select
               value={String(loadLimit)}
-              onChange={(event) => setLoadLimit(event.target.value === 'all' ? 'all' : (Number(event.target.value) as LoadLimit))}
+              onChange={(event) =>
+                setLoadLimit(
+                  event.target.value === 'all' ? 'all' : (Number(event.target.value) as LoadLimit),
+                )
+              }
             >
               {loadLimitOptions.map(([value, label]) => (
                 <option key={value} value={value}>
@@ -396,118 +752,219 @@ export function UsagePage({
               ))}
             </select>
           </label>
-          <UIButton type="button" size="sm" onClick={refreshUsage} disabled={refreshing}>
-            <IconRefresh size={14} /> {refreshing ? 'Refreshing' : 'Refresh'}
+          <UIButton
+            type="button"
+            size="md"
+            onClick={refreshActiveSection}
+            disabled={refreshing || activeRefreshLoading}
+          >
+            <IconRefresh size={14} />{' '}
+            {refreshing || activeRefreshLoading ? 'Refreshing' : 'Refresh'}
           </UIButton>
         </div>
       </header>
 
-      <div className="usageStatusChips">
-        {(summary?.statusChips ?? [
-          { label: 'Pricing source', value: 'local rate card' },
-          { label: 'Privacy mode', value: 'aggregate only' },
-          { label: 'Parser diagnostics', value: String(summary?.skippedEvents ?? 0) },
-        ]).map((chip) => (
-          <span key={chip.label}>
-            {chip.label}: <strong>{chip.value}</strong>
+      {scopes.length > 1 ? (
+        <div
+          className="usageScopeTabs usageScopeTabs--segmented"
+          role="tablist"
+          aria-label="Usage scope"
+        >
+          {scopes.map((scope, index) => {
+            const presetColors = ['#3b82f6', '#a855f7', '#10b981', '#f59e0b', '#ec4899', '#06b6d4'];
+            const color =
+              scope.id === 'all'
+                ? 'var(--accent)'
+                : (presetColors[(index - 1) % presetColors.length] ?? 'var(--accent)');
+            return (
+              <button
+                key={scope.id}
+                type="button"
+                role="tab"
+                aria-selected={scope.id === activeScopeId}
+                className={`usageScopeTab ${scope.id === activeScopeId ? 'usageScopeTab--active active' : ''}`}
+                style={
+                  {
+                    '--tab-color': color,
+                    '--tab-glow': `color-mix(in srgb, ${color} 12%, transparent)`,
+                  } as CSSProperties
+                }
+                onClick={() => setUsageScope(scope.id)}
+              >
+                {scope.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className="usageToolbar">
+        <div className="usageStatusChips">
+          {(
+            summary?.statusChips ?? [
+              { label: 'Pricing source', value: 'local rate card' },
+              { label: 'Privacy mode', value: 'aggregate only' },
+              { label: 'Parser diagnostics', value: String(summary?.skippedEvents ?? 0) },
+            ]
+          ).map((chip) => (
+            <span key={chip.label}>
+              {chip.label}: <strong>{chip.value}</strong>
+            </span>
+          ))}
+          <span>
+            Scope: <strong>{includeArchivedUsage ? 'All history' : 'Active'}</strong>
           </span>
-        ))}
-        <span>
-          Scope: <strong>{includeArchivedUsage ? 'All history' : 'Active'}</strong>
-        </span>
+        </div>
+
+        <button
+          type="button"
+          className={`usageFilterToggleBtn ${showFilters ? 'isActive' : ''}`}
+          onClick={() => setShowFilters(!showFilters)}
+        >
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            {showFilters ? (
+              <path d="M18 6L6 18M6 6l12 12" />
+            ) : (
+              <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />
+            )}
+          </svg>
+          <span>{showFilters ? 'Hide Filters' : 'Filters'}</span>
+        </button>
       </div>
 
-      <div className="usageFilterPanel">
-        <label>
-          Search
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Thread, cwd, model" />
-        </label>
-        <label>
-          Model
-          <select value={model} onChange={(event) => setModel(event.target.value)}>
-            <option value="">All models</option>
-            {(summary?.modelOptions ?? []).map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Reasoning effort
-          <select value={effort} onChange={(event) => setEffort(event.target.value)}>
-            <option value="">All efforts</option>
-            {(summary?.effortOptions ?? []).map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Pricing confidence
-          <select value={pricingConfidence} onChange={(event) => setPricingConfidence(event.target.value)}>
-            <option value="">All pricing</option>
-            {(summary?.pricingConfidenceOptions ?? []).map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Time preset
-          <select value={usageWindow.preset} onChange={(event) => setUsagePreset(event.target.value as UsageWindowPreset)}>
-            {timePresetOptions.map(([preset, label]) => (
-              <option key={preset} value={preset}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Custom start
-          <input
-            type="date"
-            value={usageWindow.from ?? ''}
-            onChange={(event) => setUsageWindow((current) => ({ ...current, preset: 'custom', from: event.target.value || null }))}
-          />
-        </label>
-        <label>
-          Custom end
-          <input
-            type="date"
-            value={usageWindow.to ?? ''}
-            onChange={(event) => setUsageWindow((current) => ({ ...current, preset: 'custom', to: event.target.value || null }))}
-          />
-        </label>
-        <label>
-          Sort
-          <select value={sortKey} onChange={(event) => setSortKey(event.target.value)}>
-            {sortOptions.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          History
-          <select
-            value={includeArchivedUsage ? 'all' : 'active'}
-            onChange={(event) => setIncludeArchivedUsage(event.target.value === 'all')}
-          >
-            <option value="active">Active sessions only</option>
-            <option value="all">All history</option>
-          </select>
-        </label>
-      </div>
+      {showFilters && (
+        <div className="usageFilterPanel">
+          <label>
+            Search
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Thread, cwd, model"
+            />
+          </label>
+          <label>
+            Model
+            <select value={model} onChange={(event) => setModel(event.target.value)}>
+              <option value="">All models</option>
+              {(summary?.modelOptions ?? []).map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Reasoning effort
+            <select value={effort} onChange={(event) => setEffort(event.target.value)}>
+              <option value="">All efforts</option>
+              {(summary?.effortOptions ?? []).map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Pricing confidence
+            <select
+              value={pricingConfidence}
+              onChange={(event) => setPricingConfidence(event.target.value)}
+            >
+              <option value="">All pricing</option>
+              {(summary?.pricingConfidenceOptions ?? []).map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Time preset
+            <select
+              value={usageWindow.preset}
+              onChange={(event) => setUsagePreset(event.target.value as UsageWindowPreset)}
+            >
+              {timePresetOptions.map(([preset, label]) => (
+                <option key={preset} value={preset}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Custom start
+            <input
+              type="date"
+              value={usageWindow.from ?? ''}
+              onChange={(event) =>
+                setUsageWindow((current) => ({
+                  ...current,
+                  preset: 'custom',
+                  from: event.target.value || null,
+                }))
+              }
+            />
+          </label>
+          <label>
+            Custom end
+            <input
+              type="date"
+              value={usageWindow.to ?? ''}
+              onChange={(event) =>
+                setUsageWindow((current) => ({
+                  ...current,
+                  preset: 'custom',
+                  to: event.target.value || null,
+                }))
+              }
+            />
+          </label>
+          <label>
+            Sort
+            <select value={sortKey} onChange={(event) => setSortKey(event.target.value)}>
+              {sortOptions.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            History
+            <select
+              value={includeArchivedUsage ? 'all' : 'active'}
+              onChange={(event) => setIncludeArchivedUsage(event.target.value === 'all')}
+            >
+              <option value="active">Active sessions only</option>
+              <option value="all">All history</option>
+            </select>
+          </label>
+        </div>
+      )}
 
       <div className="usageOverviewCardsGrid">
-        <div className="usageMetricCard">
+        <div className={`usageMetricCard ${refreshing || activeRefreshLoading ? 'isRefreshing' : ''}`}>
           <div className="cardHeader">
             <span className="cardIcon">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <rect x="2" y="2" width="20" height="8" rx="2" />
                 <rect x="2" y="14" width="20" height="8" rx="2" />
                 <line x1="6" y1="6" x2="6.01" y2="6" />
@@ -519,7 +976,7 @@ export function UsagePage({
           <div className="cardStats">
             <div className="statItem main">
               <span>Total Tokens</span>
-              <strong>{formatCompactNumber(summary?.totalTokens)} tok</strong>
+              <strong>{tokenLabel(summary?.totalTokens)}</strong>
             </div>
             <div className="statSubGrid">
               <div className="statItem">
@@ -542,10 +999,19 @@ export function UsagePage({
           </div>
         </div>
 
-        <div className="usageMetricCard">
+        <div className={`usageMetricCard ${refreshing || activeRefreshLoading ? 'isRefreshing' : ''}`}>
           <div className="cardHeader">
             <span className="cardIcon">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
               </svg>
             </span>
@@ -554,7 +1020,7 @@ export function UsagePage({
           <div className="cardStats">
             <div className="statItem main">
               <span>Peak Daily Tokens</span>
-              <strong>{formatCompactNumber(headlineStats.peakDailyTokens)} tok</strong>
+              <strong>{tokenLabel(headlineStats.peakDailyTokens)}</strong>
             </div>
             <div className="statSubGrid">
               <div className="statItem">
@@ -570,17 +1036,26 @@ export function UsagePage({
                 <strong>{formatCompactNumber(headlineStats.longestStreakDays)} days</strong>
               </div>
               <div className="statItem">
-                <span>Visible Calls</span>
-                <strong>{formatCompactNumber(calls.length)}</strong>
+                <span>Total Calls</span>
+                <strong>{formatCompactNumber(summary?.totalCalls ?? 0)}</strong>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="usageMetricCard">
+        <div className={`usageMetricCard ${refreshing || activeRefreshLoading ? 'isRefreshing' : ''}`}>
           <div className="cardHeader">
             <span className="cardIcon">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <line x1="12" y1="1" x2="12" y2="23" />
                 <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
               </svg>
@@ -608,14 +1083,28 @@ export function UsagePage({
           <div className="usageSegmentedControls">
             <div className="usageTabs usageTabs--compact" role="tablist" aria-label="Activity mode">
               {(['daily', 'weekly', 'cumulative'] as const).map((mode) => (
-                <button key={mode} type="button" className={heatmapMode === mode ? 'active' : ''} onClick={() => setHeatmapMode(mode)}>
+                <button
+                  key={mode}
+                  type="button"
+                  className={heatmapMode === mode ? 'active' : ''}
+                  onClick={() => setHeatmapMode(mode)}
+                >
                   {mode === 'daily' ? 'Daily' : mode === 'weekly' ? 'Weekly' : 'Cumulative'}
                 </button>
               ))}
             </div>
-            <div className="usageTabs usageTabs--compact" role="tablist" aria-label="Activity metric">
+            <div
+              className="usageTabs usageTabs--compact"
+              role="tablist"
+              aria-label="Activity metric"
+            >
               {(['calls', 'tokens'] as const).map((metric) => (
-                <button key={metric} type="button" className={heatmapMetric === metric ? 'active' : ''} onClick={() => setHeatmapMetric(metric)}>
+                <button
+                  key={metric}
+                  type="button"
+                  className={heatmapMetric === metric ? 'active' : ''}
+                  onClick={() => setHeatmapMetric(metric)}
+                >
                   {metric === 'calls' ? 'Calls' : 'Tokens'}
                 </button>
               ))}
@@ -623,29 +1112,37 @@ export function UsagePage({
           </div>
         </div>
         <div className="usageHeatmapContent">
+          {loading.activity ? <p className="usageSectionLoading">Loading activity...</p> : null}
           <div className="usageHeatmapMain">
             <div className="usageHeatmapGrid" aria-label="Usage activity heatmap">
-              {heatmapCells.length ? heatmapCells.map((cell) => {
-                if (cell.isEmpty) {
+              {heatmapCells.length ? (
+                heatmapCells.map((cell) => {
+                  if (cell.isEmpty) {
+                    return (
+                      <span key={cell.key} className="usageHeatmapCell usageHeatmapCell--empty" />
+                    );
+                  }
                   return (
                     <span
                       key={cell.key}
-                      className="usageHeatmapCell usageHeatmapCell--empty"
+                      className={`usageHeatmapCell usageHeatmapCell--${heatmapLevel(cell.value, maxHeatmapValue)}`}
+                      data-date={cell.date}
+                      data-testid={`usage-activity-${cell.date}`}
+                      data-tooltip={cell.title}
+                      tabIndex={0}
                     />
                   );
-                }
-                return (
-                  <span
-                    key={cell.key}
-                    className={`usageHeatmapCell usageHeatmapCell--${heatmapLevel(cell.value, maxHeatmapValue)}`}
-                    data-tooltip={cell.title}
-                    tabIndex={0}
-                  />
-                );
-              }) : <p className="usageEmpty">No activity buckets.</p>}
+                })
+              ) : (
+                <p className="usageEmpty">No activity buckets.</p>
+              )}
             </div>
             {monthLabels.length ? (
-              <div className="usageHeatmapMonths" aria-hidden="true">
+              <div
+                className="usageHeatmapMonths"
+                aria-hidden="true"
+                style={{ gridTemplateColumns: `repeat(${heatmapColumns}, 14px)` }}
+              >
                 {monthLabels.map((lbl, idx) => (
                   <span
                     key={idx}
@@ -666,7 +1163,10 @@ export function UsagePage({
                 <span className="legendColorCell usageHeatmapCell--0" title="No activity" />
                 <span className="legendColorCell usageHeatmapCell--1" title="Low activity" />
                 <span className="legendColorCell usageHeatmapCell--2" title="Medium-low activity" />
-                <span className="legendColorCell usageHeatmapCell--3" title="Medium-high activity" />
+                <span
+                  className="legendColorCell usageHeatmapCell--3"
+                  title="Medium-high activity"
+                />
                 <span className="legendColorCell usageHeatmapCell--4" title="High activity" />
               </div>
             </div>
@@ -676,7 +1176,7 @@ export function UsagePage({
             </div>
             <div className="insightItem">
               <label>Range Tokens</label>
-              <strong>{formatCompactNumber(summary?.totalTokens ?? 0)} tok</strong>
+              <strong>{tokenLabel(summary?.totalTokens ?? 0)}</strong>
             </div>
           </div>
         </div>
@@ -684,8 +1184,21 @@ export function UsagePage({
 
       <div className="usageTabs" role="tablist" aria-label="Usage views">
         {(['insights', 'calls', 'threads', 'diagnostics'] as const).map((tab) => (
-          <button key={tab} type="button" className={usageTab === tab ? 'active' : ''} onClick={() => setUsageTab(tab)}>
-            {tab === 'insights' ? 'Insights' : tab === 'calls' ? 'Calls' : tab === 'threads' ? 'Threads' : 'Diagnostics'}
+          <button
+            key={tab}
+            type="button"
+            role="tab"
+            aria-selected={usageTab === tab}
+            className={usageTab === tab ? 'active' : ''}
+            onClick={() => setUsageTab(tab)}
+          >
+            {tab === 'insights'
+              ? 'Insights'
+              : tab === 'calls'
+                ? 'Calls'
+                : tab === 'threads'
+                  ? 'Threads'
+                  : 'Diagnostics'}
           </button>
         ))}
       </div>
@@ -693,50 +1206,19 @@ export function UsagePage({
       {usageTab === 'insights' ? (
         <div className="usageDashboardGrid">
           <section className="usagePanel">
-            <h3>Needs attention</h3>
+            <h3>Activity insights</h3>
             <div className="usageTableWrap">
               <table className="usageTable">
-                <thead>
-                  <tr>
-                    <th className="usageColThread">Thread</th>
-                    <th>Calls</th>
-                    <th>Total</th>
-                    <th>Cache</th>
-                    <th>Cost</th>
-                  </tr>
-                </thead>
                 <tbody>
-                  {sortThreads(summary?.topThreads ?? [], 'attention', 'desc')
-                    .slice(0, 3)
-                    .map((thread) => (
-                      <tr key={thread.threadKey}>
-                        <td className="usageColThread" title={thread.threadLabel}>{thread.threadLabel}</td>
-                        <td>{thread.callCount}</td>
-                        <td>{formatCompactNumber(thread.totalTokens)}</td>
-                        <td>{renderCacheRatio(thread.cacheRatio)}</td>
-                        <td>{formatCost(thread.estimatedCostUsd)}</td>
-                      </tr>
-                    ))}
+                  {insightRows.map(([label, value]) => (
+                    <tr key={label}>
+                      <td>{label}</td>
+                      <td>{value}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
-            <div className="usagePresetList">
-              {(summary?.investigationPresets ?? []).map((preset) => (
-                <button key={preset.id} type="button">
-                  <strong>{preset.label}</strong>
-                  <span>{preset.description}</span>
-                </button>
-              ))}
-            </div>
-            {lowCacheThreads(summary?.topThreads ?? []).length ? (
-              <p className="usageNote">Low cache: {lowCacheThreads(summary?.topThreads ?? [])[0].threadLabel}</p>
-            ) : (
-              <p className="usageEmpty">No low-cache high-token threads.</p>
-            )}
-          </section>
-          <section className="usagePanel">
-            <h3>Diagnostics brief</h3>
-            <p className="usageNote">{summarizeUsageDiagnostics(diagnostics)}</p>
           </section>
         </div>
       ) : null}
@@ -744,6 +1226,7 @@ export function UsagePage({
       {usageTab === 'calls' ? (
         <div className="usageDashboardGrid usageDashboardGrid--wide">
           <div className="usageTableWrap">
+            {loading.calls ? <p className="usageSectionLoading">Loading calls...</p> : null}
             <table className="usageTable usageTable--wide">
               <thead>
                 <tr>
@@ -768,15 +1251,21 @@ export function UsagePage({
                     if (label === 'Time') className = 'usageColTime';
                     if (label === 'Thread') className = 'usageColThread';
                     if (label === 'Actions') className = 'usageColActions';
-                    return <th key={label} className={className}>{label}</th>;
+                    return (
+                      <th key={label} className={className}>
+                        {label}
+                      </th>
+                    );
                   })}
                 </tr>
               </thead>
               <tbody>
-                {calls.map((call) => (
+                {visibleCalls.map((call) => (
                   <tr key={call.recordId} onClick={() => setSelectedRecordId(call.recordId)}>
                     <td className="usageColTime">{formatTimestamp(call.eventTimestamp)}</td>
-                    <td className="usageColThread" title={threadName(call)}>{threadName(call)}</td>
+                    <td className="usageColThread" title={threadName(call)}>
+                      {threadName(call)}
+                    </td>
                     <td>{durationLabel(call)}</td>
                     <td>{call.previousRecordId ? 'linked' : 'none'}</td>
                     <td>{renderInitiator(call.callInitiator)}</td>
@@ -813,6 +1302,30 @@ export function UsagePage({
                     </td>
                   </tr>
                 ))}
+                {callsPage && (callsPage.total > visibleCalls.length || callsPage.offset > 0) ? (
+                  <tr className="usageTableNotice">
+                    <td colSpan={15}>
+                      Showing {callsPage.offset + 1}-{callsPage.offset + visibleCalls.length} of{' '}
+                      {callsPage.total} matching calls.
+                      <button
+                        type="button"
+                        disabled={callsPage.offset === 0 || loading.calls}
+                        onClick={() =>
+                          setCallOffset(Math.max(0, callsPage.offset - callsPage.limit))
+                        }
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!callsPage.nextOffset || loading.calls}
+                        onClick={() => setCallOffset(callsPage.nextOffset ?? callsPage.offset)}
+                      >
+                        Next
+                      </button>
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>
@@ -823,13 +1336,18 @@ export function UsagePage({
                 <dt>Record</dt>
                 <dd>{selectedCall.recordId}</dd>
                 <dt>Source</dt>
-                <dd>{selectedCall.sourceFile}:{selectedCall.lineNumber}</dd>
+                <dd>
+                  {selectedCall.sourceFile}:{selectedCall.lineNumber}
+                </dd>
                 <dt>Thread call</dt>
                 <dd>{selectedCall.threadCallIndex ?? 0}</dd>
                 <dt>Context</dt>
                 <dd>{formatPercent(selectedCall.contextWindowPercent ?? 0)}</dd>
                 <dt>Pricing</dt>
-                <dd>{selectedCall.pricingModel ?? 'unknown'} · {selectedCall.pricingConfidence ?? 'unknown'}</dd>
+                <dd>
+                  {selectedCall.pricingModel ?? 'unknown'} ·{' '}
+                  {selectedCall.pricingConfidence ?? 'unknown'}
+                </dd>
               </dl>
             ) : (
               <p className="usageEmpty">No calls loaded.</p>
@@ -840,6 +1358,7 @@ export function UsagePage({
 
       {usageTab === 'threads' ? (
         <div className="usageTableWrap">
+          {loading.threads ? <p className="usageSectionLoading">Loading threads...</p> : null}
           <table className="usageTable">
             <thead>
               <tr>
@@ -854,9 +1373,11 @@ export function UsagePage({
               </tr>
             </thead>
             <tbody>
-              {threads.map((thread) => (
+              {visibleThreads.map((thread) => (
                 <tr key={thread.threadKey}>
-                  <td className="usageColThread" title={thread.threadLabel}>{thread.threadLabel}</td>
+                  <td className="usageColThread" title={thread.threadLabel}>
+                    {thread.threadLabel}
+                  </td>
                   <td>{thread.callCount}</td>
                   <td>{thread.sessionCount ?? 1}</td>
                   <td>{formatCompactNumber(thread.totalTokens)}</td>
@@ -866,6 +1387,30 @@ export function UsagePage({
                   <td>{formatCost(thread.estimatedCostUsd)}</td>
                 </tr>
               ))}
+              {threadsPage && (threadsPage.total > visibleThreads.length || threadsPage.offset > 0) ? (
+                <tr className="usageTableNotice">
+                  <td colSpan={8}>
+                    Showing {threadsPage.offset + 1}-{threadsPage.offset + visibleThreads.length}{' '}
+                    of {threadsPage.total} threads.
+                    <button
+                      type="button"
+                      disabled={threadsPage.offset === 0 || loading.threads}
+                      onClick={() =>
+                        setThreadOffset(Math.max(0, threadsPage.offset - threadsPage.limit))
+                      }
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!threadsPage.nextOffset || loading.threads}
+                      onClick={() => setThreadOffset(threadsPage.nextOffset ?? threadsPage.offset)}
+                    >
+                      Next
+                    </button>
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </div>
@@ -873,9 +1418,23 @@ export function UsagePage({
 
       {usageTab === 'diagnostics' ? (
         <div className="usageDashboardGrid">
+          {loading.diagnostics ? (
+            <p className="usageSectionLoading">Loading diagnostics...</p>
+          ) : null}
           <section className="usagePanel">
             <h3>Parser diagnostics</h3>
-            <p className="usageNote">{summarizeUsageDiagnostics(diagnostics)}</p>
+            <div className="usageTableWrap">
+              <table className="usageTable">
+                <tbody>
+                  {diagnosticsRows.map(([label, value]) => (
+                    <tr key={label}>
+                      <td>{label}</td>
+                      <td>{value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
           <section className="usagePanel">
             <h3>Aggregate facts</h3>
@@ -888,7 +1447,7 @@ export function UsagePage({
                       <td>{value}</td>
                     </tr>
                   ))}
-                  {(summary?.pricingCoverage.unknownModels ?? []).map((value) => (
+                  {(summary?.pricingCoverage?.unknownModels ?? []).map((value) => (
                     <tr key={value}>
                       <td>unknown_model</td>
                       <td>{value}</td>
@@ -896,7 +1455,7 @@ export function UsagePage({
                   ))}
                   <tr>
                     <td>credit_coverage</td>
-                    <td>{formatPercent(summary?.pricingCoverage.pricedTokenRatio ?? 0)}</td>
+                    <td>{formatPercent(summary?.pricingCoverage?.pricedTokenRatio ?? 0)}</td>
                   </tr>
                   <tr>
                     <td>source_file_refresh_state</td>
@@ -914,7 +1473,9 @@ export function UsagePage({
           <div className="usageModal" onClick={(e) => e.stopPropagation()}>
             <div className="usageModalHeader">
               <h3>Call Details</h3>
-              <button className="usageModalClose" onClick={() => setActiveDetailCall(null)}>&times;</button>
+              <button className="usageModalClose" onClick={() => setActiveDetailCall(null)}>
+                &times;
+              </button>
             </div>
             <div className="usageModalBody">
               <div className="usageModalGrid">
@@ -928,12 +1489,14 @@ export function UsagePage({
                     <dt>Timestamp</dt>
                     <dd>{activeDetailCall.eventTimestamp}</dd>
                     <dt>Source Location</dt>
-                    <dd className="mono">{activeDetailCall.sourceFile}:{activeDetailCall.lineNumber}</dd>
+                    <dd className="mono">
+                      {activeDetailCall.sourceFile}:{activeDetailCall.lineNumber}
+                    </dd>
                     <dt>CWD</dt>
                     <dd className="mono">{activeDetailCall.cwd ?? '-'}</dd>
                   </dl>
                 </div>
-                
+
                 <div className="usageModalSection">
                   <h4>Model & Cost</h4>
                   <dl>
@@ -942,13 +1505,24 @@ export function UsagePage({
                     <dt>Effort</dt>
                     <dd>{activeDetailCall.effort ?? '-'}</dd>
                     <dt>Pricing Model</dt>
-                    <dd>{activeDetailCall.pricingModel ?? 'unknown'} ({activeDetailCall.pricingConfidence ?? 'unknown'})</dd>
+                    <dd>
+                      {activeDetailCall.pricingModel ?? 'unknown'} (
+                      {activeDetailCall.pricingConfidence ?? 'unknown'})
+                    </dd>
                     <dt>Estimated Cost</dt>
                     <dd className="cost-val">{formatCost(activeDetailCall.estimatedCostUsd)}</dd>
                     <dt>Context Window</dt>
-                    <dd>{activeDetailCall.modelContextWindow ? `${formatNumber(activeDetailCall.modelContextWindow)} tokens` : '-'}</dd>
+                    <dd>
+                      {activeDetailCall.modelContextWindow
+                        ? `${formatNumber(activeDetailCall.modelContextWindow)} tokens`
+                        : '-'}
+                    </dd>
                     <dt>Context Window %</dt>
-                    <dd>{activeDetailCall.contextWindowPercent ? formatPercent(activeDetailCall.contextWindowPercent) : '-'}</dd>
+                    <dd>
+                      {activeDetailCall.contextWindowPercent
+                        ? formatPercent(activeDetailCall.contextWindowPercent)
+                        : '-'}
+                    </dd>
                   </dl>
                 </div>
 
@@ -956,7 +1530,9 @@ export function UsagePage({
                   <h4>Tokens</h4>
                   <dl>
                     <dt>Total Tokens</dt>
-                    <dd><strong>{formatNumber(activeDetailCall.totalTokens)}</strong></dd>
+                    <dd>
+                      <strong>{formatNumber(activeDetailCall.totalTokens)}</strong>
+                    </dd>
                     <dt>Input Tokens</dt>
                     <dd>{formatNumber(activeDetailCall.inputTokens)}</dd>
                     <dt>Cached Input</dt>
@@ -996,7 +1572,9 @@ export function UsagePage({
                     ) : rawContents?.request ? (
                       <pre className="usageRawPre">{rawContents.request}</pre>
                     ) : (
-                      <div className="usageContentEmpty">No request content found in this call window.</div>
+                      <div className="usageContentEmpty">
+                        No request content found in this call window.
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1009,7 +1587,9 @@ export function UsagePage({
                     ) : rawContents?.assistant ? (
                       <pre className="usageRawPre">{rawContents.assistant}</pre>
                     ) : (
-                      <div className="usageContentEmpty">No assistant output found in this call window.</div>
+                      <div className="usageContentEmpty">
+                        No assistant output found in this call window.
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1022,7 +1602,9 @@ export function UsagePage({
                     ) : rawContents?.toolOutput ? (
                       <pre className="usageRawPre">{rawContents.toolOutput}</pre>
                     ) : (
-                      <div className="usageContentEmpty">No tool output found in this call window.</div>
+                      <div className="usageContentEmpty">
+                        No tool output found in this call window.
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1031,7 +1613,6 @@ export function UsagePage({
           </div>
         </div>
       )}
-
     </section>
   );
 }

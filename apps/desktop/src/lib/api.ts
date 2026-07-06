@@ -9,6 +9,8 @@ import type {
   CreateProviderRequest,
   CreateRelayRequest,
   CreateResult,
+  DeleteAccountRequest,
+  DeleteAccountResult,
   HealthCheck,
   OperationPlan,
   ProviderProfile,
@@ -31,12 +33,22 @@ import type {
   TokenExpirationStatus,
   AddPatAccountRequest,
   AddPatAccountResult,
+  AddSessionProfileAccountRequest,
   CpaExport,
   UsageRefreshResult,
+  UsageActivityBucket,
+  UsageCallRow,
   UsageDashboard,
+  UsageDashboardResponse,
   UsageDashboardRequest,
+  UsageDiagnostics,
+  UsageInsights,
+  UsagePagedResponse,
+  UsageRateCardEntry,
+  UsageScopesResponse,
   UsageSummary,
   UsageSummaryRequest,
+  UsageThreadSummary,
 } from "./types";
 
 export const inTauri = () => "__TAURI_INTERNALS__" in window;
@@ -77,6 +89,10 @@ export async function planRenameAccount(req: RenameAccountRequest): Promise<Oper
 
 export async function executeRenameAccount(req: RenameAccountRequest): Promise<RenameAccountResult> {
   return invoke<RenameAccountResult>("execute_rename_account", { req });
+}
+
+export async function deleteAccount(req: DeleteAccountRequest): Promise<DeleteAccountResult> {
+  return invoke<DeleteAccountResult>("delete_account", { req });
 }
 
 export async function updateAccountNote(req: AccountNoteUpdate): Promise<CodexAccount> {
@@ -182,15 +198,25 @@ const emptyUsageSummary = (): UsageSummary => ({
   activityBuckets: [],
   topThreads: [],
   recentCalls: [],
+  insights: null,
+  callsPage: null,
+  threadsPage: null,
 });
 
 const emptyUsageDashboard = (): UsageDashboard => ({
   ...emptyUsageSummary(),
+  scope: null,
   modelOptions: [],
   effortOptions: [],
   pricingConfidenceOptions: [],
   statusChips: [],
   investigationPresets: [],
+});
+
+const emptyUsageDashboardResponse = (): UsageDashboardResponse => ({
+  scopes: [{ id: 'total', label: 'Total', kind: 'total', accountId: null, isDefault: true }],
+  activeScopeId: 'total',
+  dashboard: emptyUsageDashboard(),
 });
 
 export async function refreshUsageIndex(includeArchived = false): Promise<UsageRefreshResult> {
@@ -216,6 +242,67 @@ export async function getUsageSummary(req: UsageSummaryRequest): Promise<UsageSu
 export async function getUsageDashboard(req: UsageDashboardRequest): Promise<UsageDashboard> {
   if (!inTauri()) return emptyUsageDashboard();
   return invoke<UsageDashboard>("get_usage_dashboard", { req });
+}
+
+export async function getUsageDashboardResponse(req: UsageDashboardRequest): Promise<UsageDashboardResponse> {
+  if (!inTauri()) return emptyUsageDashboardResponse();
+  return invoke<UsageDashboardResponse>("get_usage_dashboard_response", { req });
+}
+
+export async function getUsageScopes(req: UsageDashboardRequest): Promise<UsageScopesResponse> {
+  if (!inTauri()) {
+    const response = emptyUsageDashboardResponse();
+    return { scopes: response.scopes, activeScopeId: response.activeScopeId };
+  }
+  return invoke<UsageScopesResponse>("get_usage_scopes", { req });
+}
+
+export async function getUsageOverview(req: UsageDashboardRequest): Promise<UsageDashboard> {
+  if (!inTauri()) return emptyUsageDashboard();
+  return invoke<UsageDashboard>("get_usage_overview", { req });
+}
+
+export async function getUsageActivity(req: UsageDashboardRequest): Promise<UsageActivityBucket[]> {
+  if (!inTauri()) return [];
+  return invoke<UsageActivityBucket[]>("get_usage_activity", { req });
+}
+
+export async function getUsageInsights(req: UsageDashboardRequest): Promise<UsageInsights> {
+  if (!inTauri()) {
+    return {
+      fastModePercent: null,
+      mostUsedReasoning: null,
+      mostUsedReasoningPercent: null,
+      skillsExplored: 0,
+      totalSkillsUsed: 0,
+      totalThreads: 0,
+    };
+  }
+  return invoke<UsageInsights>("get_usage_insights", { req });
+}
+
+export async function getUsageCalls(
+  req: UsageDashboardRequest,
+): Promise<UsagePagedResponse<UsageCallRow>> {
+  if (!inTauri()) return { rows: [], total: 0, limit: req.limit ?? 0, offset: req.offset ?? 0 };
+  return invoke<UsagePagedResponse<UsageCallRow>>("get_usage_calls", { req });
+}
+
+export async function getUsageThreads(
+  req: UsageDashboardRequest,
+): Promise<UsagePagedResponse<UsageThreadSummary>> {
+  if (!inTauri()) return { rows: [], total: 0, limit: req.limit ?? 0, offset: req.offset ?? 0 };
+  return invoke<UsagePagedResponse<UsageThreadSummary>>("get_usage_threads", { req });
+}
+
+export async function getUsageRateCard(): Promise<UsageRateCardEntry[]> {
+  if (!inTauri()) return [];
+  return invoke<UsageRateCardEntry[]>("get_usage_rate_card");
+}
+
+export async function getUsageDiagnostics(req: UsageDashboardRequest): Promise<UsageDiagnostics> {
+  if (!inTauri()) return emptyUsageSummary().diagnostics;
+  return invoke<UsageDiagnostics>("get_usage_diagnostics", { req });
 }
 
 export async function resetUsageIndex(): Promise<void> {
@@ -321,6 +408,12 @@ export async function addPatAccount(
   req: AddPatAccountRequest
 ): Promise<AddPatAccountResult> {
   return invoke<AddPatAccountResult>("add_pat_account", { req });
+}
+
+export async function addSessionProfileAccount(
+  req: AddSessionProfileAccountRequest
+): Promise<CreateResult> {
+  return invoke<CreateResult>("add_session_profile_account", { req });
 }
 
 export async function switchToPatAccount(accountId: string): Promise<void> {

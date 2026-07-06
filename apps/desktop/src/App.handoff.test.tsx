@@ -26,6 +26,15 @@ vi.mock('./lib/api', () => ({
   listCachedQuotas: vi.fn(),
   getUsageSummary: vi.fn(),
   getUsageDashboard: vi.fn(),
+  getUsageDashboardResponse: vi.fn(),
+  getUsageScopes: vi.fn(),
+  getUsageOverview: vi.fn(),
+  getUsageActivity: vi.fn(),
+  getUsageInsights: vi.fn(),
+  getUsageCalls: vi.fn(),
+  getUsageThreads: vi.fn(),
+  getUsageDiagnostics: vi.fn(),
+  getUsageRateCard: vi.fn(),
   refreshUsageIndex: vi.fn(),
   resetUsageIndex: vi.fn(),
   compactUsageDb: vi.fn(),
@@ -40,6 +49,8 @@ vi.mock('./lib/api', () => ({
   exportCpaCredentials: vi.fn(),
   updatePatSessionAuth: vi.fn(),
   addPatAccount: vi.fn(),
+  addSessionProfileAccount: vi.fn(),
+  deleteAccount: vi.fn(),
   setAuthMode: vi.fn(),
   getAuthMode: vi.fn(() => Promise.resolve('oauth')),
   getHideDockIcon: vi.fn(() => Promise.resolve(false)),
@@ -248,7 +259,18 @@ beforeEach(() => {
   });
   useUsageStore.setState({
     summary: null,
+    scopes: [],
+    activeScopeId: null,
     refreshing: false,
+    sectionLoading: {
+      scopes: false,
+      overview: false,
+      activity: false,
+      insights: false,
+      calls: false,
+      threads: false,
+      diagnostics: false,
+    },
   });
   useProviderStore.setState({ providers: [] });
   vi.mocked(api.listCachedAccounts).mockResolvedValue([]);
@@ -262,6 +284,49 @@ beforeEach(() => {
   vi.mocked(api.listCachedQuotas).mockResolvedValue([]);
   vi.mocked(api.getUsageSummary).mockResolvedValue(usageSummary);
   vi.mocked(api.getUsageDashboard).mockResolvedValue(usageSummary);
+  vi.mocked(api.getUsageScopes).mockResolvedValue({
+    scopes: [
+      { id: 'total', label: 'Total', kind: 'total', isDefault: true },
+      { id: 'workspace:main', label: 'main', kind: 'workspace', isDefault: false },
+      { id: 'workspace:codex-c', label: 'codex-c', kind: 'workspace', accountId: 'codex-c', isDefault: false },
+    ],
+    activeScopeId: 'total',
+  });
+  vi.mocked(api.getUsageOverview).mockResolvedValue(usageSummary);
+  vi.mocked(api.getUsageActivity).mockResolvedValue(usageSummary.activityBuckets ?? []);
+  vi.mocked(api.getUsageInsights).mockResolvedValue({
+    fastModePercent: 0,
+    mostUsedReasoning: 'Medium',
+    mostUsedReasoningPercent: 1,
+    skillsExplored: 0,
+    totalSkillsUsed: 0,
+    totalThreads: usageSummary.topThreads.length,
+  });
+  vi.mocked(api.getUsageCalls).mockResolvedValue({
+    rows: usageSummary.recentCalls,
+    total: usageSummary.recentCalls.length,
+    limit: usageSummary.recentCalls.length,
+    offset: 0,
+    nextOffset: null,
+  });
+  vi.mocked(api.getUsageThreads).mockResolvedValue({
+    rows: usageSummary.topThreads,
+    total: usageSummary.topThreads.length,
+    limit: usageSummary.topThreads.length,
+    offset: 0,
+    nextOffset: null,
+  });
+  vi.mocked(api.getUsageDiagnostics).mockResolvedValue(usageSummary.diagnostics);
+  vi.mocked(api.getUsageRateCard).mockResolvedValue([]);
+  vi.mocked(api.getUsageDashboardResponse).mockResolvedValue({
+    scopes: [
+      { id: 'total', label: 'Total', kind: 'total', isDefault: true },
+      { id: 'workspace:main', label: 'main', kind: 'workspace', isDefault: false },
+      { id: 'workspace:codex-c', label: 'codex-c', kind: 'workspace', accountId: 'codex-c', isDefault: false },
+    ],
+    activeScopeId: 'total',
+    dashboard: usageSummary,
+  });
   vi.mocked(api.refreshUsageIndex).mockResolvedValue({
     scannedFiles: 18,
     parsedFiles: 1,
@@ -333,6 +398,18 @@ beforeEach(() => {
     email: 'nova@example.com',
     expired: '2030-12-31T23:59:59Z',
   });
+  vi.mocked(api.addSessionProfileAccount).mockResolvedValue({
+    profileId: 'nova',
+    homePath: '/tmp/.codex-nova',
+    wrapperPath: '/tmp/bin/codex-nova',
+    operations: [],
+    warnings: [],
+  });
+  vi.mocked(api.deleteAccount).mockResolvedValue({
+    profileId: 'codex-c',
+    removedHomePath: '/tmp/.codex-c',
+    removedWrapperPath: '/tmp/bin/codex-c',
+  });
   vi.mocked(api.setAuthMode).mockResolvedValue();
   vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
   Object.defineProperty(URL, 'createObjectURL', {
@@ -347,6 +424,35 @@ beforeEach(() => {
 });
 
 describe('App handoff modal', () => {
+  it('does not load Usage sections during normal app startup on Overview', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+
+    await screen.findByText('main');
+    await waitFor(() => expect(api.healthCheck).toHaveBeenCalled());
+    expect(api.getUsageScopes).not.toHaveBeenCalled();
+    expect(api.getUsageOverview).not.toHaveBeenCalled();
+    expect(api.getUsageActivity).not.toHaveBeenCalled();
+    expect(api.refreshUsageIndex).not.toHaveBeenCalled();
+  });
+
+  it('loads Usage first-screen sections only after navigating to Usage', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+
+    await screen.findByText('main');
+    expect(api.getUsageScopes).not.toHaveBeenCalled();
+
+    fireEvent.click(within(screen.getByRole('navigation', { name: /primary/i })).getByRole('button', { name: /usage/i }));
+
+    await waitFor(() => expect(api.getUsageScopes).toHaveBeenCalledTimes(1));
+    expect(api.getUsageOverview).toHaveBeenCalledTimes(1);
+    expect(api.getUsageActivity).toHaveBeenCalledTimes(1);
+    expect(api.refreshUsageIndex).not.toHaveBeenCalled();
+  });
+
   it('uses auth.json copy switching for every account in PAT mode', async () => {
     vi.mocked(api.getAuthMode).mockResolvedValue('pat');
     vi.mocked(api.listSessions).mockResolvedValue([]);
@@ -424,6 +530,40 @@ describe('App handoff modal', () => {
 
     await waitFor(() => expect(api.addPatAccount).toHaveBeenCalled());
     await waitFor(() => expect(refreshAccountQuota).toHaveBeenCalledWith('codex-nova'));
+  });
+
+  it('creates a full profile from pasted ChatGPT session JSON in Auth mode', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /new account/i }));
+    fireEvent.click(screen.getByRole('button', { name: /import session/i }));
+
+    fireEvent.change(screen.getByLabelText(/account name/i), {
+      target: { value: 'nova' },
+    });
+    fireEvent.change(screen.getByLabelText(/session json/i), {
+      target: {
+        value:
+          '{"accessToken":"at-new","idToken":"id-new","refreshToken":"rt-new","accountId":"account-new"}',
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /import profile/i }));
+
+    await waitFor(() =>
+      expect(api.addSessionProfileAccount).toHaveBeenCalledWith({
+        accountId: 'nova',
+        sessionJson: {
+          accessToken: 'at-new',
+          idToken: 'id-new',
+          refreshToken: 'rt-new',
+          accountId: 'account-new',
+        },
+        overwriteWrapper: false,
+      }),
+    );
+    expect(api.addPatAccount).not.toHaveBeenCalled();
   });
 
   it('creates a PAT token account from pasted ChatGPT session JSON', async () => {
@@ -592,6 +732,47 @@ describe('App handoff modal', () => {
     expect(api.switchToPatAccount).not.toHaveBeenCalled();
   });
 
+  it('deletes a profile account from the Auth mode account card after confirmation', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /delete codex-c/i }));
+
+    expect(await screen.findByRole('heading', { name: /delete account/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
+    await waitFor(() => expect(api.deleteAccount).toHaveBeenCalledWith({ profileId: 'codex-c' }));
+  });
+
+  it('does not delete a profile account when confirmation is cancelled', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /delete codex-c/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /cancel/i }));
+
+    expect(api.deleteAccount).not.toHaveBeenCalled();
+  });
+
+  it('does not show account delete actions in PAT mode', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByLabelText(/pat mode/i)).toHaveProperty('checked', true));
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    expect(within(accountCard!).queryByRole('button', { name: /delete codex-c/i })).toBeNull();
+  });
+
   it('uses the Login action as session auth update for PAT token accounts', async () => {
     vi.mocked(api.getAuthMode).mockResolvedValue('pat');
     vi.mocked(api.listSessions).mockResolvedValue([]);
@@ -692,12 +873,12 @@ describe('App handoff modal', () => {
 
     fireEvent.click(within(nav).getByRole('button', { name: /usage/i }));
 
-    expect(await screen.findByText('Visible Calls')).not.toBeNull();
+    expect(await screen.findByText('Total Calls')).not.toBeNull();
     expect(await screen.findByText('Estimated Cost')).not.toBeNull();
     expect(await screen.findByText('Codex Credits')).not.toBeNull();
     expect(screen.queryByText('Usage observed')).toBeNull();
     expect(document.querySelector('.modal')).toBeNull();
-    expect(api.getUsageDashboard).toHaveBeenCalled();
+    expect(api.getUsageOverview).toHaveBeenCalled();
   });
 
   it('opens the Usage page from a pending tray Stats route', async () => {
@@ -707,7 +888,7 @@ describe('App handoff modal', () => {
 
     render(<App />);
 
-    expect(await screen.findByText('Visible Calls')).not.toBeNull();
+    expect(await screen.findByText('Total Calls')).not.toBeNull();
     expect(await screen.findByText('Estimated Cost')).not.toBeNull();
     expect(api.takePendingRoute).toHaveBeenCalled();
   });
@@ -721,19 +902,49 @@ describe('App handoff modal', () => {
     await screen.findByText('codex-c');
     window.dispatchEvent(new Event('focus'));
 
-    expect(await screen.findByText('Visible Calls')).not.toBeNull();
+    expect(await screen.findByText('Total Calls')).not.toBeNull();
   });
 
-  it('renders a Usage empty state in OAuth mode', async () => {
+  it('renders scoped Usage dashboard in OAuth mode', async () => {
     vi.mocked(api.listSessions).mockResolvedValue([]);
 
     render(<App />);
     await screen.findByText('codex-c');
     fireEvent.click(screen.getByRole('button', { name: /usage/i }));
-    expect(await screen.findByText(/available in PAT mode/i)).not.toBeNull();
+    expect(await screen.findByText('Total Calls')).not.toBeNull();
+    expect(await screen.findByRole('tab', { name: 'Total' })).not.toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'codex-c' }));
+    await waitFor(() =>
+      expect(api.getUsageOverview).toHaveBeenCalledWith(
+        expect.objectContaining({ scopeId: 'workspace:codex-c' }),
+      ),
+    );
   });
 
-  it('refreshes the full-page usage dashboard manually', async () => {
+  it('selects a Usage scope tab immediately while scoped data is still loading', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    const pendingOverview = deferred<UsageDashboard>();
+    vi.mocked(api.getUsageOverview)
+      .mockResolvedValueOnce(usageSummary)
+      .mockReturnValueOnce(pendingOverview.promise);
+
+    render(<App />);
+    await screen.findByText('codex-c');
+    fireEvent.click(screen.getByRole('button', { name: /usage/i }));
+    await screen.findByRole('tab', { name: 'codex-c' });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'codex-c' }));
+
+    expect(screen.getByRole('tab', { name: 'codex-c' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Total' }).getAttribute('aria-selected')).toBe('false');
+    expect(api.getUsageOverview).toHaveBeenCalledWith(
+      expect.objectContaining({ scopeId: 'workspace:codex-c' }),
+    );
+
+    pendingOverview.resolve(usageSummary);
+  });
+
+  it('indexes usage before refreshing the active usage dashboard section manually', async () => {
     vi.mocked(api.getAuthMode).mockResolvedValue('pat');
     vi.mocked(api.listSessions).mockResolvedValue([]);
 
@@ -741,12 +952,10 @@ describe('App handoff modal', () => {
     const nav = await screen.findByRole('navigation', { name: /primary/i });
     fireEvent.click(within(nav).getByRole('button', { name: /usage/i }));
 
-    expect(await screen.findByText('workspace/LAM')).not.toBeNull();
     expect((await screen.findAllByText('$1.23')).length).toBeGreaterThan(0);
-    expect(await screen.findByText(/unknown_event_msg/i)).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }));
-    await waitFor(() => expect(api.refreshUsageIndex).toHaveBeenCalledWith(false));
-    expect(api.getUsageDashboard).toHaveBeenCalled();
+    await waitFor(() => expect(api.getUsageOverview).toHaveBeenCalled());
+    expect(api.refreshUsageIndex).toHaveBeenCalledWith(false);
   });
 
   it('reloads all-history usage and refreshes with the same archived flag', async () => {
@@ -760,12 +969,14 @@ describe('App handoff modal', () => {
     fireEvent.change(historySelect, { target: { value: 'all' } });
 
     await waitFor(() =>
-      expect(api.getUsageDashboard).toHaveBeenCalledWith(
+      expect(api.getUsageOverview).toHaveBeenCalledWith(
         expect.objectContaining({ includeArchived: true }),
       ),
     );
     fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }));
-    await waitFor(() => expect(api.refreshUsageIndex).toHaveBeenCalledWith(true));
+    await waitFor(() =>
+      expect(api.getUsageOverview).toHaveBeenCalledWith(expect.objectContaining({ includeArchived: true })),
+    );
   });
 
   it('wires usage time windows into summary requests', async () => {
@@ -823,7 +1034,7 @@ describe('App handoff modal', () => {
     fireEvent.change(screen.getByLabelText(/custom end/i), { target: { value: '2026-06-28' } });
 
     await waitFor(() =>
-      expect(api.getUsageDashboard).toHaveBeenCalledWith(
+      expect(api.getUsageOverview).toHaveBeenCalledWith(
         expect.objectContaining({
           window: expect.objectContaining({
             preset: 'custom',
@@ -833,16 +1044,16 @@ describe('App handoff modal', () => {
         }),
       ),
     );
-    expect(api.getUsageDashboard).toHaveBeenCalledWith(
+    expect(api.getUsageOverview).toHaveBeenCalledWith(
       expect.objectContaining({ window: expect.objectContaining({ preset: 'today' }) }),
     );
-    expect(api.getUsageDashboard).toHaveBeenCalledWith(
+    expect(api.getUsageOverview).toHaveBeenCalledWith(
       expect.objectContaining({ window: expect.objectContaining({ preset: 'this-week' }) }),
     );
-    expect(api.getUsageDashboard).toHaveBeenCalledWith(
+    expect(api.getUsageOverview).toHaveBeenCalledWith(
       expect.objectContaining({ window: expect.objectContaining({ preset: 'last-7-days' }) }),
     );
-    expect(api.getUsageDashboard).toHaveBeenCalledWith(
+    expect(api.getUsageOverview).toHaveBeenCalledWith(
       expect.objectContaining({ window: expect.objectContaining({ preset: 'this-month' }) }),
     );
   });
@@ -856,7 +1067,34 @@ describe('App handoff modal', () => {
     fireEvent.click(await screen.findByRole('button', { name: /reset usage statistics/i }));
 
     await waitFor(() => expect(api.resetUsageIndex).toHaveBeenCalled());
-    await waitFor(() => expect(api.getUsageDashboard).toHaveBeenCalled());
+    await waitFor(() => expect(api.getUsageOverview).toHaveBeenCalled());
+  });
+
+  it('shows the backend usage rate card in settings', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    vi.mocked(api.getUsageRateCard).mockResolvedValue([
+      {
+        model: 'gpt-5',
+        pricingModel: 'gpt-5',
+        contextWindow: 'all',
+        estimated: false,
+        inputPerMillion: 4.375,
+        cachedInputPerMillion: 0.4375,
+        outputPerMillion: 35,
+        notes: null,
+      },
+    ]);
+    useAppStore.setState({ route: 'settings' });
+
+    render(<App />);
+
+    expect(await screen.findByText('Usage rate card')).toBeTruthy();
+    expect((await screen.findAllByText('gpt-5')).length).toBeGreaterThan(0);
+    expect(await screen.findByText('$4.38')).toBeTruthy();
+    expect(await screen.findByText('$35.00')).toBeTruthy();
+    const rateCardTable = document.querySelector('.usageRateCardTable');
+    expect(rateCardTable?.closest('.rows')).toBeNull();
   });
 
   it('loads PAT usage without creating a React-owned usage interval', async () => {
@@ -864,8 +1102,11 @@ describe('App handoff modal', () => {
     vi.mocked(api.listSessions).mockResolvedValue([]);
 
     render(<App />);
+    await screen.findByText('main');
 
-    await waitFor(() => expect(api.getUsageDashboard).toHaveBeenCalled());
+    fireEvent.click(within(screen.getByRole('navigation', { name: /primary/i })).getByRole('button', { name: /usage/i }));
+
+    await waitFor(() => expect(api.getUsageOverview).toHaveBeenCalled());
     expect((useUsageStore.getState() as unknown as { _intervalId?: number | null })._intervalId).toBeUndefined();
   });
 });

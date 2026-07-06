@@ -12,10 +12,38 @@ pub struct AntigravityModelQuota {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct AntigravityQuotaBucket {
+    pub bucket_id: Option<String>,
+    pub display_name: String,
+    pub description: Option<String>,
+    pub window: Option<String>,
+    pub remaining_fraction: Option<f64>,
+    pub reset_time: Option<String>,
+    pub disabled: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AntigravityQuotaGroup {
+    pub display_name: String,
+    pub description: Option<String>,
+    pub buckets: Vec<AntigravityQuotaBucket>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AntigravityQuotaResponse {
     pub ok: bool,
     pub models: Vec<AntigravityModelQuota>,
+    pub description: Option<String>,
+    pub groups: Vec<AntigravityQuotaGroup>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct AntigravityQuotaSummary {
+    description: Option<String>,
+    groups: Vec<AntigravityQuotaGroup>,
 }
 
 /// A discovered Antigravity language server process.
@@ -145,21 +173,20 @@ fn find_listening_ports(pid: u32) -> Result<Vec<u16>, AppError> {
     Ok(ports)
 }
 
-/// Try to query the Antigravity language server for model quota info.
+/// POST a JSON payload to the Antigravity language server.
 /// Tries HTTPS first (with -k for self-signed certs), then falls back to HTTP.
-fn query_antigravity_quota(
+fn post_language_server_json(
     port: u16,
     csrf_token: &str,
-) -> Result<Vec<AntigravityModelQuota>, AppError> {
-    // The language server uses HTTPS with a self-signed certificate.
-    // We try HTTPS first; if that fails, we fall back to HTTP.
+    method: &str,
+) -> Result<String, AppError> {
     let schemes = ["https", "http"];
     let mut last_err = None;
 
     for scheme in &schemes {
         let url = format!(
-            "{}://127.0.0.1:{}/exa.language_server_pb.LanguageServerService/GetUserStatus",
-            scheme, port
+            "{}://127.0.0.1:{}/exa.language_server_pb.LanguageServerService/{}",
+            scheme, port, method
         );
 
         let mut cmd = Command::new("curl");
@@ -210,87 +237,168 @@ fn query_antigravity_quota(
             continue;
         }
 
-        let body = String::from_utf8_lossy(&output.stdout);
-
-        // Try to parse the JSON response
-        let v: serde_json::Value = match serde_json::from_str(&body) {
-            Ok(val) => val,
-            Err(err) => {
-                last_err = Some(AppError::new(
-                    "PARSE_JSON_FAILED",
-                    format!(
-                        "Failed to parse JSON from {} response: {}. Body (first 200 chars): {}",
-                        scheme,
-                        err,
-                        &body[..body.len().min(200)]
-                    ),
-                ));
-                continue;
-            }
-        };
-
-        // The response structure is:
-        //   { "userStatus": { "cascadeModelConfigData": { "clientModelConfigs": [...] } } }
-        // Try the nested path first, then fall back to the flat path
-        let configs = v
-            .pointer("/userStatus/cascadeModelConfigData/clientModelConfigs")
-            .or_else(|| v.pointer("/cascadeModelConfigData/clientModelConfigs"))
-            .and_then(|v| v.as_array());
-
-        let configs = match configs {
-            Some(c) => c,
-            None => {
-                last_err = Some(AppError::new(
-                    "NO_MODELS_FOUND",
-                    format!(
-                        "No clientModelConfigs in {} response. Top-level keys: {:?}",
-                        scheme,
-                        v.as_object()
-                            .map(|o| o.keys().collect::<Vec<_>>())
-                            .unwrap_or_default()
-                    ),
-                ));
-                continue;
-            }
-        };
-
-        let mut models = Vec::new();
-        for config in configs {
-            let label = config
-                .get("label")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if label.is_empty() {
-                continue;
-            }
-            let remaining_fraction = config
-                .pointer("/quotaInfo/remainingFraction")
-                .and_then(|v| v.as_f64());
-            let reset_time = config
-                .pointer("/quotaInfo/resetTime")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            models.push(AntigravityModelQuota {
-                label,
-                remaining_fraction,
-                reset_time,
-            });
-        }
-
-        if models.is_empty() {
-            last_err = Some(AppError::new(
-                "NO_MODELS_FOUND",
-                format!("clientModelConfigs array was empty via {}", scheme),
-            ));
-            continue;
-        }
-
-        return Ok(models);
+        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
     }
 
-    Err(last_err
-        .unwrap_or_else(|| AppError::new("UNKNOWN", "Failed to query quota via any scheme")))
+    Err(last_err.unwrap_or_else(|| {
+        AppError::new(
+            "UNKNOWN",
+            format!("Failed to query {} via any scheme", method),
+        )
+    }))
+}
+
+fn parse_antigravity_model_quota_response(
+    body: &str,
+) -> Result<Vec<AntigravityModelQuota>, AppError> {
+    let v: serde_json::Value = serde_json::from_str(body).map_err(|err| {
+        AppError::new(
+            "PARSE_JSON_FAILED",
+            format!(
+                "Failed to parse GetUserStatus JSON: {}. Body (first 200 chars): {}",
+                err,
+                &body[..body.len().min(200)]
+            ),
+        )
+    })?;
+
+    let configs = v
+        .pointer("/userStatus/cascadeModelConfigData/clientModelConfigs")
+        .or_else(|| v.pointer("/cascadeModelConfigData/clientModelConfigs"))
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            AppError::new(
+                "NO_MODELS_FOUND",
+                format!(
+                    "No clientModelConfigs in GetUserStatus response. Top-level keys: {:?}",
+                    v.as_object()
+                        .map(|o| o.keys().collect::<Vec<_>>())
+                        .unwrap_or_default()
+                ),
+            )
+        })?;
+
+    let models: Vec<_> = configs.iter().filter_map(parse_model_quota).collect();
+
+    if models.is_empty() {
+        return Err(AppError::new(
+            "NO_MODELS_FOUND",
+            "clientModelConfigs array was empty",
+        ));
+    }
+
+    Ok(models)
+}
+
+fn parse_model_quota(config: &serde_json::Value) -> Option<AntigravityModelQuota> {
+    let label = config.get("label")?.as_str()?.to_string();
+    if label.is_empty() {
+        return None;
+    }
+
+    Some(AntigravityModelQuota {
+        label,
+        remaining_fraction: config
+            .pointer("/quotaInfo/remainingFraction")
+            .and_then(|v| v.as_f64()),
+        reset_time: config
+            .pointer("/quotaInfo/resetTime")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    })
+}
+
+fn parse_quota_summary_response(body: &str) -> Result<AntigravityQuotaSummary, AppError> {
+    let v: serde_json::Value = serde_json::from_str(body).map_err(|err| {
+        AppError::new(
+            "PARSE_JSON_FAILED",
+            format!(
+                "Failed to parse RetrieveUserQuotaSummary JSON: {}. Body (first 200 chars): {}",
+                err,
+                &body[..body.len().min(200)]
+            ),
+        )
+    })?;
+
+    let description = v
+        .pointer("/response/description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let groups = v
+        .pointer("/response/groups")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| AppError::new("NO_QUOTA_GROUPS_FOUND", "No quota groups found"))?;
+
+    let groups: Vec<_> = groups.iter().filter_map(parse_quota_group).collect();
+    if groups.is_empty() {
+        return Err(AppError::new(
+            "NO_QUOTA_GROUPS_FOUND",
+            "Quota groups were empty",
+        ));
+    }
+
+    Ok(AntigravityQuotaSummary {
+        description,
+        groups,
+    })
+}
+
+fn parse_quota_group(group: &serde_json::Value) -> Option<AntigravityQuotaGroup> {
+    let display_name = group.get("displayName")?.as_str()?.to_string();
+    let buckets = group
+        .get("buckets")
+        .and_then(|v| v.as_array())?
+        .iter()
+        .filter_map(parse_quota_bucket)
+        .collect::<Vec<_>>();
+
+    if display_name.is_empty() || buckets.is_empty() {
+        return None;
+    }
+
+    Some(AntigravityQuotaGroup {
+        display_name,
+        description: optional_string(group, "description"),
+        buckets,
+    })
+}
+
+fn parse_quota_bucket(bucket: &serde_json::Value) -> Option<AntigravityQuotaBucket> {
+    let display_name = bucket.get("displayName")?.as_str()?.to_string();
+    if display_name.is_empty() {
+        return None;
+    }
+
+    Some(AntigravityQuotaBucket {
+        bucket_id: optional_string(bucket, "bucketId"),
+        display_name,
+        description: optional_string(bucket, "description"),
+        window: optional_string(bucket, "window"),
+        remaining_fraction: bucket.get("remainingFraction").and_then(|v| v.as_f64()),
+        reset_time: optional_string(bucket, "resetTime"),
+        disabled: bucket.get("disabled").and_then(|v| v.as_bool()),
+    })
+}
+
+fn optional_string(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
+fn query_antigravity_quota(
+    port: u16,
+    csrf_token: &str,
+) -> Result<Vec<AntigravityModelQuota>, AppError> {
+    let body = post_language_server_json(port, csrf_token, "GetUserStatus")?;
+    parse_antigravity_model_quota_response(&body)
+}
+
+fn query_antigravity_quota_summary(
+    port: u16,
+    csrf_token: &str,
+) -> Result<AntigravityQuotaSummary, AppError> {
+    let body = post_language_server_json(port, csrf_token, "RetrieveUserQuotaSummary")?;
+    parse_quota_summary_response(&body)
 }
 
 pub fn get_live_antigravity_quota() -> Result<AntigravityQuotaResponse, AppError> {
@@ -300,6 +408,8 @@ pub fn get_live_antigravity_quota() -> Result<AntigravityQuotaResponse, AppError
             return Ok(AntigravityQuotaResponse {
                 ok: false,
                 models: Vec::new(),
+                description: None,
+                groups: Vec::new(),
                 error: Some(format!("Failed to find process: {}", err.message)),
             });
         }
@@ -327,16 +437,36 @@ pub fn get_live_antigravity_quota() -> Result<AntigravityQuotaResponse, AppError
         }
 
         for port in ports {
-            match query_antigravity_quota(port, &proc.csrf_token) {
-                Ok(models) => {
+            let summary = query_antigravity_quota_summary(port, &proc.csrf_token);
+            let models = query_antigravity_quota(port, &proc.csrf_token);
+
+            match (summary, models) {
+                (Ok(summary), models_result) => {
                     return Ok(AntigravityQuotaResponse {
                         ok: true,
-                        models,
+                        models: models_result.unwrap_or_default(),
+                        description: summary.description,
+                        groups: summary.groups,
                         error: None,
                     });
                 }
-                Err(err) => {
-                    last_err = Some(err);
+                (Err(_summary_err), Ok(models)) => {
+                    return Ok(AntigravityQuotaResponse {
+                        ok: true,
+                        models,
+                        description: None,
+                        groups: Vec::new(),
+                        error: None,
+                    });
+                }
+                (Err(summary_err), Err(model_err)) => {
+                    last_err = Some(AppError::new(
+                        "ANTIGRAVITY_QUOTA_QUERY_FAILED",
+                        format!(
+                            "summary failed: {}; models failed: {}",
+                            summary_err.message, model_err.message
+                        ),
+                    ));
                 }
             }
         }
@@ -345,6 +475,8 @@ pub fn get_live_antigravity_quota() -> Result<AntigravityQuotaResponse, AppError
     Ok(AntigravityQuotaResponse {
         ok: false,
         models: Vec::new(),
+        description: None,
+        groups: Vec::new(),
         error: Some(format!(
             "Failed to query all ports. Last error: {}",
             last_err
@@ -352,4 +484,65 @@ pub fn get_live_antigravity_quota() -> Result<AntigravityQuotaResponse, AppError
                 .unwrap_or_else(|| "Unknown".to_string())
         )),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn antigravity_quota_summary_parses_weekly_and_five_hour_buckets() {
+        let body = r#"{
+          "response": {
+            "description": "Within each group, models share a weekly limit and a 5-hour limit.",
+            "groups": [
+              {
+                "displayName": "Gemini Models",
+                "description": "Models within this group: Gemini Flash, Gemini Pro",
+                "buckets": [
+                  {
+                    "bucketId": "gemini-weekly",
+                    "displayName": "Weekly Limit",
+                    "description": "Refreshes in 3 days",
+                    "window": "weekly",
+                    "remainingFraction": 0.91,
+                    "resetTime": "2026-07-07T01:21:15Z"
+                  },
+                  {
+                    "bucketId": "gemini-5h",
+                    "displayName": "5h",
+                    "window": "5h",
+                    "remainingFraction": 0.82,
+                    "resetTime": "2026-07-03T07:06:36Z"
+                  }
+                ]
+              }
+            ]
+          }
+        }"#;
+
+        let summary = parse_quota_summary_response(body).unwrap();
+
+        assert_eq!(
+            summary.description.as_deref(),
+            Some("Within each group, models share a weekly limit and a 5-hour limit.")
+        );
+        assert_eq!(summary.groups.len(), 1);
+        assert_eq!(summary.groups[0].display_name, "Gemini Models");
+        assert_eq!(summary.groups[0].buckets.len(), 2);
+        assert_eq!(summary.groups[0].buckets[0].display_name, "Weekly Limit");
+        assert_eq!(
+            summary.groups[0].buckets[0].window.as_deref(),
+            Some("weekly")
+        );
+        assert_eq!(summary.groups[0].buckets[1].display_name, "5h");
+        assert_eq!(summary.groups[0].buckets[1].remaining_fraction, Some(0.82));
+    }
+
+    #[test]
+    fn antigravity_quota_summary_reports_missing_groups() {
+        let err = parse_quota_summary_response(r#"{"response":{}}"#).unwrap_err();
+
+        assert_eq!(err.code, "NO_QUOTA_GROUPS_FOUND");
+    }
 }

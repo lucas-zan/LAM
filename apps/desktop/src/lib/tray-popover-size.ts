@@ -4,7 +4,7 @@ import { inTauri } from './api';
 
 export const TRAY_POPOVER_WIDTH = 328;
 export const TRAY_POPOVER_MIN_HEIGHT = 248;
-export const TRAY_POPOVER_MAX_HEIGHT = 620;
+export const TRAY_POPOVER_MAX_HEIGHT = 900;
 export function measureTrayPopoverHeight(panel: HTMLElement): number {
   const head = panel.querySelector<HTMLElement>(".trayPopoverFixedHead");
   const list = panel.querySelector<HTMLElement>(".trayAccountList");
@@ -13,8 +13,8 @@ export function measureTrayPopoverHeight(panel: HTMLElement): number {
   const headHeight = head?.getBoundingClientRect().height ?? 0;
   const footHeight = foot?.getBoundingClientRect().height ?? 0;
   // Use scrollHeight to get the full height of all accounts.
-  // The max-height of `.trayAccountList` in CSS is 416px, so we cap it there.
-  const listHeight = list ? Math.min(list.scrollHeight, 416) : 0;
+  // The max-height of `.trayAccountList` in CSS is 700px, so we cap it there.
+  const listHeight = list ? Math.min(list.scrollHeight, 700) : 0;
 
   const contentHeight = headHeight + footHeight + listHeight;
   return Math.ceil(contentHeight);

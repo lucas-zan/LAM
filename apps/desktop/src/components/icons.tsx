@@ -106,6 +106,9 @@ export function IconKey(props: IconProps) {
 export function IconCloud(props: IconProps) {
   return <Svg {...props}><path d="M17.5 19A3.5 3.5 0 0 0 21 15.5c0-2.79-2.54-4.5-5-4.5-.42-1.04-1.21-1.88-2.22-2.38A5.5 5.5 0 0 0 4 12c0 2.62 1.84 5 4.5 5M12 12v6M9 15l3-3 3 3" /></Svg>;
 }
+export function IconTrash(props: IconProps) {
+  return <Svg {...props}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 15H6L5 6" /><path d="M10 11v6M14 11v6" /></Svg>;
+}
 
 export type NavIconName = "overview" | "usage" | "sessions" | "relay" | "providers" | "sync" | "settings";
 

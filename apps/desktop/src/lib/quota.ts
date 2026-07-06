@@ -17,9 +17,18 @@ export type ResetCreditDot = {
   title: string;
 };
 
+export type ResetCreditDisplayDetail = {
+  key: string;
+  title: string;
+  expiresAt: string | null | undefined;
+};
+
 export type ResetCreditDisplay = {
   dots: ResetCreditDot[];
+  details: ResetCreditDisplayDetail[];
   overflow: number;
+  summary: string;
+  nearestExpiry: string | null;
   title: string;
 };
 
@@ -132,6 +141,7 @@ export function resetCreditDisplay(quota?: UsageQuotaSnapshot | null): ResetCred
   const details = sortedResetCreditDetails(quota);
   const expiresAt = details.find((credit) => credit.expiresAt)?.expiresAt ?? quota.resetCreditExpiresAt;
   const fallbackColor = resetCreditColor(expiresAt);
+  const nearestExpiry = formatResetCreditExpiry(expiresAt);
   const source =
     expiresAt && quota.resetCreditExpirySource === 'manual_config'
       ? `manual expiry ${expiresAt}`
@@ -147,7 +157,18 @@ export function resetCreditDisplay(quota?: UsageQuotaSnapshot | null): ResetCred
         title: dotExpiresAt ? `Expires: ${dotExpiresAt.replace('T', ' ').slice(0, 16)}` : 'Expiry unknown',
       };
     }),
+    details: Array.from({ length: count }, (_, index) => {
+      const detail = details[index];
+      const formatted = formatResetCreditExpiry(detail?.expiresAt);
+      return {
+        key: detail?.id ?? `${quota.profileId}-detail-${index}`,
+        expiresAt: detail?.expiresAt,
+        title: formatted ? `Reset ${index + 1} expires ${formatted}` : `Reset ${index + 1} expiry unknown`,
+      };
+    }),
     overflow: Math.max(0, count - visible),
+    summary: `${count} ${count === 1 ? 'reset' : 'resets'}`,
+    nearestExpiry,
     title: `${count} reset credits; ${source}`,
   };
 }
@@ -168,8 +189,21 @@ function resetCreditShanghaiTime(expiresAt?: string | null): string | null | und
   if (!expiresAt) return expiresAt;
   const parsed = Date.parse(expiresAt);
   if (!Number.isFinite(parsed)) return expiresAt;
+  if (/[+-]\d\d:\d\d$/.test(expiresAt)) return expiresAt;
   const date = new Date(parsed + 8 * 3_600_000);
   return `${date.toISOString().slice(0, 19)}+08:00`;
+}
+
+function formatResetCreditExpiry(expiresAt?: string | null): string | null {
+  if (!expiresAt) return null;
+  const parsed = Date.parse(expiresAt);
+  if (!Number.isFinite(parsed)) return null;
+  const normalized = resetCreditShanghaiTime(expiresAt) ?? expiresAt;
+  const match = normalized.match(/^\d{4}-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!match) return null;
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = monthNames[Number(match[1]) - 1] ?? match[1];
+  return `${month} ${Number(match[2])} ${match[3]}:${match[4]}`;
 }
 
 function resetCreditTime(expiresAt?: string | null): number {

@@ -5,7 +5,7 @@ use chrono::{Datelike, Duration as ChronoDuration, Local, NaiveDate, TimeZone, U
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -54,6 +54,8 @@ pub struct UsageRefreshResult {
 pub struct UsageSummaryRequest {
     pub window: UsageWindow,
     pub include_archived: bool,
+    pub scope_id: Option<String>,
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -61,6 +63,8 @@ pub struct UsageSummaryRequest {
 pub struct UsageDashboardRequest {
     pub window: UsageWindow,
     pub include_archived: bool,
+    pub scope_id: Option<String>,
+    pub account_id: Option<String>,
     pub search: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
@@ -68,6 +72,78 @@ pub struct UsageDashboardRequest {
     pub sort_key: Option<String>,
     pub sort_direction: Option<String>,
     pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageScope {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub account_id: Option<String>,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageDashboardResponse {
+    pub scopes: Vec<UsageScope>,
+    pub active_scope_id: String,
+    pub dashboard: UsageDashboard,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageScopesResponse {
+    pub scopes: Vec<UsageScope>,
+    pub active_scope_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageInsights {
+    pub fast_mode_percent: Option<f64>,
+    pub most_used_reasoning: Option<String>,
+    pub most_used_reasoning_percent: Option<f64>,
+    pub skills_explored: usize,
+    pub total_skills_used: usize,
+    pub total_threads: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsagePagedResponse<T> {
+    pub rows: Vec<T>,
+    pub total: usize,
+    pub limit: usize,
+    pub offset: usize,
+    pub next_offset: Option<usize>,
+}
+
+impl<T> Default for UsagePagedResponse<T> {
+    fn default() -> Self {
+        Self {
+            rows: Vec::new(),
+            total: 0,
+            limit: 0,
+            offset: 0,
+            next_offset: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageRateCardEntry {
+    pub model: String,
+    pub pricing_model: String,
+    pub context_window: String,
+    pub estimated: bool,
+    pub input_per_million: f64,
+    pub cached_input_per_million: f64,
+    pub output_per_million: f64,
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +185,9 @@ pub struct UsageSummary {
     pub activity_buckets: Vec<UsageActivityBucket>,
     pub top_threads: Vec<UsageThreadSummary>,
     pub recent_calls: Vec<UsageCallRow>,
+    pub insights: Option<UsageInsights>,
+    pub calls_page: Option<UsagePagedResponse<UsageCallRow>>,
+    pub threads_page: Option<UsagePagedResponse<UsageThreadSummary>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -139,6 +218,7 @@ pub struct UsageActivityBucket {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageDashboard {
+    pub scope: Option<UsageScope>,
     #[serde(flatten)]
     pub summary: UsageSummary,
     pub model_options: Vec<String>,
@@ -221,6 +301,12 @@ pub struct UsageCallRow {
     pub session_updated_at: Option<String>,
     pub event_timestamp: String,
     pub source_file: String,
+    pub workspace_id: Option<String>,
+    pub workspace_label: Option<String>,
+    pub workspace_home: Option<String>,
+    pub attributed_account_id: Option<String>,
+    pub attributed_account_label: Option<String>,
+    pub attribution_source: Option<String>,
     pub line_number: i64,
     pub turn_id: Option<String>,
     pub turn_timestamp: Option<String>,
@@ -291,6 +377,10 @@ struct CurrentTurn {
 struct SourceParsePlan {
     path: PathBuf,
     is_archived: bool,
+    workspace_id: String,
+    workspace_label: String,
+    workspace_home: PathBuf,
+    account_id: Option<String>,
     start_byte: u64,
     start_line: i64,
     initial_state: ParserState,
@@ -309,6 +399,17 @@ struct ParsedSource {
 struct SourceLog {
     path: PathBuf,
     is_archived: bool,
+    workspace_id: String,
+    workspace_label: String,
+    workspace_home: PathBuf,
+    account_id: Option<String>,
+}
+
+struct UsageWorkspace {
+    id: String,
+    label: String,
+    home: PathBuf,
+    account_id: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -363,9 +464,13 @@ fn refresh_usage_index_unlocked(
     let mut conn = open_usage_db(&db_path)?;
     init_usage_db(&conn)?;
 
-    let codex_home = home_root.join(".codex");
-    let session_index = load_session_index(&codex_home);
-    let logs = find_session_logs(&codex_home, include_archived)?;
+    let workspaces = discover_usage_workspaces(home_root)?;
+    let mut session_index = HashMap::new();
+    for workspace in &workspaces {
+        session_index.extend(load_session_index(&workspace.home));
+    }
+    let logs = find_session_logs(&workspaces, include_archived)?;
+    backfill_workspace_metadata(&mut conn, &logs)?;
     let plans = source_logs_requiring_parse(&conn, &logs)?;
     let mut parsed = Vec::new();
     let mut diagnostics = BTreeMap::new();
@@ -424,11 +529,15 @@ pub fn get_usage_summary(home_root: &Path, req: UsageSummaryRequest) -> Result<U
          FROM usage_events
          WHERE (?1 OR is_archived = 0)
            AND (?2 IS NULL OR event_timestamp >= ?2)
-           AND (?3 IS NULL OR event_timestamp < ?3)",
+           AND (?3 IS NULL OR event_timestamp < ?3)
+           AND (?4 IS NULL OR workspace_id = ?4)
+           AND (?5 IS NULL OR attributed_account_id = ?5)",
             params![
                 req.include_archived,
                 filter.from.as_deref(),
-                filter.to.as_deref()
+                filter.to.as_deref(),
+                filter.workspace_id.as_deref(),
+                filter.account_id.as_deref()
             ],
             |row| {
                 Ok((
@@ -451,7 +560,14 @@ pub fn get_usage_summary(home_root: &Path, req: UsageSummaryRequest) -> Result<U
     diagnostics.skipped_events = skipped_events;
     let activity_buckets = query_activity_buckets(&conn, &req, &filter)?;
     let mut headline_stats = query_local_headline_stats(&conn, &req, &filter, totals.1)?;
-    apply_latest_account_usage_snapshot(&conn, &mut headline_stats, totals.1, &mut diagnostics)?;
+    if filter.workspace_id.is_none() && filter.account_id.is_none() {
+        apply_latest_account_usage_snapshot(
+            &conn,
+            &mut headline_stats,
+            totals.1,
+            &mut diagnostics,
+        )?;
+    }
     Ok(UsageSummary {
         refreshed_at,
         scanned_files,
@@ -471,6 +587,9 @@ pub fn get_usage_summary(home_root: &Path, req: UsageSummaryRequest) -> Result<U
         activity_buckets,
         top_threads,
         recent_calls,
+        insights: None,
+        calls_page: None,
+        threads_page: None,
     })
 }
 
@@ -478,6 +597,8 @@ pub fn get_usage_dashboard(home_root: &Path, req: UsageDashboardRequest) -> Resu
     let summary_req = UsageSummaryRequest {
         window: req.window,
         include_archived: req.include_archived,
+        scope_id: req.scope_id.clone(),
+        account_id: req.account_id.clone(),
     };
     let mut summary = get_usage_summary(home_root, summary_req)?;
     if let Some(model) = req.model.as_deref().filter(|value| !value.is_empty()) {
@@ -551,6 +672,7 @@ pub fn get_usage_dashboard(home_root: &Path, req: UsageDashboardRequest) -> Resu
     pricing_confidence_options.sort();
     pricing_confidence_options.dedup();
     Ok(UsageDashboard {
+        scope: None,
         status_chips: vec![
             UsageStatusChip {
                 label: "Pricing source".to_string(),
@@ -589,6 +711,282 @@ pub fn get_usage_dashboard(home_root: &Path, req: UsageDashboardRequest) -> Resu
     })
 }
 
+pub fn get_usage_dashboard_response(
+    home_root: &Path,
+    req: UsageDashboardRequest,
+) -> Result<UsageDashboardResponse> {
+    let scope_response = get_usage_scopes(home_root, req.clone())?;
+    let active_scope = scope_response
+        .scopes
+        .iter()
+        .find(|scope| scope.id == scope_response.active_scope_id)
+        .cloned();
+    let mut scoped_req = req;
+    scoped_req.scope_id = Some(scope_response.active_scope_id.clone());
+    let mut dashboard = get_usage_dashboard(home_root, scoped_req)?;
+    dashboard.scope = active_scope;
+    Ok(UsageDashboardResponse {
+        scopes: scope_response.scopes,
+        active_scope_id: scope_response.active_scope_id,
+        dashboard,
+    })
+}
+
+pub fn get_usage_scopes(
+    home_root: &Path,
+    req: UsageDashboardRequest,
+) -> Result<UsageScopesResponse> {
+    let scopes = usage_scopes(home_root)?;
+    let active_scope_id = req
+        .scope_id
+        .clone()
+        .filter(|id| scopes.iter().any(|scope| &scope.id == id))
+        .or_else(|| {
+            scopes
+                .iter()
+                .find(|scope| scope.is_default)
+                .map(|scope| scope.id.clone())
+        })
+        .unwrap_or_else(|| "total".to_string());
+    Ok(UsageScopesResponse {
+        scopes,
+        active_scope_id,
+    })
+}
+
+pub fn get_usage_overview(home_root: &Path, req: UsageDashboardRequest) -> Result<UsageDashboard> {
+    let db_path = usage_db_path(home_root);
+    if !db_path.exists() {
+        return Ok(UsageDashboard::default());
+    }
+    let conn = open_usage_db(&db_path)?;
+    init_usage_db(&conn)?;
+    let summary_req = UsageSummaryRequest {
+        window: req.window.clone(),
+        include_archived: req.include_archived,
+        scope_id: req.scope_id.clone(),
+        account_id: req.account_id.clone(),
+    };
+    let refreshed_at = get_meta(&conn, "refreshed_at")?;
+    let scanned_files = get_meta(&conn, "scanned_files")?
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    let parsed_events = get_meta(&conn, "parsed_events")?
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    let skipped_events = get_meta(&conn, "skipped_events")?
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    let filter = SummaryFilter::new(&summary_req);
+    let totals = conn
+        .query_row(
+            "SELECT COUNT(*), COALESCE(SUM(total_tokens),0), COALESCE(SUM(input_tokens),0),
+                COALESCE(SUM(cached_input_tokens),0), COALESCE(SUM(uncached_input_tokens),0),
+                COALESCE(SUM(output_tokens),0), COALESCE(SUM(reasoning_output_tokens),0)
+             FROM usage_events
+             WHERE (?1 OR is_archived = 0)
+               AND (?2 IS NULL OR event_timestamp >= ?2)
+               AND (?3 IS NULL OR event_timestamp < ?3)
+               AND (?4 IS NULL OR workspace_id = ?4)
+               AND (?5 IS NULL OR attributed_account_id = ?5)",
+            params![
+                summary_req.include_archived,
+                filter.from.as_deref(),
+                filter.to.as_deref(),
+                filter.workspace_id.as_deref(),
+                filter.account_id.as_deref()
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            },
+        )
+        .map_err(db_error)?;
+    let (estimated_cost_usd, pricing_coverage) =
+        estimate_summary_cost(&model_totals(&conn, &summary_req, &filter)?);
+    let mut diagnostics = usage_diagnostics(&conn, &summary_req, &filter, &[], &[])?;
+    diagnostics.skipped_events = skipped_events;
+    let mut headline_stats = query_local_headline_stats(&conn, &summary_req, &filter, totals.1)?;
+    if filter.workspace_id.is_none() && filter.account_id.is_none() {
+        apply_latest_account_usage_snapshot(
+            &conn,
+            &mut headline_stats,
+            totals.1,
+            &mut diagnostics,
+        )?;
+    }
+    let (model_options, effort_options, pricing_confidence_options) =
+        query_usage_options(&conn, &summary_req, &filter)?;
+    Ok(UsageDashboard {
+        scope: None,
+        status_chips: vec![
+            UsageStatusChip {
+                label: "Pricing source".to_string(),
+                value: "local rate card".to_string(),
+            },
+            UsageStatusChip {
+                label: "Privacy mode".to_string(),
+                value: "aggregate only".to_string(),
+            },
+            UsageStatusChip {
+                label: "Parser diagnostics".to_string(),
+                value: skipped_events.to_string(),
+            },
+        ],
+        investigation_presets: vec![
+            UsageInvestigationPreset {
+                id: "low-cache".to_string(),
+                label: "Low cache reuse".to_string(),
+                description: "Threads with large uncached input".to_string(),
+            },
+            UsageInvestigationPreset {
+                id: "high-context".to_string(),
+                label: "High context".to_string(),
+                description: "Calls near the model context window".to_string(),
+            },
+            UsageInvestigationPreset {
+                id: "unknown-models".to_string(),
+                label: "Unknown pricing".to_string(),
+                description: "Models missing a local price".to_string(),
+            },
+        ],
+        summary: UsageSummary {
+            refreshed_at,
+            scanned_files,
+            parsed_events,
+            skipped_events,
+            total_calls: totals.0 as usize,
+            total_tokens: totals.1,
+            input_tokens: totals.2,
+            cached_input_tokens: totals.3,
+            uncached_input_tokens: totals.4,
+            output_tokens: totals.5,
+            reasoning_output_tokens: totals.6,
+            estimated_cost_usd,
+            pricing_coverage,
+            diagnostics,
+            headline_stats,
+            activity_buckets: Vec::new(),
+            top_threads: Vec::new(),
+            recent_calls: Vec::new(),
+            insights: None,
+            calls_page: None,
+            threads_page: None,
+        },
+        model_options,
+        effort_options,
+        pricing_confidence_options,
+    })
+}
+
+pub fn get_usage_activity(
+    home_root: &Path,
+    req: UsageDashboardRequest,
+) -> Result<Vec<UsageActivityBucket>> {
+    let db_path = usage_db_path(home_root);
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+    let conn = open_usage_db(&db_path)?;
+    init_usage_db(&conn)?;
+    let summary_req = UsageSummaryRequest {
+        window: req.window.clone(),
+        include_archived: req.include_archived,
+        scope_id: req.scope_id.clone(),
+        account_id: req.account_id.clone(),
+    };
+    let filter = SummaryFilter::new(&summary_req);
+    query_activity_buckets(&conn, &summary_req, &filter)
+}
+
+pub fn get_usage_insights(home_root: &Path, req: UsageDashboardRequest) -> Result<UsageInsights> {
+    let db_path = usage_db_path(home_root);
+    if !db_path.exists() {
+        return Ok(UsageInsights::default());
+    }
+    let conn = open_usage_db(&db_path)?;
+    init_usage_db(&conn)?;
+    let summary_req = UsageSummaryRequest {
+        window: req.window.clone(),
+        include_archived: req.include_archived,
+        scope_id: req.scope_id.clone(),
+        account_id: req.account_id.clone(),
+    };
+    let filter = SummaryFilter::new(&summary_req);
+    query_usage_insights(&conn, &req, &filter)
+}
+
+pub fn get_usage_rate_card() -> Vec<UsageRateCardEntry> {
+    usage_rate_card()
+}
+
+pub fn get_usage_calls(
+    home_root: &Path,
+    req: UsageDashboardRequest,
+) -> Result<UsagePagedResponse<UsageCallRow>> {
+    let db_path = usage_db_path(home_root);
+    if !db_path.exists() {
+        return Ok(UsagePagedResponse::default());
+    }
+    let conn = open_usage_db(&db_path)?;
+    init_usage_db(&conn)?;
+    let summary_req = UsageSummaryRequest {
+        window: req.window.clone(),
+        include_archived: req.include_archived,
+        scope_id: req.scope_id.clone(),
+        account_id: req.account_id.clone(),
+    };
+    let filter = SummaryFilter::new(&summary_req);
+    query_recent_calls_for_dashboard(&conn, &req, &filter)
+}
+
+pub fn get_usage_threads(
+    home_root: &Path,
+    req: UsageDashboardRequest,
+) -> Result<UsagePagedResponse<UsageThreadSummary>> {
+    let db_path = usage_db_path(home_root);
+    if !db_path.exists() {
+        return Ok(UsagePagedResponse::default());
+    }
+    let conn = open_usage_db(&db_path)?;
+    init_usage_db(&conn)?;
+    let summary_req = UsageSummaryRequest {
+        window: req.window.clone(),
+        include_archived: req.include_archived,
+        scope_id: req.scope_id.clone(),
+        account_id: req.account_id.clone(),
+    };
+    let filter = SummaryFilter::new(&summary_req);
+    query_threads_page(&conn, &req, &filter)
+}
+
+pub fn get_usage_diagnostics(
+    home_root: &Path,
+    req: UsageDashboardRequest,
+) -> Result<UsageDiagnostics> {
+    let db_path = usage_db_path(home_root);
+    if !db_path.exists() {
+        return Ok(UsageDiagnostics::default());
+    }
+    let conn = open_usage_db(&db_path)?;
+    init_usage_db(&conn)?;
+    let summary_req = UsageSummaryRequest {
+        window: req.window,
+        include_archived: req.include_archived,
+        scope_id: req.scope_id,
+        account_id: req.account_id,
+    };
+    let filter = SummaryFilter::new(&summary_req);
+    usage_diagnostics(&conn, &summary_req, &filter, &[], &[])
+}
+
 pub fn init_usage_db(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
@@ -602,6 +1000,12 @@ pub fn init_usage_db(conn: &Connection) -> Result<()> {
             session_updated_at TEXT,
             event_timestamp TEXT NOT NULL,
             source_file TEXT NOT NULL,
+            workspace_id TEXT,
+            workspace_label TEXT,
+            workspace_home TEXT,
+            attributed_account_id TEXT,
+            attributed_account_label TEXT,
+            attribution_source TEXT,
             is_archived INTEGER NOT NULL DEFAULT 0,
             line_number INTEGER NOT NULL,
             turn_id TEXT,
@@ -658,6 +1062,8 @@ pub fn init_usage_db(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_usage_events_time ON usage_events(event_timestamp);
         CREATE TABLE IF NOT EXISTS source_files (
             source_file TEXT PRIMARY KEY,
+            workspace_id TEXT,
+            workspace_home TEXT,
             is_archived INTEGER NOT NULL DEFAULT 0,
             size_bytes INTEGER NOT NULL,
             mtime_ns INTEGER NOT NULL,
@@ -674,6 +1080,9 @@ pub fn init_usage_db(conn: &Connection) -> Result<()> {
         );
         CREATE TABLE IF NOT EXISTS thread_summaries (
             thread_key TEXT PRIMARY KEY,
+            workspace_id TEXT,
+            workspace_label TEXT,
+            attributed_account_id TEXT,
             is_archived_scope INTEGER NOT NULL DEFAULT 0,
             thread_label TEXT NOT NULL,
             first_event_timestamp TEXT,
@@ -742,6 +1151,12 @@ pub fn init_usage_db(conn: &Connection) -> Result<()> {
     .map_err(db_error)?;
     let usage_event_columns = [
         ("is_archived", "INTEGER NOT NULL DEFAULT 0"),
+        ("workspace_id", "TEXT"),
+        ("workspace_label", "TEXT"),
+        ("workspace_home", "TEXT"),
+        ("attributed_account_id", "TEXT"),
+        ("attributed_account_label", "TEXT"),
+        ("attribution_source", "TEXT"),
         ("session_updated_at", "TEXT"),
         ("turn_timestamp", "TEXT"),
         ("current_date", "TEXT"),
@@ -785,8 +1200,24 @@ pub fn init_usage_db(conn: &Connection) -> Result<()> {
             &format!("ALTER TABLE usage_events ADD COLUMN {column} {definition}"),
         )?;
     }
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_usage_events_workspace ON usage_events(workspace_id)",
+        [],
+    )
+    .map_err(db_error)?;
+    for sql in [
+        "CREATE INDEX IF NOT EXISTS idx_usage_events_scope_time ON usage_events(workspace_id, attributed_account_id, event_timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_usage_events_model_time ON usage_events(model, event_timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_usage_events_effort_time ON usage_events(effort, event_timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_usage_events_pricing_time ON usage_events(pricing_confidence, event_timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_usage_events_thread_time ON usage_events(thread_key, event_timestamp)",
+    ] {
+        conn.execute(sql, []).map_err(db_error)?;
+    }
     for (column, definition) in [
         ("source_hash", "TEXT"),
+        ("workspace_id", "TEXT"),
+        ("workspace_home", "TEXT"),
         ("parser_cursor_json", "TEXT"),
         ("parser_state", "TEXT"),
         ("archive_scope", "TEXT"),
@@ -798,6 +1229,23 @@ pub fn init_usage_db(conn: &Connection) -> Result<()> {
             &format!("ALTER TABLE source_files ADD COLUMN {column} {definition}"),
         )?;
     }
+    for (column, definition) in [
+        ("workspace_id", "TEXT"),
+        ("workspace_label", "TEXT"),
+        ("attributed_account_id", "TEXT"),
+    ] {
+        ensure_column(
+            conn,
+            "thread_summaries",
+            column,
+            &format!("ALTER TABLE thread_summaries ADD COLUMN {column} {definition}"),
+        )?;
+    }
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_thread_summaries_scope ON thread_summaries(workspace_id, attributed_account_id, latest_event_timestamp)",
+        [],
+    )
+    .map_err(db_error)?;
     Ok(())
 }
 
@@ -813,9 +1261,18 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, sql: &str) -> Res
         .iter()
         .any(|name| name == column);
     if !exists {
-        conn.execute(sql, []).map_err(db_error)?;
+        if let Err(err) = conn.execute(sql, []) {
+            let app_error = db_error(err);
+            if !is_duplicate_column_error(&app_error) {
+                return Err(app_error);
+            }
+        }
     }
     Ok(())
+}
+
+fn is_duplicate_column_error(error: &AppError) -> bool {
+    error.code == "USAGE_DB_ERROR" && error.message.contains("duplicate column name")
 }
 
 fn prepare_usage_dir(db_path: &Path) -> Result<()> {
@@ -872,6 +1329,10 @@ fn source_logs_requiring_parse(
             plans.push(SourceParsePlan {
                 path: path.clone(),
                 is_archived: log.is_archived,
+                workspace_id: log.workspace_id.clone(),
+                workspace_label: log.workspace_label.clone(),
+                workspace_home: log.workspace_home.clone(),
+                account_id: log.account_id.clone(),
                 start_byte: 0,
                 start_line: 0,
                 initial_state: ParserState::default(),
@@ -892,6 +1353,10 @@ fn source_logs_requiring_parse(
             plans.push(SourceParsePlan {
                 path: path.clone(),
                 is_archived: log.is_archived,
+                workspace_id: log.workspace_id.clone(),
+                workspace_label: log.workspace_label.clone(),
+                workspace_home: log.workspace_home.clone(),
+                account_id: log.account_id.clone(),
                 start_byte: previous_byte as u64,
                 start_line: previous_line,
                 initial_state: state.unwrap_or_default(),
@@ -901,6 +1366,10 @@ fn source_logs_requiring_parse(
             plans.push(SourceParsePlan {
                 path: path.clone(),
                 is_archived: log.is_archived,
+                workspace_id: log.workspace_id.clone(),
+                workspace_label: log.workspace_label.clone(),
+                workspace_home: log.workspace_home.clone(),
+                account_id: log.account_id.clone(),
                 start_byte: 0,
                 start_line: 0,
                 initial_state: ParserState::default(),
@@ -909,6 +1378,54 @@ fn source_logs_requiring_parse(
         }
     }
     Ok(plans)
+}
+
+fn backfill_workspace_metadata(conn: &mut Connection, logs: &[SourceLog]) -> Result<usize> {
+    let tx = conn.transaction().map_err(db_error)?;
+    let mut updated = 0;
+    for log in logs {
+        let source_file = log.path.to_string_lossy().to_string();
+        let workspace_home = log.workspace_home.to_string_lossy().to_string();
+        let account_label = log.account_id.as_deref().map(account_label_from_id);
+        updated += tx
+            .execute(
+                "UPDATE usage_events
+                 SET workspace_id = ?2,
+                     workspace_label = ?3,
+                     workspace_home = ?4,
+                     attributed_account_id = ?5,
+                     attributed_account_label = ?6,
+                     attribution_source = ?7
+                 WHERE source_file = ?1
+                   AND (workspace_id IS NULL
+                     OR workspace_id != ?2
+                     OR workspace_label IS NULL
+                     OR workspace_home IS NULL
+                     OR attributed_account_id IS NULL
+                     OR attribution_source IS NULL)",
+                params![
+                    source_file,
+                    log.workspace_id,
+                    log.workspace_label,
+                    workspace_home,
+                    log.account_id.as_deref(),
+                    account_label.as_deref(),
+                    "profile_workspace"
+                ],
+            )
+            .map_err(db_error)?;
+        tx.execute(
+            "UPDATE source_files
+             SET workspace_id = ?2,
+                 workspace_home = ?3
+             WHERE source_file = ?1
+               AND (workspace_id IS NULL OR workspace_id != ?2 OR workspace_home IS NULL)",
+            params![source_file, log.workspace_id, workspace_home],
+        )
+        .map_err(db_error)?;
+    }
+    tx.commit().map_err(db_error)?;
+    Ok(updated)
 }
 
 fn parse_source_file(
@@ -1118,6 +1635,12 @@ fn parse_envelope(
         session_updated_at: None,
         event_timestamp: timestamp,
         source_file: path.to_string_lossy().to_string(),
+        workspace_id: None,
+        workspace_label: None,
+        workspace_home: None,
+        attributed_account_id: None,
+        attributed_account_label: None,
+        attribution_source: None,
         line_number,
         turn_id: turn.turn_id,
         turn_timestamp: turn.turn_timestamp,
@@ -1269,7 +1792,9 @@ fn apply_parsed_sources(
             tx.execute(
                 "INSERT INTO usage_events (
                     record_id, session_id, thread_name, session_updated_at, event_timestamp,
-                    source_file, is_archived, line_number, turn_id, turn_timestamp, cwd, model,
+                    source_file, workspace_id, workspace_label, workspace_home,
+                    attributed_account_id, attributed_account_label, attribution_source,
+                    is_archived, line_number, turn_id, turn_timestamp, cwd, model,
                     effort, current_date, timezone, call_initiator, call_initiator_reason,
                     call_initiator_confidence, input_tokens, cached_input_tokens,
                     uncached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens,
@@ -1286,11 +1811,18 @@ fn apply_parsed_sources(
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
                     ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29,
                     ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43,
-                    ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53)
+                    ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53, ?54, ?55, ?56, ?57,
+                    ?58, ?59)
                 ON CONFLICT(record_id) DO UPDATE SET
                     thread_name=excluded.thread_name,
                     session_updated_at=excluded.session_updated_at,
                     event_timestamp=excluded.event_timestamp,
+                    workspace_id=excluded.workspace_id,
+                    workspace_label=excluded.workspace_label,
+                    workspace_home=excluded.workspace_home,
+                    attributed_account_id=excluded.attributed_account_id,
+                    attributed_account_label=excluded.attributed_account_label,
+                    attribution_source=excluded.attribution_source,
                     is_archived=excluded.is_archived,
                     turn_id=excluded.turn_id,
                     turn_timestamp=excluded.turn_timestamp,
@@ -1340,6 +1872,14 @@ fn apply_parsed_sources(
                     event.session_updated_at,
                     event.event_timestamp,
                     event.source_file,
+                    plan.workspace_id,
+                    plan.workspace_label,
+                    plan.workspace_home.to_string_lossy().to_string(),
+                    plan.account_id.as_deref(),
+                    plan.account_id
+                        .as_deref()
+                        .map(account_label_from_id),
+                    "profile_workspace",
                     plan.is_archived,
                     event.line_number,
                     event.turn_id,
@@ -1397,10 +1937,12 @@ fn apply_parsed_sources(
             "INSERT INTO source_files (
                 source_file, is_archived, size_bytes, mtime_ns, parsed_until_line,
                 parsed_until_byte, parser_adapter, parser_state_json, parser_diagnostics_json,
-                last_indexed_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                workspace_id, workspace_home, last_indexed_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             ON CONFLICT(source_file) DO UPDATE SET
                 is_archived=excluded.is_archived,
+                workspace_id=excluded.workspace_id,
+                workspace_home=excluded.workspace_home,
                 size_bytes=excluded.size_bytes,
                 mtime_ns=excluded.mtime_ns,
                 parsed_until_line=excluded.parsed_until_line,
@@ -1419,6 +1961,8 @@ fn apply_parsed_sources(
                 PARSER_ADAPTER_VERSION,
                 serde_json::to_string(&source.state).map_err(json_error)?,
                 serde_json::to_string(&source.diagnostics).map_err(json_error)?,
+                plan.workspace_id,
+                plan.workspace_home.to_string_lossy().to_string(),
                 now
             ],
         )
@@ -1451,9 +1995,17 @@ fn rebuild_usage_aggregates(tx: &rusqlite::Transaction<'_>, now: &str) -> Result
     let rows = {
         let mut stmt = tx
             .prepare(
-                "SELECT record_id, COALESCE(thread_key, thread_name, session_id)
+                "SELECT record_id,
+                    COALESCE(workspace_id, '') || '|' ||
+                    COALESCE(attributed_account_id, '') || '|' ||
+                    COALESCE(thread_key, thread_name, session_id)
                  FROM usage_events
-                 ORDER BY COALESCE(thread_key, thread_name, session_id), event_timestamp, record_id",
+                 ORDER BY
+                    COALESCE(workspace_id, ''),
+                    COALESCE(attributed_account_id, ''),
+                    COALESCE(thread_key, thread_name, session_id),
+                    event_timestamp,
+                    record_id",
             )
             .map_err(db_error)?;
         let collected = stmt
@@ -1497,7 +2049,8 @@ fn rebuild_usage_aggregates(tx: &rusqlite::Transaction<'_>, now: &str) -> Result
     tx.execute(
         "
         INSERT INTO thread_summaries (
-            thread_key, is_archived_scope, thread_label, first_event_timestamp,
+            thread_key, workspace_id, workspace_label, attributed_account_id,
+            is_archived_scope, thread_label, first_event_timestamp,
             latest_event_timestamp, call_count, session_count, input_tokens,
             cached_input_tokens, uncached_input_tokens, output_tokens,
             reasoning_output_tokens, total_tokens, estimated_cost_usd, usage_credits,
@@ -1505,7 +2058,12 @@ fn rebuild_usage_aggregates(tx: &rusqlite::Transaction<'_>, now: &str) -> Result
             primary_recommendation, call_initiator_summary, archived_call_count, updated_at
         )
         SELECT
-            COALESCE(thread_key, thread_name, session_id),
+            COALESCE(workspace_id, '') || '|' ||
+                COALESCE(attributed_account_id, '') || '|' ||
+                COALESCE(thread_key, thread_name, session_id),
+            workspace_id,
+            MAX(workspace_label),
+            attributed_account_id,
             MAX(is_archived),
             COALESCE(thread_name, session_id),
             MIN(event_timestamp),
@@ -1540,7 +2098,7 @@ fn rebuild_usage_aggregates(tx: &rusqlite::Transaction<'_>, now: &str) -> Result
             SUM(CASE WHEN is_archived != 0 THEN 1 ELSE 0 END),
             ?1
         FROM usage_events
-        GROUP BY COALESCE(thread_key, thread_name, session_id)",
+        GROUP BY COALESCE(thread_key, thread_name, session_id), workspace_id, attributed_account_id",
         [now],
     )
     .map_err(db_error)?;
@@ -1579,33 +2137,41 @@ fn rebuild_usage_aggregates(tx: &rusqlite::Transaction<'_>, now: &str) -> Result
 struct SummaryFilter {
     from: Option<String>,
     to: Option<String>,
+    workspace_id: Option<String>,
+    account_id: Option<String>,
 }
 
 impl SummaryFilter {
     fn new(req: &UsageSummaryRequest) -> Self {
         let now = Local::now();
         let date = now.date_naive();
-        match req.window.preset.as_str() {
-            "today" => Self {
-                from: Some(day_start(date)),
-                to: Some(day_start(date + ChronoDuration::days(1))),
-            },
+        let workspace_id = req
+            .scope_id
+            .as_deref()
+            .and_then(|id| id.strip_prefix("workspace:"))
+            .map(|id| format!("workspace:{id}"));
+        let account_id = req.account_id.clone();
+        let (from, to) = match req.window.preset.as_str() {
+            "today" => (
+                Some(day_start(date)),
+                Some(day_start(date + ChronoDuration::days(1))),
+            ),
             "this-week" => {
                 let first =
                     date - ChronoDuration::days(date.weekday().num_days_from_monday() as i64);
-                Self {
-                    from: Some(day_start(first)),
-                    to: Some(day_start(date + ChronoDuration::days(1))),
-                }
+                (
+                    Some(day_start(first)),
+                    Some(day_start(date + ChronoDuration::days(1))),
+                )
             }
-            "7d" | "last-7-days" => Self {
-                from: Some(day_start(date - ChronoDuration::days(6))),
-                to: Some(day_start(date + ChronoDuration::days(1))),
-            },
-            "30d" => Self {
-                from: Some(day_start(date - ChronoDuration::days(29))),
-                to: Some(day_start(date + ChronoDuration::days(1))),
-            },
+            "7d" | "last-7-days" => (
+                Some(day_start(date - ChronoDuration::days(6))),
+                Some(day_start(date + ChronoDuration::days(1))),
+            ),
+            "30d" => (
+                Some(day_start(date - ChronoDuration::days(29))),
+                Some(day_start(date + ChronoDuration::days(1))),
+            ),
             "month" | "this-month" => {
                 let first = NaiveDate::from_ymd_opt(date.year(), date.month(), 1).unwrap_or(date);
                 let next = if date.month() == 12 {
@@ -1613,19 +2179,19 @@ impl SummaryFilter {
                 } else {
                     NaiveDate::from_ymd_opt(date.year(), date.month() + 1, 1).unwrap_or(first)
                 };
-                Self {
-                    from: Some(day_start(first)),
-                    to: Some(day_start(next)),
-                }
+                (Some(day_start(first)), Some(day_start(next)))
             }
-            "custom" => Self {
-                from: req.window.from.as_deref().and_then(custom_start),
-                to: req.window.to.as_deref().and_then(custom_end),
-            },
-            _ => Self {
-                from: None,
-                to: None,
-            },
+            "custom" => (
+                req.window.from.as_deref().and_then(custom_start),
+                req.window.to.as_deref().and_then(custom_end),
+            ),
+            _ => (None, None),
+        };
+        Self {
+            from,
+            to,
+            workspace_id,
+            account_id,
         }
     }
 }
@@ -1666,12 +2232,16 @@ fn query_local_headline_stats(
                 WHERE (?1 OR is_archived = 0)
                   AND (?2 IS NULL OR event_timestamp >= ?2)
                   AND (?3 IS NULL OR event_timestamp < ?3)
+                  AND (?4 IS NULL OR workspace_id = ?4)
+                  AND (?5 IS NULL OR attributed_account_id = ?5)
                 GROUP BY activity_date
             )",
             params![
                 req.include_archived,
                 filter.from.as_deref(),
-                filter.to.as_deref()
+                filter.to.as_deref(),
+                filter.workspace_id.as_deref(),
+                filter.account_id.as_deref()
             ],
             |row| row.get::<_, Option<i64>>(0),
         )
@@ -1688,12 +2258,16 @@ fn query_local_headline_stats(
                 WHERE (?1 OR is_archived = 0)
                   AND (?2 IS NULL OR event_timestamp >= ?2)
                   AND (?3 IS NULL OR event_timestamp < ?3)
+                  AND (?4 IS NULL OR workspace_id = ?4)
+                  AND (?5 IS NULL OR attributed_account_id = ?5)
                 GROUP BY COALESCE(turn_id, record_id)
             )",
             params![
                 req.include_archived,
                 filter.from.as_deref(),
-                filter.to.as_deref()
+                filter.to.as_deref(),
+                filter.workspace_id.as_deref(),
+                filter.account_id.as_deref()
             ],
             |row| row.get::<_, i64>(0),
         )
@@ -2120,7 +2694,9 @@ fn query_recent_calls(
     let mut stmt = conn
         .prepare(
             "SELECT record_id, session_id, thread_name, session_updated_at, event_timestamp,
-                source_file, line_number, turn_id, turn_timestamp, cwd, model, effort,
+                source_file, workspace_id, workspace_label, workspace_home,
+                attributed_account_id, attributed_account_label, attribution_source,
+                line_number, turn_id, turn_timestamp, cwd, model, effort,
                 current_date, timezone, call_initiator, call_initiator_reason,
                 call_initiator_confidence, input_tokens, cached_input_tokens,
                 uncached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens,
@@ -2138,6 +2714,8 @@ fn query_recent_calls(
              WHERE (?1 OR is_archived = 0)
                AND (?2 IS NULL OR event_timestamp >= ?2)
                AND (?3 IS NULL OR event_timestamp < ?3)
+               AND (?4 IS NULL OR workspace_id = ?4)
+               AND (?5 IS NULL OR attributed_account_id = ?5)
              ORDER BY event_timestamp DESC, record_id ASC",
         )
         .map_err(db_error)?;
@@ -2146,7 +2724,9 @@ fn query_recent_calls(
             params![
                 req.include_archived,
                 filter.from.as_deref(),
-                filter.to.as_deref()
+                filter.to.as_deref(),
+                filter.workspace_id.as_deref(),
+                filter.account_id.as_deref()
             ],
             read_call_row,
         )
@@ -2156,38 +2736,238 @@ fn query_recent_calls(
     Ok(rows)
 }
 
+fn query_recent_calls_for_dashboard(
+    conn: &Connection,
+    req: &UsageDashboardRequest,
+    filter: &SummaryFilter,
+) -> Result<UsagePagedResponse<UsageCallRow>> {
+    let limit = req.limit.unwrap_or(100).min(5000);
+    let offset = req.offset.unwrap_or(0);
+    if limit == 0 {
+        return Ok(UsagePagedResponse {
+            rows: Vec::new(),
+            total: 0,
+            limit,
+            offset,
+            next_offset: None,
+        });
+    }
+    let sort_expr = match req.sort_key.as_deref().unwrap_or("time") {
+        "total" | "usage" => "total_tokens",
+        "cached" => "cached_input_tokens",
+        "uncached" => "uncached_input_tokens",
+        "output" => "output_tokens",
+        "reasoning" => "reasoning_output_tokens",
+        "cost" => "estimated_cost_usd",
+        "cache" => "cache_ratio",
+        "context" => "context_window_percent",
+        "model" => "model",
+        "effort" => "effort",
+        "thread" => "COALESCE(thread_name, session_id)",
+        "initiator" => "call_initiator",
+        _ => "event_timestamp",
+    };
+    let direction = if req.sort_direction.as_deref() == Some("asc") {
+        "ASC"
+    } else {
+        "DESC"
+    };
+    let search_like = req
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{}%", value.to_ascii_lowercase()));
+    let where_sql = "FROM usage_events
+         WHERE (?1 OR is_archived = 0)
+           AND (?2 IS NULL OR event_timestamp >= ?2)
+           AND (?3 IS NULL OR event_timestamp < ?3)
+           AND (?4 IS NULL OR workspace_id = ?4)
+           AND (?5 IS NULL OR attributed_account_id = ?5)
+           AND (?6 IS NULL OR model = ?6)
+           AND (?7 IS NULL OR effort = ?7)
+           AND (?8 IS NULL OR pricing_confidence = ?8)
+           AND (?9 IS NULL OR lower(COALESCE(thread_name, session_id) || ' ' || COALESCE(cwd, '') || ' ' || COALESCE(model, '')) LIKE ?9)";
+    let total = conn
+        .query_row(
+            &format!("SELECT COUNT(*) {where_sql}"),
+            params![
+                req.include_archived,
+                filter.from.as_deref(),
+                filter.to.as_deref(),
+                filter.workspace_id.as_deref(),
+                filter.account_id.as_deref(),
+                req.model.as_deref().filter(|value| !value.is_empty()),
+                req.effort.as_deref().filter(|value| !value.is_empty()),
+                req.pricing_confidence
+                    .as_deref()
+                    .filter(|value| !value.is_empty()),
+                search_like.as_deref(),
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(db_error)? as usize;
+    let sql = format!(
+        "SELECT record_id, session_id, thread_name, session_updated_at, event_timestamp,
+            source_file, workspace_id, workspace_label, workspace_home,
+            attributed_account_id, attributed_account_label, attribution_source,
+            line_number, turn_id, turn_timestamp, cwd, model, effort,
+            current_date, timezone, call_initiator, call_initiator_reason,
+            call_initiator_confidence, input_tokens, cached_input_tokens,
+            uncached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens,
+            cumulative_total_tokens, cache_ratio, is_archived, thread_key,
+            thread_call_index, previous_record_id, next_record_id, thread_source,
+            subagent_type, agent_role, agent_nickname, parent_session_id,
+            parent_thread_name, parent_session_updated_at, model_context_window,
+            context_window_percent, rate_limit_plan_type, rate_limit_limit_id,
+            rate_limit_primary_used_percent, rate_limit_primary_window_minutes,
+            rate_limit_primary_resets_at, rate_limit_secondary_used_percent,
+            rate_limit_secondary_window_minutes, rate_limit_secondary_resets_at,
+            reasoning_output_ratio, estimated_cost_usd, usage_credits, pricing_model,
+            pricing_estimated, pricing_confidence
+         {where_sql}
+         ORDER BY {sort_expr} {direction}, record_id ASC
+         LIMIT ?10 OFFSET ?11"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(db_error)?;
+    let rows = stmt
+        .query_map(
+            params![
+                req.include_archived,
+                filter.from.as_deref(),
+                filter.to.as_deref(),
+                filter.workspace_id.as_deref(),
+                filter.account_id.as_deref(),
+                req.model.as_deref().filter(|value| !value.is_empty()),
+                req.effort.as_deref().filter(|value| !value.is_empty()),
+                req.pricing_confidence
+                    .as_deref()
+                    .filter(|value| !value.is_empty()),
+                search_like.as_deref(),
+                limit as i64,
+                offset as i64,
+            ],
+            read_call_row,
+        )
+        .map_err(db_error)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(db_error)?;
+    let next_offset = (offset + rows.len() < total).then_some(offset + rows.len());
+    Ok(UsagePagedResponse {
+        rows,
+        total,
+        limit,
+        offset,
+        next_offset,
+    })
+}
+
 fn query_top_threads(
     conn: &Connection,
     req: &UsageSummaryRequest,
     filter: &SummaryFilter,
 ) -> Result<Vec<UsageThreadSummary>> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT COALESCE(thread_key, thread_name, session_id) AS key,
-                COALESCE(thread_name, session_id) AS label, MIN(event_timestamp), COUNT(*),
-                COUNT(DISTINCT session_id), SUM(total_tokens),
-                SUM(input_tokens), SUM(cached_input_tokens), SUM(uncached_input_tokens),
-                SUM(output_tokens), SUM(reasoning_output_tokens), MAX(event_timestamp),
-                MAX(is_archived), MAX(context_window_percent),
-                SUM(CASE WHEN is_archived != 0 THEN 1 ELSE 0 END),
-                MAX(call_initiator),
-                COALESCE(SUM(estimated_cost_usd), 0.0),
-                COALESCE(SUM(usage_credits), 0.0)
-             FROM usage_events
-             WHERE (?1 OR is_archived = 0)
-               AND (?2 IS NULL OR event_timestamp >= ?2)
-               AND (?3 IS NULL OR event_timestamp < ?3)
-             GROUP BY key, label
-             ORDER BY SUM(total_tokens) DESC
-             LIMIT 50",
+    let page_req = UsageDashboardRequest {
+        window: req.window.clone(),
+        include_archived: req.include_archived,
+        scope_id: req.scope_id.clone(),
+        account_id: req.account_id.clone(),
+        search: None,
+        model: None,
+        effort: None,
+        pricing_confidence: None,
+        sort_key: Some("total".to_string()),
+        sort_direction: Some("desc".to_string()),
+        limit: Some(50),
+        offset: Some(0),
+    };
+    Ok(query_threads_page(conn, &page_req, filter)?.rows)
+}
+
+fn query_threads_page(
+    conn: &Connection,
+    req: &UsageDashboardRequest,
+    filter: &SummaryFilter,
+) -> Result<UsagePagedResponse<UsageThreadSummary>> {
+    let limit = req.limit.unwrap_or(50).min(5000);
+    let offset = req.offset.unwrap_or(0);
+    if limit == 0 {
+        return Ok(UsagePagedResponse {
+            rows: Vec::new(),
+            total: 0,
+            limit,
+            offset,
+            next_offset: None,
+        });
+    }
+    let search_like = req
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{}%", value.to_ascii_lowercase()));
+    let sort_expr = match req.sort_key.as_deref().unwrap_or("total") {
+        "time" => "latest_event_timestamp",
+        "calls" => "call_count",
+        "cached" => "cached_input_tokens",
+        "uncached" => "uncached_input_tokens",
+        "output" => "output_tokens",
+        "reasoning" => "reasoning_output_tokens",
+        "cost" => "estimated_cost_usd",
+        "cache" => "avg_cache_ratio",
+        _ => "total_tokens",
+    };
+    let direction = if req.sort_direction.as_deref() == Some("asc") {
+        "ASC"
+    } else {
+        "DESC"
+    };
+    let where_sql = "FROM thread_summaries
+             WHERE (?1 OR is_archived_scope = 0)
+               AND (?2 IS NULL OR latest_event_timestamp >= ?2)
+               AND (?3 IS NULL OR latest_event_timestamp < ?3)
+               AND (?4 IS NULL OR workspace_id = ?4)
+               AND (?5 IS NULL OR attributed_account_id = ?5)
+               AND (?6 IS NULL OR lower(thread_label) LIKE ?6)";
+    let total = conn
+        .query_row(
+            &format!("SELECT COUNT(*) {where_sql}"),
+            params![
+                req.include_archived,
+                filter.from.as_deref(),
+                filter.to.as_deref(),
+                filter.workspace_id.as_deref(),
+                filter.account_id.as_deref(),
+                search_like.as_deref(),
+            ],
+            |row| row.get::<_, i64>(0),
         )
+        .map_err(db_error)? as usize;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT thread_key, thread_label, first_event_timestamp, call_count,
+                session_count, total_tokens, input_tokens, cached_input_tokens,
+                uncached_input_tokens, output_tokens, reasoning_output_tokens,
+                latest_event_timestamp, is_archived_scope, max_context_window_percent,
+                archived_call_count, call_initiator_summary, estimated_cost_usd,
+                usage_credits, avg_cache_ratio, max_recommendation_score,
+                primary_recommendation, updated_at
+             {where_sql}
+             ORDER BY {sort_expr} {direction}, thread_key ASC
+             LIMIT ?7 OFFSET ?8"
+        ))
         .map_err(db_error)?;
     let rows = stmt
         .query_map(
             params![
                 req.include_archived,
                 filter.from.as_deref(),
-                filter.to.as_deref()
+                filter.to.as_deref(),
+                filter.workspace_id.as_deref(),
+                filter.account_id.as_deref(),
+                search_like.as_deref(),
+                limit as i64,
+                offset as i64,
             ],
             |row| {
                 let key = row.get::<_, String>(0)?;
@@ -2198,14 +2978,6 @@ fn query_top_threads(
                     cached_input_tokens as f64 / input_tokens as f64
                 } else {
                     0.0
-                };
-                let max_context_window_percent = row.get::<_, Option<f64>>(13)?;
-                let primary_recommendation = if max_context_window_percent.unwrap_or(0.0) >= 0.8 {
-                    Some("Inspect high context usage".to_string())
-                } else if input_tokens >= 50_000 && cache_ratio < 0.2 {
-                    Some("Inspect low cache reuse".to_string())
-                } else {
-                    None
                 };
                 Ok(UsageThreadSummary {
                     thread_key: key,
@@ -2222,16 +2994,12 @@ fn query_top_threads(
                     reasoning_output_tokens: row.get(10)?,
                     latest_event_timestamp: row.get(11)?,
                     avg_cache_ratio: cache_ratio,
-                    max_context_window_percent,
-                    max_recommendation_score: if primary_recommendation.is_some() {
-                        90.0
-                    } else {
-                        0.0
-                    },
-                    primary_recommendation,
+                    max_context_window_percent: row.get(13)?,
+                    max_recommendation_score: row.get(19)?,
+                    primary_recommendation: row.get(20)?,
                     call_initiator_summary: row.get(15)?,
                     archived_call_count: row.get::<_, i64>(14)? as usize,
-                    updated_at: None,
+                    updated_at: row.get(21)?,
                     estimated_cost_usd: row.get(16)?,
                     usage_credits: row.get(17)?,
                     cache_ratio,
@@ -2242,11 +3010,128 @@ fn query_top_threads(
         .map_err(db_error)?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(db_error)?;
-    let mut rows = rows;
-    for row in &mut rows {
-        row.estimated_cost_usd = estimate_thread_cost(conn, req, filter, &row.thread_label)?;
-    }
-    Ok(rows)
+    let next_offset = (offset + rows.len() < total).then_some(offset + rows.len());
+    Ok(UsagePagedResponse {
+        rows,
+        total,
+        limit,
+        offset,
+        next_offset,
+    })
+}
+
+fn query_usage_insights(
+    conn: &Connection,
+    req: &UsageDashboardRequest,
+    filter: &SummaryFilter,
+) -> Result<UsageInsights> {
+    let search_like = req
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{}%", value.to_ascii_lowercase()));
+    let where_sql = "FROM usage_events
+         WHERE (?1 OR is_archived = 0)
+           AND (?2 IS NULL OR event_timestamp >= ?2)
+           AND (?3 IS NULL OR event_timestamp < ?3)
+           AND (?4 IS NULL OR workspace_id = ?4)
+           AND (?5 IS NULL OR attributed_account_id = ?5)
+           AND (?6 IS NULL OR model = ?6)
+           AND (?7 IS NULL OR effort = ?7)
+           AND (?8 IS NULL OR pricing_confidence = ?8)
+           AND (?9 IS NULL OR lower(COALESCE(thread_name, session_id) || ' ' || COALESCE(cwd, '') || ' ' || COALESCE(model, '')) LIKE ?9)";
+    let (total_calls, fast_calls, skills_explored, total_skills_used, total_threads) = conn
+        .query_row(
+            &format!(
+                "SELECT COUNT(*),
+                    SUM(CASE WHEN lower(COALESCE(effort,'')) IN ('fast','low','minimal','none') THEN 1 ELSE 0 END),
+                    COUNT(DISTINCT lower(COALESCE(subagent_type, agent_role, agent_nickname))),
+                    SUM(CASE WHEN COALESCE(subagent_type, agent_role, agent_nickname) IS NULL THEN 0 ELSE 1 END),
+                    COUNT(DISTINCT COALESCE(thread_key, thread_name, session_id))
+                 {where_sql}"
+            ),
+            params![
+                req.include_archived,
+                filter.from.as_deref(),
+                filter.to.as_deref(),
+                filter.workspace_id.as_deref(),
+                filter.account_id.as_deref(),
+                req.model.as_deref().filter(|value| !value.is_empty()),
+                req.effort.as_deref().filter(|value| !value.is_empty()),
+                req.pricing_confidence
+                    .as_deref()
+                    .filter(|value| !value.is_empty()),
+                search_like.as_deref(),
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        )
+        .map_err(db_error)?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT effort, COUNT(*) AS count
+             {where_sql}
+             AND effort IS NOT NULL
+             AND trim(effort) != ''
+             GROUP BY lower(effort), effort
+             ORDER BY count DESC, effort ASC
+             LIMIT 1"
+        ))
+        .map_err(db_error)?;
+    let top_reasoning = stmt
+        .query_row(
+            params![
+                req.include_archived,
+                filter.from.as_deref(),
+                filter.to.as_deref(),
+                filter.workspace_id.as_deref(),
+                filter.account_id.as_deref(),
+                req.model.as_deref().filter(|value| !value.is_empty()),
+                req.effort.as_deref().filter(|value| !value.is_empty()),
+                req.pricing_confidence
+                    .as_deref()
+                    .filter(|value| !value.is_empty()),
+                search_like.as_deref(),
+            ],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()
+        .map_err(db_error)?;
+    Ok(UsageInsights {
+        fast_mode_percent: (total_calls > 0).then_some(fast_calls as f64 / total_calls as f64),
+        most_used_reasoning: top_reasoning
+            .as_ref()
+            .map(|(effort, _)| title_label(effort)),
+        most_used_reasoning_percent: top_reasoning
+            .as_ref()
+            .and_then(|(_, count)| (total_calls > 0).then_some(*count as f64 / total_calls as f64)),
+        skills_explored: skills_explored as usize,
+        total_skills_used: total_skills_used as usize,
+        total_threads: total_threads as usize,
+    })
+}
+
+fn title_label(value: &str) -> String {
+    value
+        .split([' ', '_', '-'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str().to_lowercase()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn read_call_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UsageCallRow> {
@@ -2257,53 +3142,59 @@ fn read_call_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UsageCallRow> {
         session_updated_at: row.get(3)?,
         event_timestamp: row.get(4)?,
         source_file: row.get(5)?,
-        line_number: row.get(6)?,
-        turn_id: row.get(7)?,
-        turn_timestamp: row.get(8)?,
-        cwd: row.get(9)?,
-        model: row.get(10)?,
-        effort: row.get(11)?,
-        current_date: row.get(12)?,
-        timezone: row.get(13)?,
-        call_initiator: row.get(14)?,
-        call_initiator_reason: row.get(15)?,
-        call_initiator_confidence: row.get(16)?,
-        input_tokens: row.get(17)?,
-        cached_input_tokens: row.get(18)?,
-        uncached_input_tokens: row.get(19)?,
-        output_tokens: row.get(20)?,
-        reasoning_output_tokens: row.get(21)?,
-        total_tokens: row.get(22)?,
-        cumulative_total_tokens: row.get(23)?,
-        cache_ratio: row.get(24)?,
-        is_archived: row.get::<_, i64>(25)? != 0,
-        thread_key: row.get(26)?,
-        thread_call_index: row.get(27)?,
-        previous_record_id: row.get(28)?,
-        next_record_id: row.get(29)?,
-        thread_source: row.get(30)?,
-        subagent_type: row.get(31)?,
-        agent_role: row.get(32)?,
-        agent_nickname: row.get(33)?,
-        parent_session_id: row.get(34)?,
-        parent_thread_name: row.get(35)?,
-        parent_session_updated_at: row.get(36)?,
-        model_context_window: row.get(37)?,
-        context_window_percent: row.get(38)?,
-        rate_limit_plan_type: row.get(39)?,
-        rate_limit_limit_id: row.get(40)?,
-        rate_limit_primary_used_percent: row.get(41)?,
-        rate_limit_primary_window_minutes: row.get(42)?,
-        rate_limit_primary_resets_at: row.get(43)?,
-        rate_limit_secondary_used_percent: row.get(44)?,
-        rate_limit_secondary_window_minutes: row.get(45)?,
-        rate_limit_secondary_resets_at: row.get(46)?,
-        reasoning_output_ratio: row.get(47)?,
-        estimated_cost_usd: row.get(48)?,
-        usage_credits: row.get(49)?,
-        pricing_model: row.get(50)?,
-        pricing_estimated: row.get::<_, i64>(51)? != 0,
-        pricing_confidence: row.get(52)?,
+        workspace_id: row.get(6)?,
+        workspace_label: row.get(7)?,
+        workspace_home: row.get(8)?,
+        attributed_account_id: row.get(9)?,
+        attributed_account_label: row.get(10)?,
+        attribution_source: row.get(11)?,
+        line_number: row.get(12)?,
+        turn_id: row.get(13)?,
+        turn_timestamp: row.get(14)?,
+        cwd: row.get(15)?,
+        model: row.get(16)?,
+        effort: row.get(17)?,
+        current_date: row.get(18)?,
+        timezone: row.get(19)?,
+        call_initiator: row.get(20)?,
+        call_initiator_reason: row.get(21)?,
+        call_initiator_confidence: row.get(22)?,
+        input_tokens: row.get(23)?,
+        cached_input_tokens: row.get(24)?,
+        uncached_input_tokens: row.get(25)?,
+        output_tokens: row.get(26)?,
+        reasoning_output_tokens: row.get(27)?,
+        total_tokens: row.get(28)?,
+        cumulative_total_tokens: row.get(29)?,
+        cache_ratio: row.get(30)?,
+        is_archived: row.get::<_, i64>(31)? != 0,
+        thread_key: row.get(32)?,
+        thread_call_index: row.get(33)?,
+        previous_record_id: row.get(34)?,
+        next_record_id: row.get(35)?,
+        thread_source: row.get(36)?,
+        subagent_type: row.get(37)?,
+        agent_role: row.get(38)?,
+        agent_nickname: row.get(39)?,
+        parent_session_id: row.get(40)?,
+        parent_thread_name: row.get(41)?,
+        parent_session_updated_at: row.get(42)?,
+        model_context_window: row.get(43)?,
+        context_window_percent: row.get(44)?,
+        rate_limit_plan_type: row.get(45)?,
+        rate_limit_limit_id: row.get(46)?,
+        rate_limit_primary_used_percent: row.get(47)?,
+        rate_limit_primary_window_minutes: row.get(48)?,
+        rate_limit_primary_resets_at: row.get(49)?,
+        rate_limit_secondary_used_percent: row.get(50)?,
+        rate_limit_secondary_window_minutes: row.get(51)?,
+        rate_limit_secondary_resets_at: row.get(52)?,
+        reasoning_output_ratio: row.get(53)?,
+        estimated_cost_usd: row.get(54)?,
+        usage_credits: row.get(55)?,
+        pricing_model: row.get(56)?,
+        pricing_estimated: row.get::<_, i64>(57)? != 0,
+        pricing_confidence: row.get(58)?,
     };
     if let Some(estimate) = estimate_cost(
         item.model.as_deref(),
@@ -2326,6 +3217,53 @@ struct ModelTokenTotals {
     estimated_cost_usd: f64,
 }
 
+fn query_usage_options(
+    conn: &Connection,
+    req: &UsageSummaryRequest,
+    filter: &SummaryFilter,
+) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
+    fn distinct_values(
+        conn: &Connection,
+        column: &str,
+        req: &UsageSummaryRequest,
+        filter: &SummaryFilter,
+    ) -> Result<Vec<String>> {
+        let sql = format!(
+            "SELECT DISTINCT {column}
+             FROM usage_events
+             WHERE (?1 OR is_archived = 0)
+               AND (?2 IS NULL OR event_timestamp >= ?2)
+               AND (?3 IS NULL OR event_timestamp < ?3)
+               AND (?4 IS NULL OR workspace_id = ?4)
+               AND (?5 IS NULL OR attributed_account_id = ?5)
+               AND {column} IS NOT NULL
+               AND {column} != ''
+             ORDER BY {column} ASC"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(db_error)?;
+        let values = stmt
+            .query_map(
+                params![
+                    req.include_archived,
+                    filter.from.as_deref(),
+                    filter.to.as_deref(),
+                    filter.workspace_id.as_deref(),
+                    filter.account_id.as_deref()
+                ],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(db_error)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(db_error)?;
+        Ok(values)
+    }
+    Ok((
+        distinct_values(conn, "model", req, filter)?,
+        distinct_values(conn, "effort", req, filter)?,
+        distinct_values(conn, "pricing_confidence", req, filter)?,
+    ))
+}
+
 fn model_totals(
     conn: &Connection,
     req: &UsageSummaryRequest,
@@ -2340,6 +3278,8 @@ fn model_totals(
              WHERE (?1 OR is_archived = 0)
                AND (?2 IS NULL OR event_timestamp >= ?2)
                AND (?3 IS NULL OR event_timestamp < ?3)
+               AND (?4 IS NULL OR workspace_id = ?4)
+               AND (?5 IS NULL OR attributed_account_id = ?5)
              GROUP BY model",
         )
         .map_err(db_error)?;
@@ -2348,7 +3288,9 @@ fn model_totals(
             params![
                 req.include_archived,
                 filter.from.as_deref(),
-                filter.to.as_deref()
+                filter.to.as_deref(),
+                filter.workspace_id.as_deref(),
+                filter.account_id.as_deref()
             ],
             |row| {
                 Ok(ModelTokenTotals {
@@ -2502,47 +3444,73 @@ fn rate_for_model(model: &str, input_tokens: i64) -> Option<UsageRate> {
     }
 }
 
-fn estimate_thread_cost(
-    conn: &Connection,
-    req: &UsageSummaryRequest,
-    filter: &SummaryFilter,
-    label: &str,
-) -> Result<f64> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT model, COALESCE(SUM(input_tokens),0),
-                COALESCE(SUM(output_tokens),0), COALESCE(SUM(total_tokens),0),
-                COALESCE(SUM(estimated_cost_usd),0.0)
-             FROM usage_events
-             WHERE (?1 OR is_archived = 0)
-               AND (?2 IS NULL OR event_timestamp >= ?2)
-               AND (?3 IS NULL OR event_timestamp < ?3)
-               AND COALESCE(thread_name, session_id) = ?4
-             GROUP BY model",
-        )
-        .map_err(db_error)?;
-    let totals = stmt
-        .query_map(
-            params![
-                req.include_archived,
-                filter.from.as_deref(),
-                filter.to.as_deref(),
-                label,
-            ],
-            |row| {
-                Ok(ModelTokenTotals {
-                    model: row.get(0)?,
-                    input_tokens: row.get(1)?,
-                    output_tokens: row.get(2)?,
-                    total_tokens: row.get(3)?,
-                    estimated_cost_usd: row.get(4)?,
-                })
+fn usage_rate_card() -> Vec<UsageRateCardEntry> {
+    [
+        ("gpt-5.5", "short <=128k", false, 5.0, 0.5, 30.0, None),
+        ("gpt-5.5", "long >128k", false, 10.0, 1.0, 45.0, None),
+        (
+            "gpt-5.5-pro",
+            "short <=128k",
+            false,
+            30.0,
+            30.0,
+            180.0,
+            None,
+        ),
+        ("gpt-5.5-pro", "long >128k", false, 60.0, 60.0, 270.0, None),
+        ("gpt-5.4", "short <=128k", false, 2.5, 0.25, 15.0, None),
+        ("gpt-5.4", "long >128k", false, 5.0, 0.5, 22.5, None),
+        ("gpt-5.4-mini", "all", false, 0.75, 0.075, 4.5, None),
+        ("gpt-5.4-nano", "all", false, 0.2, 0.02, 1.25, None),
+        (
+            "gpt-5.4-pro",
+            "short <=128k",
+            false,
+            30.0,
+            30.0,
+            180.0,
+            None,
+        ),
+        ("gpt-5.4-pro", "long >128k", false, 60.0, 60.0, 270.0, None),
+        ("gpt-5.3-codex", "all", false, 4.375, 0.4375, 35.0, None),
+        ("gpt-5.2", "all", false, 4.375, 0.4375, 35.0, None),
+        ("gpt-5", "all", false, 4.375, 0.4375, 35.0, None),
+        (
+            "codex-auto-review",
+            "all",
+            true,
+            4.375,
+            0.4375,
+            35.0,
+            Some("Estimated with gpt-5.3-codex rates".to_string()),
+        ),
+    ]
+    .into_iter()
+    .map(
+        |(
+            model,
+            context_window,
+            estimated,
+            input_per_million,
+            cached_input_per_million,
+            output_per_million,
+            notes,
+        )| UsageRateCardEntry {
+            model: model.to_string(),
+            pricing_model: if model == "codex-auto-review" {
+                "gpt-5.3-codex".to_string()
+            } else {
+                model.to_string()
             },
-        )
-        .map_err(db_error)?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(db_error)?;
-    Ok(estimate_summary_cost(&totals).0)
+            context_window: context_window.to_string(),
+            estimated,
+            input_per_million,
+            cached_input_per_million,
+            output_per_million,
+            notes,
+        },
+    )
+    .collect()
 }
 
 fn usage_diagnostics(
@@ -2587,6 +3555,84 @@ fn usage_diagnostics(
             .collect(),
         last_refresh_error: get_meta(conn, "last_refresh_error")?,
     })
+}
+
+fn usage_scopes(home_root: &Path) -> Result<Vec<UsageScope>> {
+    let mut scopes = vec![UsageScope {
+        id: "total".to_string(),
+        label: "Total".to_string(),
+        kind: "total".to_string(),
+        account_id: None,
+        is_default: true,
+    }];
+    scopes.extend(
+        discover_usage_workspaces(home_root)?
+            .into_iter()
+            .map(|workspace| UsageScope {
+                id: workspace.id,
+                label: workspace.label,
+                kind: "workspace".to_string(),
+                account_id: workspace.account_id,
+                is_default: false,
+            }),
+    );
+    Ok(scopes)
+}
+
+fn discover_usage_workspaces(home_root: &Path) -> Result<Vec<UsageWorkspace>> {
+    let mut seen = BTreeSet::new();
+    let mut workspaces = Vec::new();
+    for account in list_accounts(home_root)? {
+        if !has_usage_workspace_signal(&account.codex_home) {
+            continue;
+        }
+        let key = canonical_key(&account.codex_home);
+        if !seen.insert(key) {
+            continue;
+        }
+        workspaces.push(UsageWorkspace {
+            id: format!("workspace:{}", account.id),
+            label: account.display_name,
+            home: account.codex_home,
+            account_id: Some(account.id),
+        });
+    }
+    workspaces.sort_by(|a, b| {
+        let rank_a = if a.account_id.as_deref() == Some("main") {
+            0
+        } else {
+            1
+        };
+        let rank_b = if b.account_id.as_deref() == Some("main") {
+            0
+        } else {
+            1
+        };
+        rank_a.cmp(&rank_b).then_with(|| a.label.cmp(&b.label))
+    });
+    Ok(workspaces)
+}
+
+fn canonical_key(path: &Path) -> String {
+    fs::canonicalize(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .to_string()
+}
+
+fn has_usage_workspace_signal(path: &Path) -> bool {
+    path.join("sessions").exists()
+        || path.join("archived_sessions").exists()
+        || path.join("auth.json").exists()
+        || path.join("config.toml").exists()
+}
+
+fn account_label_from_id(id: &str) -> String {
+    if id == "main" {
+        "main".to_string()
+    } else {
+        format!("codex-{id}")
+    }
 }
 
 pub fn reset_usage_index(home_root: &Path) -> Result<()> {
@@ -2640,17 +3686,37 @@ fn load_session_index(codex_home: &Path) -> HashMap<String, String> {
         .collect()
 }
 
-fn find_session_logs(codex_home: &Path, include_archived: bool) -> Result<Vec<SourceLog>> {
+fn find_session_logs(
+    workspaces: &[UsageWorkspace],
+    include_archived: bool,
+) -> Result<Vec<SourceLog>> {
     let mut paths = Vec::new();
-    collect_jsonl(&codex_home.join("sessions"), false, &mut paths)?;
-    if include_archived {
-        collect_jsonl(&codex_home.join("archived_sessions"), true, &mut paths)?;
+    for workspace in workspaces {
+        collect_jsonl(
+            &workspace.home.join("sessions"),
+            workspace,
+            false,
+            &mut paths,
+        )?;
+        if include_archived {
+            collect_jsonl(
+                &workspace.home.join("archived_sessions"),
+                workspace,
+                true,
+                &mut paths,
+            )?;
+        }
     }
     paths.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(paths)
 }
 
-fn collect_jsonl(dir: &Path, is_archived: bool, paths: &mut Vec<SourceLog>) -> Result<()> {
+fn collect_jsonl(
+    dir: &Path,
+    workspace: &UsageWorkspace,
+    is_archived: bool,
+    paths: &mut Vec<SourceLog>,
+) -> Result<()> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Ok(());
     };
@@ -2658,9 +3724,16 @@ fn collect_jsonl(dir: &Path, is_archived: bool, paths: &mut Vec<SourceLog>) -> R
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_jsonl(&path, is_archived, paths)?;
+            collect_jsonl(&path, workspace, is_archived, paths)?;
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
-            paths.push(SourceLog { path, is_archived });
+            paths.push(SourceLog {
+                path,
+                is_archived,
+                workspace_id: workspace.id.clone(),
+                workspace_label: workspace.label.clone(),
+                workspace_home: workspace.home.clone(),
+                account_id: workspace.account_id.clone(),
+            });
         }
     }
     Ok(())
@@ -2789,6 +3862,7 @@ fn json_error(err: serde_json::Error) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::account::{execute_create_account, CreateAccountRequest};
     use serde_json::json;
     use tempfile::TempDir;
 
@@ -2833,6 +3907,29 @@ mod tests {
                 to: None,
             },
             include_archived: false,
+            scope_id: None,
+            account_id: None,
+        }
+    }
+
+    fn dashboard_request(preset: &str) -> UsageDashboardRequest {
+        UsageDashboardRequest {
+            window: UsageWindow {
+                preset: preset.to_string(),
+                from: None,
+                to: None,
+            },
+            include_archived: false,
+            scope_id: None,
+            account_id: None,
+            search: None,
+            model: None,
+            effort: None,
+            pricing_confidence: None,
+            sort_key: Some("time".to_string()),
+            sort_direction: Some("desc".to_string()),
+            limit: None,
+            offset: None,
         }
     }
 
@@ -2920,6 +4017,22 @@ mod tests {
         assert!(table_columns(&conn, "thread_summaries").contains(&"usage_credits".to_string()));
         assert!(table_columns(&conn, "aggregate_diagnostic_facts")
             .contains(&"raw_content_included".to_string()));
+    }
+
+    #[test]
+    fn ensure_column_tolerates_duplicate_column_migration_race() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("CREATE TABLE example (workspace_id TEXT)", [])
+            .unwrap();
+
+        let result = ensure_column(
+            &conn,
+            "example",
+            "workspace_id_race_marker",
+            "ALTER TABLE example ADD COLUMN workspace_id TEXT",
+        );
+
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -3029,6 +4142,188 @@ mod tests {
     }
 
     #[test]
+    fn usage_calls_section_applies_filter_and_limit_in_query() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir_all(temp.path().join(".codex")).unwrap();
+        write_log_at(
+            temp.path(),
+            "sessions",
+            "rollout-keep-a",
+            &fixture_at("keep-a", "2026-06-28T00:00:02Z", 100, 50, "gpt-5.4"),
+        );
+        write_log_at(
+            temp.path(),
+            "sessions",
+            "rollout-keep-b",
+            &fixture_at("keep-b", "2026-06-28T00:00:03Z", 100, 50, "gpt-5.4"),
+        );
+        write_log_at(
+            temp.path(),
+            "sessions",
+            "rollout-skip",
+            &fixture_at("skip-c", "2026-06-28T00:00:04Z", 100, 50, "gpt-5"),
+        );
+        refresh_usage_index(temp.path()).unwrap();
+
+        let mut req = dashboard_request("all");
+        req.search = Some("keep".to_string());
+        req.model = Some("gpt-5.4".to_string());
+        req.limit = Some(1);
+        let calls = get_usage_calls(temp.path(), req).unwrap();
+
+        assert_eq!(calls.total, 2);
+        assert_eq!(calls.rows.len(), 1);
+        assert_eq!(calls.next_offset, Some(1));
+        assert_eq!(calls.rows[0].model.as_deref(), Some("gpt-5.4"));
+        assert!(calls.rows[0].session_id.contains("keep"));
+    }
+
+    #[test]
+    fn usage_insights_and_paged_sections_use_full_filtered_data() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir_all(temp.path().join(".codex")).unwrap();
+        for index in 0..3 {
+            let session_id = format!("session-{index}");
+            let body = format!(
+                "{}\n{}\n{}\n",
+                json!({"type":"session_meta","timestamp":"2026-06-28T00:00:00Z","payload":{"id":session_id,"thread_name":format!("thread-{index}")}}),
+                json!({"type":"turn_context","timestamp":"2026-06-28T00:00:01Z","payload":{"turn_id":"turn-1","cwd":"/repo/LAM","model":"gpt-5","effort":if index == 0 { "low" } else { "medium" },"current_date":"2026-06-28","timezone":"Asia/Shanghai"}}),
+                json!({"type":"event_msg","timestamp":format!("2026-06-28T00:00:0{}Z", index + 2),"payload":{"type":"token_count","subagent_type":if index < 2 { "review" } else { "planner" },"info":{"last_token_usage":{"input_tokens":100 + index,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":3,"total_tokens":110 + index},"total_token_usage":{"input_tokens":100 + index,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":3,"total_tokens":110 + index}}}})
+            );
+            write_log_at(
+                temp.path(),
+                "sessions",
+                &format!("rollout-page-{index}"),
+                &body,
+            );
+        }
+        refresh_usage_index(temp.path()).unwrap();
+
+        let mut req = dashboard_request("all");
+        req.limit = Some(2);
+        let calls = get_usage_calls(temp.path(), req.clone()).unwrap();
+        assert_eq!(calls.total, 3);
+        assert_eq!(calls.rows.len(), 2);
+        assert_eq!(calls.next_offset, Some(2));
+
+        req.offset = Some(2);
+        let second_page = get_usage_calls(temp.path(), req.clone()).unwrap();
+        assert_eq!(second_page.total, 3);
+        assert_eq!(second_page.rows.len(), 1);
+        assert_eq!(second_page.next_offset, None);
+
+        let threads = get_usage_threads(temp.path(), req.clone()).unwrap();
+        assert_eq!(threads.total, 3);
+        assert_eq!(threads.rows.len(), 1);
+
+        let insights = get_usage_insights(temp.path(), dashboard_request("all")).unwrap();
+        assert_eq!(insights.total_threads, 3);
+        assert_eq!(insights.skills_explored, 2);
+        assert_eq!(insights.total_skills_used, 3);
+        assert_eq!(insights.most_used_reasoning.as_deref(), Some("Medium"));
+        assert_eq!(insights.most_used_reasoning_percent, Some(2.0 / 3.0));
+        assert_eq!(insights.fast_mode_percent, Some(1.0 / 3.0));
+    }
+
+    #[test]
+    fn usage_workspace_response_aggregates_and_filters_workspaces() {
+        let temp = TempDir::new().unwrap();
+        write_log(temp.path(), &fixture(100, 50));
+
+        let c_path = temp.path().join(".codex-c/sessions/2026/06/28/c.jsonl");
+        fs::create_dir_all(c_path.parent().unwrap()).unwrap();
+        fs::write(
+            &c_path,
+            fixture_at(
+                "00000000-0000-0000-0000-0000000000c0",
+                "2026-06-28T00:00:03Z",
+                200,
+                70,
+                "gpt-5",
+            ),
+        )
+        .unwrap();
+
+        refresh_usage_index(temp.path()).unwrap();
+        let response = get_usage_dashboard_response(
+            temp.path(),
+            UsageDashboardRequest {
+                window: UsageWindow::default(),
+                include_archived: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            response
+                .scopes
+                .iter()
+                .map(|scope| scope.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Total", "main", "codex-c"]
+        );
+        assert_eq!(response.active_scope_id, "total");
+        assert_eq!(response.dashboard.summary.total_calls, 2);
+
+        let c_response = get_usage_dashboard_response(
+            temp.path(),
+            UsageDashboardRequest {
+                scope_id: Some("workspace:c".to_string()),
+                window: UsageWindow::default(),
+                include_archived: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(c_response.dashboard.summary.total_calls, 1);
+        assert_eq!(c_response.dashboard.summary.input_tokens, 70);
+        assert_eq!(
+            c_response.dashboard.summary.recent_calls[0]
+                .workspace_label
+                .as_deref(),
+            Some("codex-c")
+        );
+    }
+
+    #[test]
+    fn scoped_headline_stats_apply_workspace_filter() {
+        let temp = TempDir::new().unwrap();
+        write_log(
+            temp.path(),
+            &fixture_at(
+                "00000000-0000-0000-0000-000000000001",
+                "2026-06-28T00:00:02Z",
+                100,
+                50,
+                "gpt-5",
+            ),
+        );
+
+        let c_path = temp.path().join(".codex-c/sessions/2026/06/28/c.jsonl");
+        fs::create_dir_all(c_path.parent().unwrap()).unwrap();
+        fs::write(
+            &c_path,
+            format!(
+                "{}\n{}\n{}\n{}\n",
+                json!({"type":"session_meta","timestamp":"2026-06-28T00:00:00Z","payload":{"id":"00000000-0000-0000-0000-0000000000c0"}}),
+                json!({"type":"turn_context","timestamp":"2026-06-28T00:00:01Z","payload":{"turn_id":"long-turn","cwd":"/repo/LAM","model":"gpt-5","effort":"medium","current_date":"2026-06-28"}}),
+                json!({"type":"event_msg","timestamp":"2026-06-28T00:00:02Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":1010},"total_token_usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":1010}}}}),
+                json!({"type":"event_msg","timestamp":"2026-06-28T00:02:02Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":2000,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":2010},"total_token_usage":{"input_tokens":3000,"cached_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":3020}}}})
+            ),
+        )
+        .unwrap();
+
+        refresh_usage_index(temp.path()).unwrap();
+        let mut req = summary_request("all");
+        req.scope_id = Some("workspace:main".to_string());
+        let summary = get_usage_summary(temp.path(), req).unwrap();
+
+        assert_eq!(summary.total_tokens, 60);
+        assert_eq!(summary.headline_stats.peak_daily_tokens, Some(60));
+        assert_eq!(summary.headline_stats.longest_running_turn_sec, Some(0));
+    }
+
+    #[test]
     fn refresh_is_idempotent_for_unchanged_source() {
         let temp = TempDir::new().unwrap();
         write_log(temp.path(), &fixture(100, 50));
@@ -3039,6 +4334,50 @@ mod tests {
                 .unwrap()
                 .total_calls,
             1
+        );
+    }
+
+    #[test]
+    fn refresh_backfills_workspace_metadata_for_unchanged_sources() {
+        let temp = TempDir::new().unwrap();
+        write_log(temp.path(), &fixture(100, 50));
+        refresh_usage_index(temp.path()).unwrap();
+
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        conn.execute(
+            "UPDATE usage_events
+             SET workspace_id = NULL,
+                 workspace_label = NULL,
+                 workspace_home = NULL,
+                 attributed_account_id = NULL,
+                 attributed_account_label = NULL,
+                 attribution_source = NULL",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE source_files SET workspace_id = NULL, workspace_home = NULL",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let result = refresh_usage_index(temp.path()).unwrap();
+        assert_eq!(result.parsed_files, 0);
+        assert_eq!(
+            get_usage_summary(temp.path(), summary_request("all"))
+                .unwrap()
+                .total_calls,
+            1
+        );
+
+        let mut req = summary_request("all");
+        req.scope_id = Some("workspace:main".to_string());
+        let summary = get_usage_summary(temp.path(), req).unwrap();
+        assert_eq!(summary.total_calls, 1);
+        assert_eq!(
+            summary.recent_calls[0].workspace_label.as_deref(),
+            Some("main")
         );
     }
 
@@ -3061,6 +4400,39 @@ mod tests {
         let summary = get_usage_summary(temp.path(), summary_request("all")).unwrap();
         assert_eq!(summary.total_calls, 1);
         assert_eq!(summary.recent_calls[0].model.as_deref(), Some("gpt-5"));
+    }
+
+    #[test]
+    fn thread_summaries_are_scoped_by_workspace() {
+        let temp = TempDir::new().unwrap();
+        let body = fixture_at("shared-session", "2026-06-28T00:00:00Z", 100, 50, "gpt-5");
+        write_log(temp.path(), &body);
+        execute_create_account(
+            temp.path(),
+            &CreateAccountRequest {
+                name: "luna002".to_string(),
+                copy_config_from: None,
+                overwrite_wrapper: false,
+            },
+        )
+        .unwrap();
+        let other_path = temp.path().join(
+            ".codex-luna002/sessions/2026/06/28/rollout-test-2026-06-28T00-00-00-00000000-0000-0000-0000-000000000001.jsonl",
+        );
+        fs::create_dir_all(other_path.parent().unwrap()).unwrap();
+        fs::write(&other_path, body).unwrap();
+
+        refresh_usage_index(temp.path()).unwrap();
+
+        let mut main_req = dashboard_request("all");
+        main_req.scope_id = Some("workspace:main".to_string());
+        let main_threads = get_usage_threads(temp.path(), main_req).unwrap();
+        assert_eq!(main_threads.total, 1);
+
+        let mut other_req = dashboard_request("all");
+        other_req.scope_id = Some("workspace:luna002".to_string());
+        let other_threads = get_usage_threads(temp.path(), other_req).unwrap();
+        assert_eq!(other_threads.total, 1);
     }
 
     #[test]
@@ -3285,6 +4657,8 @@ mod tests {
                         to: Some(today.format("%Y-%m-%d").to_string()),
                     },
                     include_archived: false,
+                    scope_id: None,
+                    account_id: None,
                 },
             )
             .unwrap()
@@ -3351,6 +4725,23 @@ mod tests {
             Some("gpt-5.3-codex")
         );
         assert!(summary.recent_calls[0].pricing_estimated);
+    }
+
+    #[test]
+    fn usage_rate_card_exposes_backend_builtin_prices() {
+        let rate_card = get_usage_rate_card();
+
+        assert!(rate_card.iter().any(|entry| {
+            entry.model == "gpt-5"
+                && entry.context_window == "all"
+                && entry.input_per_million == 4.375
+                && entry.output_per_million == 35.0
+        }));
+        assert!(rate_card.iter().any(|entry| {
+            entry.model == "codex-auto-review"
+                && entry.pricing_model == "gpt-5.3-codex"
+                && entry.estimated
+        }));
     }
 
     #[test]
@@ -3455,6 +4846,38 @@ mod tests {
     }
 
     #[test]
+    fn scoped_usage_headlines_are_not_overwritten_by_global_account_snapshot() {
+        let temp = TempDir::new().unwrap();
+        write_log(temp.path(), &fixture(100, 50));
+        refresh_usage_index(temp.path()).unwrap();
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        store_account_usage_snapshot(
+            &conn,
+            &AccountUsageSnapshot {
+                lifetime_tokens: Some(5_900_000_000),
+                peak_daily_tokens: Some(193_000_000),
+                longest_running_turn_sec: Some(8_880),
+                current_streak_days: Some(8),
+                longest_streak_days: Some(19),
+                daily_buckets: vec![("2026-06-28".to_string(), 12345)],
+            },
+        )
+        .unwrap();
+
+        let mut req = summary_request("all");
+        req.scope_id = Some("workspace:main".to_string());
+        let summary = get_usage_summary(temp.path(), req).unwrap();
+
+        assert_eq!(summary.headline_stats.source, "local_sqlite");
+        assert_eq!(summary.headline_stats.lifetime_tokens, Some(60));
+        assert_eq!(summary.headline_stats.peak_daily_tokens, Some(60));
+        assert_eq!(summary.headline_stats.current_streak_days, Some(1));
+        assert_eq!(summary.headline_stats.longest_streak_days, Some(1));
+        assert_eq!(summary.headline_stats.codex_total_tokens, None);
+        assert_eq!(summary.headline_stats.token_delta, None);
+    }
+
+    #[test]
     fn refresh_guard_serializes_overlapping_calls() {
         let temp = TempDir::new().unwrap();
         write_log(temp.path(), &fixture(100, 50));
@@ -3488,5 +4911,63 @@ mod tests {
         assert!(!home.join(".codex/sessions/usage.sqlite3").exists());
         assert!(!home.join(".codex/logs/usage.sqlite3").exists());
         assert!(!home.join(".codex/cache/usage.sqlite3").exists());
+    }
+
+    #[test]
+    #[ignore]
+    fn real_home_usage_section_performance_smoke() {
+        use std::time::Instant;
+
+        let home = PathBuf::from(std::env::var("HOME").expect("HOME is required"));
+        let mut req = dashboard_request("all");
+        req.limit = Some(100);
+
+        fn measure<T, F>(label: &str, mut f: F)
+        where
+            F: FnMut() -> Result<T>,
+        {
+            let mut samples = Vec::new();
+            for _ in 0..7 {
+                let started = Instant::now();
+                f().unwrap();
+                samples.push(started.elapsed().as_millis());
+            }
+            samples.sort_unstable();
+            let min = samples[0];
+            let p50 = samples[samples.len() / 2];
+            let p95 =
+                samples[((samples.len() as f64 * 0.95).ceil() as usize - 1).min(samples.len() - 1)];
+            let max = samples[samples.len() - 1];
+            println!(
+                "{label}: min={min}ms p50={p50}ms p95={p95}ms max={max}ms samples={samples:?}"
+            );
+        }
+
+        println!("usage_db={}", usage_db_path(&home).display());
+        measure("scopes", || get_usage_scopes(&home, req.clone()));
+        measure("overview", || get_usage_overview(&home, req.clone()));
+        measure("activity", || get_usage_activity(&home, req.clone()));
+
+        let mut calls_50 = req.clone();
+        calls_50.limit = Some(50);
+        measure("calls_50", || get_usage_calls(&home, calls_50.clone()));
+
+        let mut calls_100 = req.clone();
+        calls_100.limit = Some(100);
+        measure("calls_100", || get_usage_calls(&home, calls_100.clone()));
+
+        measure("threads", || get_usage_threads(&home, req.clone()));
+        measure("diagnostics", || get_usage_diagnostics(&home, req.clone()));
+
+        let started = Instant::now();
+        let refresh = refresh_usage_index(&home).unwrap();
+        println!(
+            "refresh_index: elapsed={}ms scanned_files={} parsed_files={} parsed_events={} inserted_or_updated={}",
+            started.elapsed().as_millis(),
+            refresh.scanned_files,
+            refresh.parsed_files,
+            refresh.parsed_events,
+            refresh.inserted_or_updated_events
+        );
     }
 }

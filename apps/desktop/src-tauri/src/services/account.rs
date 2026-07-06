@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::SystemTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -65,6 +66,15 @@ pub struct AddPatAccountRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AddSessionProfileAccountRequest {
+    pub account_id: String,
+    pub session_json: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub overwrite_wrapper: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AddPatAccountResult {
     pub account_id: String,
     pub email: String,
@@ -119,6 +129,20 @@ pub struct RenameAccountResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct DeleteAccountRequest {
+    pub profile_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteAccountResult {
+    pub profile_id: String,
+    pub removed_home_path: PathBuf,
+    pub removed_wrapper_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct AccountNoteUpdate {
     pub profile_id: String,
     pub renewal_date: Option<String>,
@@ -154,6 +178,22 @@ pub struct AuthMetadata {
     pub auth_type: String, // "personal_token" | "oauth" | "api_key" | "uploaded"
     pub token_expiration: Option<String>, // ISO 8601
     pub last_checked: String, // ISO 8601
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PatUsageTimeline {
+    events: Vec<PatUsageTimelineEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PatUsageTimelineEvent {
+    account_id: String,
+    account_label: String,
+    workspace_id: String,
+    started_at: String,
+    ended_at: Option<String>,
 }
 
 /// Token expiration status for UI display
@@ -496,6 +536,191 @@ pub fn execute_rename_account(
     })
 }
 
+pub fn delete_account(home_root: &Path, req: &DeleteAccountRequest) -> Result<DeleteAccountResult> {
+    let profile_id = validate_profile_id(&req.profile_id)?;
+    if profile_id == "main" {
+        return Err(AppError::new(
+            "MAIN_ACCOUNT_DELETE_BLOCKED",
+            "The main ~/.codex profile cannot be deleted",
+        ));
+    }
+
+    let account = find_account(home_root, &profile_id)?;
+    let removed_home_path = account.codex_home.clone();
+    let removed_wrapper_path = account
+        .wrapper_path
+        .clone()
+        .or_else(|| Some(wrapper_path(home_root, &profile_id)));
+
+    terminate_profile_processes(&removed_home_path, removed_wrapper_path.as_deref())?;
+    remove_profile_home(&removed_home_path)?;
+
+    if let Some(wrapper) = &removed_wrapper_path {
+        if wrapper.exists() {
+            fs::remove_file(wrapper).map_err(|err| {
+                AppError::new(
+                    "WRAPPER_DELETE_FAILED",
+                    format!("Failed to delete {}: {err}", wrapper.display()),
+                )
+            })?;
+        }
+    }
+    verify_deleted(&removed_home_path, "ACCOUNT_DELETE_INCOMPLETE")?;
+    if let Some(wrapper) = &removed_wrapper_path {
+        verify_deleted(wrapper, "WRAPPER_DELETE_INCOMPLETE")?;
+    }
+
+    remove_account_note(home_root, &profile_id)?;
+    remove_auth_metadata(home_root, &profile_id)?;
+    let accounts = list_accounts(home_root)?;
+    write_accounts_cache(home_root, &accounts)?;
+
+    Ok(DeleteAccountResult {
+        profile_id,
+        removed_home_path,
+        removed_wrapper_path,
+    })
+}
+
+fn remove_profile_home(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    fs::remove_dir_all(path).map_err(|err| {
+        AppError::new(
+            "ACCOUNT_DELETE_FAILED",
+            format!("Failed to delete {}: {err}", path.display()),
+        )
+    })
+}
+
+fn verify_deleted(path: &Path, code: &str) -> Result<()> {
+    if path.exists() {
+        return Err(AppError::new(
+            code,
+            format!("{} still exists after delete", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+fn terminate_profile_processes(codex_home: &Path, wrapper: Option<&Path>) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let process_ids = profile_process_ids(codex_home, wrapper)?;
+        if process_ids.is_empty() {
+            return Ok(());
+        }
+        signal_processes(&process_ids, "TERM");
+        wait_for_process_exit(&process_ids, std::time::Duration::from_millis(1500));
+        let remaining = process_ids
+            .into_iter()
+            .filter(|pid| process_is_alive(*pid))
+            .collect::<Vec<_>>();
+        if !remaining.is_empty() {
+            signal_processes(&remaining, "KILL");
+            wait_for_process_exit(&remaining, std::time::Duration::from_millis(1500));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = codex_home;
+        let _ = wrapper;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn profile_process_ids(codex_home: &Path, wrapper: Option<&Path>) -> Result<Vec<u32>> {
+    let output = Command::new("ps")
+        .args(["-ww", "-eo", "pid,args"])
+        .output()
+        .map_err(|err| AppError::new("PROCESS_SCAN_FAILED", err.to_string()))?;
+    if !output.status.success() {
+        return Err(AppError::new("PROCESS_SCAN_FAILED", "ps command failed"));
+    }
+    let body = String::from_utf8_lossy(&output.stdout);
+    let current_pid = std::process::id();
+    Ok(profile_process_ids_from_ps(
+        &body,
+        current_pid,
+        codex_home,
+        wrapper,
+    ))
+}
+
+#[cfg(unix)]
+fn profile_process_ids_from_ps(
+    ps_output: &str,
+    current_pid: u32,
+    codex_home: &Path,
+    wrapper: Option<&Path>,
+) -> Vec<u32> {
+    ps_output
+        .lines()
+        .filter_map(|line| profile_process_id_from_ps_line(line, current_pid, codex_home, wrapper))
+        .collect()
+}
+
+#[cfg(unix)]
+fn profile_process_id_from_ps_line(
+    line: &str,
+    current_pid: u32,
+    codex_home: &Path,
+    wrapper: Option<&Path>,
+) -> Option<u32> {
+    let trimmed = line.trim_start();
+    let (pid, command) = trimmed.split_once(char::is_whitespace)?;
+    let pid = pid.parse::<u32>().ok()?;
+    if pid == current_pid {
+        return None;
+    }
+    if process_command_matches_path(command, codex_home)
+        || wrapper.is_some_and(|path| process_command_matches_path(command, path))
+    {
+        Some(pid)
+    } else {
+        None
+    }
+}
+
+#[cfg(unix)]
+fn process_command_matches_path(command: &str, path: &Path) -> bool {
+    let needle = path.to_string_lossy();
+    command.contains(needle.as_ref())
+        || command
+            .to_ascii_lowercase()
+            .contains(&needle.to_ascii_lowercase())
+}
+
+#[cfg(unix)]
+fn signal_processes(process_ids: &[u32], signal: &str) {
+    for pid in process_ids {
+        let _ = Command::new("kill")
+            .args([format!("-{signal}"), pid.to_string()])
+            .status();
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_process_exit(process_ids: &[u32], timeout: std::time::Duration) {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if process_ids.iter().all(|pid| !process_is_alive(*pid)) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 pub fn create_relay_plan(home_root: &Path, req: &CreateRelayRequest) -> Result<OperationPlan> {
     find_account(home_root, &req.runtime_profile_id)?;
     find_account(home_root, &req.source_profile_id)?;
@@ -717,9 +942,6 @@ fn account_notes_path(home_root: &Path) -> PathBuf {
 }
 
 fn write_accounts_cache(home_root: &Path, accounts: &[CodexAccount]) -> Result<()> {
-    if accounts.is_empty() {
-        return Ok(());
-    }
     let payload = AccountsCacheFile {
         home_root: home_root.to_string_lossy().to_string(),
         fetched_at: system_secs(SystemTime::now()),
@@ -758,6 +980,14 @@ fn write_account_notes(home_root: &Path, notes: &AccountNotesFile) -> Result<()>
     let body = serde_json::to_string_pretty(notes)
         .map_err(|err| AppError::new("ACCOUNT_NOTES_INVALID", err.to_string()))?;
     write_file_private(&account_notes_path(home_root), &format!("{body}\n"))
+}
+
+fn remove_account_note(home_root: &Path, profile_id: &str) -> Result<()> {
+    let mut notes = read_account_notes(home_root)?;
+    if notes.accounts.remove(profile_id).is_some() {
+        write_account_notes(home_root, &notes)?;
+    }
+    Ok(())
 }
 
 fn validate_existing_profile_id(home_root: &Path, profile_id: &str) -> Result<String> {
@@ -839,6 +1069,20 @@ fn record_auth_metadata(
     std::fs::write(&path, content)
         .map_err(|e| AppError::new("WRITE_METADATA_FAILED", format!("Write failed: {}", e)))?;
 
+    Ok(())
+}
+
+fn remove_auth_metadata(home_root: &Path, profile_id: &str) -> Result<()> {
+    use crate::services::types::auth_metadata_path;
+    let path = auth_metadata_path(home_root, profile_id);
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| {
+            AppError::new(
+                "DELETE_METADATA_FAILED",
+                format!("Failed to delete {}: {e}", path.display()),
+            )
+        })?;
+    }
     Ok(())
 }
 
@@ -1022,6 +1266,137 @@ pub fn add_pat_account(
     })
 }
 
+/// Adds a normal isolated Codex profile from pasted ChatGPT session JSON.
+pub fn add_session_profile_account(
+    home_root: &Path,
+    req: &AddSessionProfileAccountRequest,
+) -> Result<CreateResult> {
+    let account_id = validate_profile_name(&req.account_id)?;
+    let codex_dir = codex_home_path(home_root, &account_id);
+    if codex_dir.exists() {
+        return Err(AppError::new(
+            "ACCOUNT_EXISTS",
+            format!("Account '{}' already exists", account_id),
+        ));
+    }
+
+    let wrapper = wrapper_path(home_root, &account_id);
+    if wrapper.exists() && !req.overwrite_wrapper {
+        return Err(AppError::new(
+            "WRAPPER_ALREADY_EXISTS",
+            wrapper.display().to_string(),
+        ));
+    }
+
+    let auth_content = build_session_profile_auth_json(&req.session_json)?;
+    fs::create_dir_all(&codex_dir)?;
+    set_dir_private(&codex_dir)?;
+    for sub in [
+        "sessions", "cache", "log", "tmp", "rules", "skills", "memories",
+    ] {
+        fs::create_dir_all(codex_dir.join(sub))?;
+    }
+    write_file_private(&codex_dir.join("auth.json"), &auth_content)?;
+    write_file_private(
+        &codex_dir.join("config.toml"),
+        "# Session-imported Codex profile\n# This file is managed by LAM\n",
+    )?;
+    write_file_private(
+        &codex_dir.join(NEW_MARKER),
+        &managed_account_json(&account_id, None, None, None, &codex_dir, &wrapper),
+    )?;
+    fs::create_dir_all(
+        wrapper
+            .parent()
+            .ok_or_else(|| AppError::new("WRAPPER_PATH_INVALID", "missing wrapper parent"))?,
+    )?;
+    write_executable(&wrapper, &wrapper_script(&account_id))?;
+
+    Ok(CreateResult {
+        profile_id: account_id,
+        home_path: codex_dir,
+        wrapper_path: wrapper,
+        operations: vec![
+            "create profile directory".to_string(),
+            "write converted auth.json".to_string(),
+            "write wrapper".to_string(),
+        ],
+        warnings: Vec::new(),
+    })
+}
+
+fn build_session_profile_auth_json(
+    session_json: &serde_json::Map<String, serde_json::Value>,
+) -> Result<String> {
+    if session_json.is_empty() {
+        return Err(AppError::new(
+            "INVALID_SESSION_JSON",
+            "session JSON cannot be empty",
+        ));
+    }
+
+    let mut tokens = serde_json::Map::new();
+    for (out_key, source_key) in [
+        ("access_token", "access_token"),
+        ("id_token", "id_token"),
+        ("refresh_token", "refresh_token"),
+        ("account_id", "account_id"),
+    ] {
+        if let Some(value) = auth_string(session_json, source_key) {
+            tokens.insert(out_key.to_string(), serde_json::Value::String(value));
+        }
+    }
+    if !tokens
+        .keys()
+        .any(|key| matches!(key.as_str(), "access_token" | "id_token" | "refresh_token"))
+    {
+        return Err(AppError::new(
+            "INVALID_SESSION_JSON",
+            "session JSON must include accessToken, idToken, or refreshToken",
+        ));
+    }
+
+    let mut auth = serde_json::Map::new();
+    auth.insert(
+        "auth_mode".to_string(),
+        serde_json::Value::String("chatgpt".to_string()),
+    );
+    auth.insert("OPENAI_API_KEY".to_string(), serde_json::Value::Null);
+    auth.insert("tokens".to_string(), serde_json::Value::Object(tokens));
+    auth.insert(
+        "last_refresh".to_string(),
+        serde_json::Value::String(
+            auth_string(session_json, "last_refresh")
+                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+        ),
+    );
+    auth.insert(
+        "type".to_string(),
+        serde_json::Value::String(
+            auth_string(session_json, "type").unwrap_or_else(|| "codex".to_string()),
+        ),
+    );
+    auth.insert("websockets".to_string(), serde_json::Value::Bool(true));
+
+    for (out_key, source_key) in [
+        ("email", "email"),
+        ("expired", "expired"),
+        ("plan_type", "plan_type"),
+        ("chatgpt_plan_type", "chatgpt_plan_type"),
+    ] {
+        if let Some(value) = auth_string(session_json, source_key) {
+            auth.insert(out_key.to_string(), serde_json::Value::String(value));
+        }
+    }
+
+    serde_json::to_string_pretty(&serde_json::Value::Object(auth)).map_err(|e| {
+        AppError::new(
+            "SERIALIZE_AUTH_FAILED",
+            format!("Failed to serialize auth.json: {e}"),
+        )
+    })
+}
+
 /// Builds auth.json content from uploaded credentials and optional PAT
 fn build_pat_auth_json(creds: &UploadedCredentials, token: Option<&str>) -> Result<String> {
     let mut auth_json = match &creds.raw_auth_json {
@@ -1099,18 +1474,18 @@ fn infer_auth_type(auth_json: &serde_json::Map<String, serde_json::Value>) -> St
     if auth_json.contains_key("personal_access_token") {
         return "personal_token".to_string();
     }
-    if auth_json
-        .get("OPENAI_API_KEY")
-        .is_some_and(|value| !value.is_null())
-    {
-        return "api_key".to_string();
-    }
     if auth_json.contains_key("tokens")
         || auth_json.contains_key("access_token")
         || auth_json.contains_key("id_token")
         || auth_json.contains_key("refresh_token")
     {
         return "oauth".to_string();
+    }
+    if auth_json
+        .get("OPENAI_API_KEY")
+        .is_some_and(|value| !value.is_null())
+    {
+        return "api_key".to_string();
     }
     "personal_token".to_string()
 }
@@ -1192,7 +1567,47 @@ pub fn switch_to_pat_account(home_root: &Path, account_id: &str) -> Result<()> {
         ));
     }
 
+    record_pat_usage_switch(home_root, &account_id)?;
     Ok(())
+}
+
+fn record_pat_usage_switch(home_root: &Path, account_id: &str) -> Result<()> {
+    let path = config_root(home_root).join("pat-usage-timeline.json");
+    let mut timeline = fs::read_to_string(&path)
+        .ok()
+        .and_then(|body| serde_json::from_str::<PatUsageTimeline>(&body).ok())
+        .unwrap_or_default();
+    let now = chrono::Utc::now().to_rfc3339();
+    if let Some(open_event) = timeline
+        .events
+        .iter_mut()
+        .rev()
+        .find(|event| event.ended_at.is_none())
+    {
+        open_event.ended_at = Some(now.clone());
+    }
+    timeline.events.push(PatUsageTimelineEvent {
+        account_id: account_id.to_string(),
+        account_label: account_label_from_id(account_id),
+        workspace_id: "workspace:main".to_string(),
+        started_at: now,
+        ended_at: None,
+    });
+    let body = serde_json::to_string_pretty(&timeline).map_err(|e| {
+        AppError::new(
+            "SERIALIZE_TIMELINE_FAILED",
+            format!("Failed to serialize PAT usage timeline: {e}"),
+        )
+    })?;
+    write_file_private(&path, &body)
+}
+
+fn account_label_from_id(id: &str) -> String {
+    if id == "main" {
+        "main".to_string()
+    } else {
+        format!("codex-{id}")
+    }
 }
 
 pub fn update_pat_session_auth(
@@ -1364,6 +1779,12 @@ fn detect_auth_mode(
             if content.contains("\"token\"") {
                 return Some("oauth".to_string());
             }
+            if content.contains("\"access_token\"")
+                || content.contains("\"id_token\"")
+                || content.contains("\"refresh_token\"")
+            {
+                return Some("oauth".to_string());
+            }
             if content.contains("\"OPENAI_API_KEY\"") {
                 return Some("api_key".to_string());
             }
@@ -1503,5 +1924,62 @@ mod pat_tests {
 
         let detected = detect_auth_mode(home_root, "a", &codex_home, &config);
         assert_eq!(detected, Some("personal_token".to_string()));
+    }
+
+    #[test]
+    fn test_oauth_token_evidence_wins_over_openai_api_key_marker() {
+        let mut auth = serde_json::Map::new();
+        auth.insert(
+            "OPENAI_API_KEY".to_string(),
+            serde_json::Value::String("redacted".to_string()),
+        );
+        auth.insert(
+            "tokens".to_string(),
+            serde_json::json!({ "access_token": "redacted" }),
+        );
+
+        assert_eq!(infer_auth_type(&auth), "oauth");
+    }
+
+    #[test]
+    fn pat_usage_timeline_records_successful_switch() {
+        let temp = TempDir::new().unwrap();
+        let home_root = temp.path();
+        let account_home = home_root.join(".codex-c");
+        std::fs::create_dir_all(&account_home).unwrap();
+        std::fs::write(account_home.join("auth.json"), r#"{"source":"runtime"}"#).unwrap();
+
+        switch_to_pat_account(home_root, "c").unwrap();
+
+        let timeline_path = config_root(home_root).join("pat-usage-timeline.json");
+        let timeline: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(timeline_path).unwrap()).unwrap();
+        let event = &timeline["events"][0];
+        assert_eq!(event["accountId"], "c");
+        assert_eq!(event["accountLabel"], "codex-c");
+        assert_eq!(event["workspaceId"], "workspace:main");
+        assert!(event["endedAt"].is_null());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_profile_process_matcher_targets_only_selected_profile() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path();
+        let selected_home = home.join(".codex-Jone1");
+        let selected_wrapper = home.join("bin/codex-Jone1");
+        let other_home = home.join(".codex-c");
+        let ps_output = format!(
+            " 100 /bin/zsh {}\n 101 git -C {}/.tmp/plugins-clone fetch\n 102 {}\n 103 codex --home {}\n",
+            selected_wrapper.display(),
+            selected_home.display(),
+            std::env::current_exe().unwrap().display(),
+            other_home.display(),
+        );
+
+        let process_ids =
+            profile_process_ids_from_ps(&ps_output, 102, &selected_home, Some(&selected_wrapper));
+
+        assert_eq!(process_ids, vec![100, 101]);
     }
 }

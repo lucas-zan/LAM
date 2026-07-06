@@ -31,10 +31,13 @@ import {
   resetCreditDisplay,
 } from '../lib/quota';
 import { formatResetCountdown } from '../lib/reset';
+import { authModeLabel } from '../lib/auth';
+import { groupAntigravityModels, quotaBucketUsedPercent } from '../lib/antigravity';
 import { scheduleTrayPopoverWindowSize } from '../lib/tray-popover-size';
 import type { ThemeMode } from '../lib/theme';
 import { TRAY_POPOVER_OPACITY_PERCENT } from '../lib/tray-popover-prefs';
 import type {
+  AntigravityQuotaBucket,
   CodexAccount,
   CodexSession,
   DivergedSessionStrategy,
@@ -241,6 +244,81 @@ function CircularProgressRing({
       <div className="circularProgressText" style={{ color: themeColor }}>
         <strong>{percent === null ? 'N/A' : `${percent}%`}</strong>
       </div>
+    </div>
+  );
+}
+
+interface TrayQuotaRowContentProps {
+  primaryLabel: string;
+  primarySubLabel: string;
+  primaryRemaining: number | null;
+  primaryTheme: { color: string; glow: string };
+  secondaryLabel?: string | null;
+  secondaryRemaining?: number | null;
+  secondarySubLabel?: string | null;
+  secondaryTheme?: { color: string; glow: string } | null;
+  hiddenOriginalLabels?: { primary?: string; secondary?: string };
+}
+
+function TrayQuotaRowContent({
+  primaryLabel,
+  primarySubLabel,
+  primaryRemaining,
+  primaryTheme,
+  secondaryLabel,
+  secondaryRemaining,
+  secondarySubLabel,
+  secondaryTheme,
+  hiddenOriginalLabels,
+}: TrayQuotaRowContentProps) {
+  return (
+    <div className="trayAccountRowContent">
+      <div className="trayAccountRowContentLeft">
+        <div className="trayAccountRowContentLeftText">
+          <strong>
+            {primaryLabel}
+            {hiddenOriginalLabels?.primary && (
+              <span style={{ display: 'none' }}>{hiddenOriginalLabels.primary}</span>
+            )}
+          </strong>
+          <span>{primarySubLabel}</span>
+        </div>
+        <CircularProgressRing
+          percent={primaryRemaining}
+          themeColor={primaryTheme.color}
+          themeGlow={primaryTheme.glow}
+        />
+      </div>
+
+      {secondaryLabel && secondaryTheme && (
+        <div className="trayAccountRowContentRight">
+          <div className="trayAccountRowContentRightLabel">
+            <strong style={{ color: secondaryTheme.color }}>
+              {secondaryRemaining === null ? 'N/A' : `${secondaryRemaining}%`}
+            </strong>
+            <span>
+              {secondaryLabel}
+              {hiddenOriginalLabels?.secondary && (
+                <span style={{ display: 'none' }}>{hiddenOriginalLabels.secondary}</span>
+              )}
+            </span>
+          </div>
+          <div className="trayQuotaTrack">
+            <i
+              style={{
+                width: `${secondaryRemaining ?? 0}%`,
+                background: secondaryTheme.color,
+                boxShadow: `0 0 4px ${secondaryTheme.glow}`,
+              }}
+            />
+          </div>
+          {secondarySubLabel && (
+            <span className="trayResetSub" style={{ textAlign: 'right' }}>
+              {secondarySubLabel}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -499,10 +577,83 @@ function TrayAntigravityModelList({ quota, isDark }: TrayAntigravityModelListPro
     );
   }
 
-  if (quota.models.length === 0) {
+  const groupedModels = groupAntigravityModels(quota);
+  if (quota.models.length === 0 && groupedModels.length === 0) {
     return (
       <div className="trayProviderRows">
         <p className="trayPopoverEmpty">No Antigravity models found.</p>
+      </div>
+    );
+  }
+
+  if (groupedModels.length > 0) {
+    return (
+      <div className="trayProviderRows">
+        {groupedModels.flatMap(({ group, models }, groupIndex) =>
+          models.map((model, modelIndex) => {
+            const modelTheme = getAccountTheme(model.label, groupIndex + modelIndex, isDark);
+            const cardStyle = {
+              borderColor: modelTheme.color + '22',
+            } as CSSProperties;
+
+            const primaryBucket = group.buckets.find((b) =>
+              b.displayName.toLowerCase().includes('five') || b.displayName.toLowerCase().includes('5h'),
+            ) || group.buckets[0];
+            const secondaryBucket = group.buckets.find((b) =>
+              b.displayName.toLowerCase().includes('weekly'),
+            ) || group.buckets[1];
+
+            const getRemainingPercent = (bucket?: typeof group.buckets[0]) => {
+              if (!bucket) return null;
+              const used = quotaBucketUsedPercent(bucket);
+              return used === null ? null : Math.max(0, 100 - used);
+            };
+
+            const primaryRemaining = getRemainingPercent(primaryBucket);
+            const secondaryRemaining = getRemainingPercent(secondaryBucket);
+
+            const primaryStateTheme = getQuotaStateTheme(primaryRemaining, isDark);
+            const secondaryStateTheme = getQuotaStateTheme(secondaryRemaining, isDark);
+
+            return (
+              <div
+                className="trayAccountRow trayAntigravityModelRow"
+                key={model.label}
+                style={cardStyle}
+              >
+                <div className="trayAccountRowTop">
+                  <div className="trayAccountMain">
+                    <span
+                      className="trayAccountStatusDot"
+                      style={{
+                        backgroundColor: modelTheme.color,
+                        boxShadow: `0 0 4px ${modelTheme.glow}`,
+                      }}
+                    />
+                    <div className="trayAccountNameWrap">
+                      <strong title={model.label}>{model.label}</strong>
+                      <span className="accountActiveBadge">{group.displayName}</span>
+                    </div>
+                  </div>
+                </div>
+                <TrayQuotaRowContent
+                  primaryLabel={primaryBucket ? (primaryBucket.displayName === 'Five Hour Limit' ? '5h' : primaryBucket.displayName === 'Weekly Limit' ? 'weekly' : primaryBucket.displayName) : 'N/A'}
+                  primarySubLabel={primaryBucket && primaryBucket.resetTime ? `${formatRelativeTime(primaryBucket.resetTime)}` : 'No reset'}
+                  primaryRemaining={primaryRemaining}
+                  primaryTheme={primaryStateTheme}
+                  secondaryLabel={secondaryBucket ? (secondaryBucket.displayName === 'Five Hour Limit' ? '5h' : secondaryBucket.displayName === 'Weekly Limit' ? 'weekly' : secondaryBucket.displayName) : null}
+                  secondaryRemaining={secondaryRemaining}
+                  secondarySubLabel={secondaryBucket && secondaryBucket.resetTime ? `${formatRelativeTime(secondaryBucket.resetTime)}` : null}
+                  secondaryTheme={secondaryStateTheme}
+                  hiddenOriginalLabels={{
+                    primary: primaryBucket?.displayName,
+                    secondary: secondaryBucket?.displayName,
+                  }}
+                />
+              </div>
+            );
+          }),
+        )}
       </div>
     );
   }
@@ -554,45 +705,60 @@ function TrayAntigravityModelList({ quota, isDark }: TrayAntigravityModelListPro
               </div>
             </div>
 
-            <div className="trayAccountRowContent">
-              <div className="trayAccountRowContentLeft">
-                <div className="trayAccountRowContentLeftText">
-                  <strong>Quota</strong>
-                  <span>remaining</span>
-                </div>
-                <CircularProgressRing
-                  percent={remainingPercent}
-                  themeColor={stateTheme.color}
-                  themeGlow={stateTheme.glow}
-                />
-              </div>
-
-              <div className="trayAccountRowContentRight">
-                <div className="trayAccountRowContentRightLabel">
-                  <strong style={{ color: stateTheme.color }}>
-                    {remainingPercent === null ? 'N/A' : `${remainingPercent}%`}
-                  </strong>
-                  <span>limit</span>
-                </div>
-                <div className="trayQuotaTrack">
-                  <i
-                    style={{
-                      width: `${remainingPercent ?? 0}%`,
-                      background: stateTheme.color,
-                      boxShadow: `0 0 4px ${stateTheme.glow}`,
-                    }}
-                  />
-                </div>
-                <span className="trayResetSub" style={{ textAlign: 'right' }}>
-                  {model.resetTime
-                    ? `Resets in ${formatRelativeTime(model.resetTime)}`
-                    : 'No reset scheduled'}
-                </span>
-              </div>
-            </div>
+            <TrayQuotaRowContent
+              primaryLabel="Quota"
+              primarySubLabel="remaining"
+              primaryRemaining={remainingPercent}
+              primaryTheme={stateTheme}
+              secondaryLabel="limit"
+              secondaryRemaining={remainingPercent}
+              secondarySubLabel={
+                model.resetTime
+                  ? `${formatRelativeTime(model.resetTime)}`
+                  : 'No reset scheduled'
+              }
+              secondaryTheme={stateTheme}
+            />
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function TrayAntigravityBucket({
+  bucket,
+  isDark,
+}: {
+  bucket: AntigravityQuotaBucket;
+  isDark: boolean;
+}) {
+  const usedPercent = quotaBucketUsedPercent(bucket);
+  const remainingPercent = usedPercent === null ? null : Math.max(0, 100 - usedPercent);
+  const stateTheme = getQuotaStateTheme(remainingPercent, isDark);
+
+  return (
+    <div className="trayAntigravityBucket">
+      <div className="trayAccountRowContentRightLabel">
+        <span>{bucket.displayName}</span>
+        <strong style={{ color: stateTheme.color }}>
+          {remainingPercent === null ? 'N/A' : `${remainingPercent}%`}
+        </strong>
+      </div>
+      <div className="trayQuotaTrack">
+        <i
+          style={{
+            width: `${remainingPercent ?? 0}%`,
+            background: stateTheme.color,
+            boxShadow: `0 0 4px ${stateTheme.glow}`,
+          }}
+        />
+      </div>
+      <span className="trayResetSub">
+        {bucket.resetTime
+          ? `${formatRelativeTime(bucket.resetTime)}`
+          : 'No reset scheduled'}
+      </span>
     </div>
   );
 }
@@ -696,10 +862,7 @@ function TrayAccountList({
                   ? account.isActiveAuth === true
                   : activeSession?.accountId === account.id;
               const isRefreshingQuota = refreshingQuotaIds.includes(account.id);
-              const authTag =
-                account.authMode === 'personal_token' || account.authMode === 'uploaded'
-                  ? 'PAT'
-                  : 'Auth';
+              const authTag = authModeLabel(account.authMode);
 
               const accountTheme = getAccountTheme(account.id, index, isDark);
               const quotaWindows = quotaDisplayWindows(quota);
@@ -735,23 +898,11 @@ function TrayAccountList({
                       />
                       <div className="trayAccountNameWrap">
                         <strong title={title}>{title}</strong>
-                        {resetCredits ? (
-                          <span className="resetCreditDots" aria-label={resetCredits.title}>
-                            {resetCredits.dots.map((dot) => (
-                              <span
-                                key={dot.key}
-                                className={`resetCreditDot resetCreditDot--${dot.color}`}
-                                data-tooltip={dot.title}
-                                aria-label={dot.title}
-                                tabIndex={0}
-                              />
-                            ))}
-                            {resetCredits.overflow > 0 ? <span className="resetCreditMore">+{resetCredits.overflow}</span> : null}
+                        {authTag ? (
+                          <span className="badge badge--authMode" title={`Auth mode: ${authTag}`}>
+                            {authTag}
                           </span>
                         ) : null}
-                        <span className="badge badge--authMode" title={`Auth mode: ${authTag}`}>
-                          {authTag}
-                        </span>
                         <PlanTypeBadge planType={quota?.planType} />
                       </div>
                     </div>
@@ -775,7 +926,9 @@ function TrayAccountList({
                             ? isActiveAccount || relayingAccountId === account.id
                             : !activeSession || relayingAccountId === account.id
                         }
-                        onClick={() => (authMode === 'pat' ? onSwitchTo(account) : onRelayTo(account))}
+                        onClick={() =>
+                          authMode === 'pat' ? onSwitchTo(account) : onRelayTo(account)
+                        }
                       >
                         {authMode === 'pat'
                           ? isActiveAccount
@@ -788,46 +941,49 @@ function TrayAccountList({
                     </div>
                   </div>
 
-                  <div className="trayAccountRowContent">
-                    <div className="trayAccountRowContentLeft">
-                      <div className="trayAccountRowContentLeftText">
-                        <strong>{primaryWindow?.shortLabel ?? 'N/A'}</strong>
-                        <span>
-                          {primaryWindow
-                            ? formatResetCountdown(primaryWindow.resetAt, primaryWindow.variant)
-                            : 'unknown'}
+                  {resetCredits ? (
+                    <div className="trayAccountResetRow">
+                      <span className="resetCreditBadge" aria-label={resetCredits.title}>
+                        <span className="resetCreditDots">
+                          {resetCredits.dots.map((dot) => (
+                            <span
+                              key={dot.key}
+                              className={`resetCreditDot resetCreditDot--${dot.color}`}
+                              data-tooltip={dot.title}
+                              aria-label={dot.title}
+                              tabIndex={0}
+                            />
+                          ))}
+                          {resetCredits.overflow > 0 ? (
+                            <span className="resetCreditMore">+{resetCredits.overflow}</span>
+                          ) : null}
                         </span>
-                      </div>
-                      <CircularProgressRing
-                        percent={primaryRemaining}
-                        themeColor={primaryStateTheme.color}
-                        themeGlow={primaryStateTheme.glow}
-                      />
+                        <span className="resetCreditText">{resetCredits.summary}</span>
+                        {resetCredits.nearestExpiry ? (
+                          <span className="resetCreditExpiry">{resetCredits.nearestExpiry}</span>
+                        ) : null}
+                      </span>
                     </div>
+                  ) : null}
 
-                    {secondaryWindow && (
-                      <div className="trayAccountRowContentRight">
-                        <div className="trayAccountRowContentRightLabel">
-                          <strong style={{ color: secondaryStateTheme.color }}>
-                            {secondaryRemaining === null ? 'N/A' : `${secondaryRemaining}%`}
-                          </strong>
-                          <span>{secondaryWindow.shortLabel}</span>
-                        </div>
-                        <div className="trayQuotaTrack">
-                          <i
-                            style={{
-                              width: `${secondaryRemaining ?? 0}%`,
-                              background: secondaryStateTheme.color,
-                              boxShadow: `0 0 4px ${secondaryStateTheme.glow}`,
-                            }}
-                          />
-                        </div>
-                        <span className="trayResetSub" style={{ textAlign: 'right' }}>
-                          {formatResetCountdown(secondaryWindow.resetAt, secondaryWindow.variant)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
+                  <TrayQuotaRowContent
+                    primaryLabel={primaryWindow?.shortLabel ?? 'N/A'}
+                    primarySubLabel={
+                      primaryWindow
+                        ? formatResetCountdown(primaryWindow.resetAt, primaryWindow.variant)
+                        : 'unknown'
+                    }
+                    primaryRemaining={primaryRemaining}
+                    primaryTheme={primaryStateTheme}
+                    secondaryLabel={secondaryWindow?.shortLabel ?? null}
+                    secondaryRemaining={secondaryRemaining}
+                    secondarySubLabel={
+                      secondaryWindow?.resetAt
+                        ? formatResetCountdown(secondaryWindow.resetAt, secondaryWindow.variant)
+                        : null
+                    }
+                    secondaryTheme={secondaryStateTheme}
+                  />
                 </div>
               );
             })}
@@ -1166,11 +1322,19 @@ export function TrayQuotaPanel() {
 
     const unlistenRefresh = listen('quota-popover-refresh', sync);
     const unlistenShow = getCurrentWebviewWindow().listen('tauri://focus', sync);
+    const unlistenBlur = getCurrentWebviewWindow().listen('tauri://blur', () => {
+      if (inTauri()) {
+        void hideQuotaPopover();
+      } else {
+        void getCurrentWebviewWindow().hide();
+      }
+    });
 
     return () => {
       observer.disconnect();
       void unlistenRefresh.then((fn) => fn());
       void unlistenShow.then((fn) => fn());
+      void unlistenBlur.then((fn) => fn());
     };
   }, [accounts.length, providerGroups.length, activeSession?.id, status]);
 

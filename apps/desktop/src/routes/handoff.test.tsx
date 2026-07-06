@@ -92,6 +92,7 @@ function overviewProps() {
     select: vi.fn(),
     openSync: vi.fn(),
     rename: vi.fn(),
+    deleteAccount: vi.fn(),
     login: vi.fn(),
     switchAccount: vi.fn(),
     exportCpa: vi.fn(),
@@ -149,19 +150,22 @@ describe('handoff navigation and entry points', () => {
 
     expect(screen.getByText('Active auth').nextElementSibling?.textContent).toBe('codex-a');
     expect(
-      screen.getByRole('heading', { name: 'main' }).closest('article')?.querySelector(
-        '[aria-label="Switch to this account"]',
-      ),
+      screen
+        .getByRole('heading', { name: 'main' })
+        .closest('article')
+        ?.querySelector('[aria-label="Switch to this account"]'),
     ).toHaveProperty('disabled', true);
     expect(
-      screen.getByRole('heading', { name: 'codex-a' }).closest('article')?.querySelector(
-        '[aria-label="Switch to this account"]',
-      ),
+      screen
+        .getByRole('heading', { name: 'codex-a' })
+        .closest('article')
+        ?.querySelector('[aria-label="Switch to this account"]'),
     ).toHaveProperty('disabled', true);
     expect(
-      screen.getByRole('heading', { name: 'codex-b' }).closest('article')?.querySelector(
-        '[aria-label="Switch to this account"]',
-      ),
+      screen
+        .getByRole('heading', { name: 'codex-b' })
+        .closest('article')
+        ?.querySelector('[aria-label="Switch to this account"]'),
     ).toHaveProperty('disabled', false);
   });
 
@@ -176,6 +180,143 @@ describe('handoff navigation and entry points', () => {
     render(<Overview {...overviewProps()} />);
 
     expect(screen.getByText('TEAM')).toBeTruthy();
+  });
+
+  it('renders Antigravity quota summary groups with weekly and five hour buckets', () => {
+    render(
+      <Overview
+        {...overviewProps()}
+        antigravityQuota={{
+          ok: true,
+          models: [
+            { label: 'Gemini Flash', remainingFraction: 0.91 },
+            { label: 'Claude Sonnet', remainingFraction: 0.66 },
+            { label: 'GPT-OSS', remainingFraction: 1 },
+          ],
+          description: 'Within each group, models share a weekly limit and a 5-hour limit.',
+          groups: [
+            {
+              displayName: 'Gemini Models',
+              description: 'Models within this group: Gemini Flash, Gemini Pro',
+              buckets: [
+                {
+                  bucketId: 'gemini-weekly',
+                  displayName: 'Weekly Limit',
+                  description: 'Refreshes in 3 days',
+                  window: 'weekly',
+                  remainingFraction: 0.91,
+                  resetTime: '2026-07-07T01:21:15Z',
+                },
+                {
+                  bucketId: 'gemini-5h',
+                  displayName: '5h',
+                  window: '5h',
+                  remainingFraction: 0.82,
+                  resetTime: '2026-07-03T07:06:36Z',
+                },
+              ],
+            },
+            {
+              displayName: 'Claude and GPT models',
+              description: 'Models within this group: Claude Opus, Claude Sonnet, GPT-OSS',
+              buckets: [
+                {
+                  bucketId: '3p-weekly',
+                  displayName: 'Weekly Limit',
+                  window: 'weekly',
+                  remainingFraction: 0.66,
+                  resetTime: '2026-07-06T05:08:03Z',
+                },
+                {
+                  bucketId: '3p-5h',
+                  displayName: '5h',
+                  window: '5h',
+                  remainingFraction: 1,
+                  resetTime: '2026-07-03T11:11:26Z',
+                },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /antigravity/i }));
+
+    expect(
+      screen.getByText('Within each group, models share a weekly limit and a 5-hour limit.'),
+    ).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Gemini Models' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Claude and GPT models' })).toBeTruthy();
+    expect(screen.getAllByText('Weekly Limit').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('5h').length).toBeGreaterThan(0);
+    expect(screen.getByText('Gemini Flash')).toBeTruthy();
+    expect(screen.getByText('Claude Sonnet')).toBeTruthy();
+    expect(screen.getByText('GPT-OSS')).toBeTruthy();
+    expect(screen.queryByText('No Antigravity models found.')).toBeNull();
+  });
+
+  it('counts Antigravity models and groups separately in overview metrics', () => {
+    render(
+      <Overview
+        {...overviewProps()}
+        antigravityQuota={{
+          ok: true,
+          models: [
+            { label: 'Gemini Flash', remainingFraction: 0.9 },
+            { label: 'Gemini Pro', remainingFraction: 0.8 },
+            { label: 'Claude Sonnet', remainingFraction: 0.7 },
+          ],
+          groups: [
+            {
+              displayName: 'Gemini Models',
+              description: 'Models within this group: Gemini Flash, Gemini Pro',
+              buckets: [{ displayName: 'Weekly Limit', window: 'weekly', remainingFraction: 0.9 }],
+            },
+            {
+              displayName: 'Claude and GPT models',
+              description: 'Models within this group: Claude Sonnet, GPT-OSS',
+              buckets: [{ displayName: 'Weekly Limit', window: 'weekly', remainingFraction: 0 }],
+            },
+          ],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /antigravity/i }));
+
+    expect(screen.getByText('Models').nextElementSibling?.textContent).toBe('2/3');
+    expect(screen.getByText('Groups').nextElementSibling?.textContent).toBe('2');
+    expect(screen.getByText('Models usable').nextElementSibling?.textContent).toBe('2');
+  });
+
+  it('renders API-key-like Codex auth as generic Auth on account cards', () => {
+    render(<Overview {...overviewProps()} accounts={[{ ...accounts[0], authMode: 'api_key' }]} />);
+
+    expect(screen.getByText('Auth')).toBeTruthy();
+    expect(screen.queryByText('API Key')).toBeNull();
+  });
+
+  it('shows readable reset-credit count and nearest expiry on account cards', () => {
+    render(
+      <Overview
+        {...overviewProps()}
+        quotas={[
+          {
+            ...quotas[0],
+            resetCreditCount: 2,
+            resetCreditExpirySource: 'api',
+            resetCreditDetails: [
+              { id: 'later', expiresAt: '2026-07-26T23:16:35+08:00', source: 'api' },
+              { id: 'soon', expiresAt: '2026-07-11T23:18:30+08:00', source: 'api' },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('2 resets')).toBeTruthy();
+    expect(screen.getByText('Jul 11 23:18')).toBeTruthy();
   });
 
   it('uses one overview account action button size class', () => {

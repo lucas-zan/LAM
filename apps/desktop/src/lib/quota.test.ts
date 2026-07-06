@@ -193,6 +193,26 @@ describe('resetCreditDisplay', () => {
     expect(display?.dots.map((dot) => dot.color)).toEqual(['yellow', 'green', 'blue']);
   });
 
+  it('exposes a readable reset-credit summary and per-credit expiry details', () => {
+    const display = resetCreditDisplay({
+      ...baseQuota,
+      resetCreditCount: 2,
+      resetCreditExpiresAt: null,
+      resetCreditExpirySource: 'api',
+      resetCreditDetails: [
+        { id: 'reset-2', expiresAt: '2026-07-18T00:28:08+08:00', source: 'api' },
+        { id: 'reset-1', expiresAt: '2026-07-11T23:18:30+08:00', source: 'api' },
+      ],
+    });
+
+    expect(display?.summary).toBe('2 resets');
+    expect(display?.nearestExpiry).toBe('Jul 11 23:18');
+    expect(display?.details.map((detail) => detail.title)).toEqual([
+      'Reset 1 expires Jul 11 23:18',
+      'Reset 2 expires Jul 18 00:28',
+    ]);
+  });
+
   it('hides reset dots for zero or absent count', () => {
     expect(resetCreditDisplay({ ...baseQuota, resetCreditCount: 0 })).toBeNull();
     expect(resetCreditDisplay(baseQuota)).toBeNull();

@@ -6,6 +6,12 @@ import {
   resetCreditDisplay,
   quotaDisplayWindows,
 } from '../lib/quota';
+import { authModeLabel } from '../lib/auth';
+import {
+  groupAntigravityModels,
+  quotaBucketUsedPercent,
+  quotaBucketVariant,
+} from '../lib/antigravity';
 import type {
   AccountNoteUpdate,
   CodexAccount,
@@ -16,6 +22,7 @@ import type {
   UsageQuotaSnapshot,
   AntigravityQuotaResponse,
   TokenExpirationStatus,
+  UsageRateCardEntry,
 } from '../lib/types';
 import { QuotaWindow } from '../components/quota-window';
 import {
@@ -29,10 +36,12 @@ import {
   IconPencil,
   IconKey,
   IconSync,
+  IconTrash,
 } from '../components/icons';
 import { UIButton } from '../components/ui-button';
 import { PlanTypeBadge } from '../components/plan-type-badge';
-import { checkProfileTokenExpiration } from '../lib/api';
+import { checkProfileTokenExpiration, getUsageRateCard } from '../lib/api';
+import { formatCost } from '../lib/usage-pricing';
 
 export function AntigravityModels({
   quota,
@@ -70,14 +79,81 @@ export function AntigravityModels({
     );
   }
 
-  if (quota.models.length === 0) {
+  const groups = quota.groups ?? [];
+  if (groups.length === 0 && quota.models.length === 0) {
     return <div className="emptyBox">No Antigravity models found.</div>;
+  }
+
+  if (groups.length > 0) {
+    const groupedModels = groupAntigravityModels(quota);
+    return (
+      <section className="overviewAccountsPanel">
+        <div className="panelHead">
+          <h3 className="sectionTitle">Antigravity</h3>
+          <UIButton variant="default" size="sm" onClick={onRefresh} disabled={refreshing}>
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </UIButton>
+        </div>
+        {quota.description ? <p className="cardMeta">{quota.description}</p> : null}
+        <div className="cardGrid accountCardGrid">
+          {groupedModels.map(({ group, models }) => (
+            <article className="card accountCard antigravityGroupCard" key={group.displayName}>
+              <div className="cardHead">
+                <div className="cardTitleRow">
+                  <h3>{group.displayName}</h3>
+                </div>
+              </div>
+              {group.description ? (
+                <p className="antigravityGroupDescription">{group.description}</p>
+              ) : null}
+              <div className="accountQuota">
+                {[...group.buckets]
+                  .sort((a, b) => {
+                    const aIs5h = a.displayName.toLowerCase().includes('five') || a.displayName.toLowerCase().includes('5h');
+                    const bIs5h = b.displayName.toLowerCase().includes('five') || b.displayName.toLowerCase().includes('5h');
+                    if (aIs5h && !bIs5h) return -1;
+                    if (!aIs5h && bIs5h) return 1;
+                    return 0;
+                  })
+                  .map((bucket) => (
+                    <QuotaWindow
+                      key={bucket.bucketId ?? bucket.displayName}
+                      label={bucket.displayName}
+                      usedPercent={quotaBucketUsedPercent(bucket)}
+                      resetAt={bucket.resetTime}
+                      variant={quotaBucketVariant(bucket)}
+                    />
+                  ))}
+              </div>
+              {models.length > 0 ? (
+                <div className="antigravityModelSection">
+                  <div className="antigravityModelSectionHeader">
+                    <span>Models in this group</span>
+                  </div>
+                  <div className="antigravityModelGrid" aria-label={`${group.displayName} models`}>
+                    {models.map((model) => (
+                      <div className="antigravityModelTile" key={model.label}>
+                        <strong>{model.label}</strong>
+                        <span>Shares group limits</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      </section>
+    );
   }
 
   return (
     <section className="overviewAccountsPanel">
       <div className="panelHead">
         <h3 className="sectionTitle">Antigravity</h3>
+        <UIButton variant="default" size="sm" onClick={onRefresh} disabled={refreshing}>
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </UIButton>
       </div>
       <div className="cardGrid accountCardGrid">
         {quota.models.map((model) => {
@@ -145,6 +221,7 @@ export function Overview({
   select,
   openSync,
   rename,
+  deleteAccount,
   login,
   switchAccount,
   exportCpa,
@@ -167,6 +244,7 @@ export function Overview({
   select: (id: string) => void;
   openSync: (id: string) => void;
   rename: (account: CodexAccount) => void;
+  deleteAccount: (account: CodexAccount) => void;
   login: (account: CodexAccount) => void;
   switchAccount: (account: CodexAccount) => void;
   exportCpa: (account: CodexAccount) => void;
@@ -186,20 +264,30 @@ export function Overview({
   const [activeTab, setActiveTab] = useState<'codex' | 'antigravity'>('codex');
 
   const isAntigravity = activeTab === 'antigravity';
+  const antigravityGroups = antigravityQuota?.groups ?? [];
+  const antigravityGroupedModels = antigravityQuota ? groupAntigravityModels(antigravityQuota) : [];
+  const antigravityModelCount = antigravityQuota?.models.length ?? 0;
+  const antigravityGroupCount = antigravityGroups.length;
+  const antigravityUsableModelCount = antigravityGroupedModels.length
+    ? antigravityGroupedModels.reduce((sum, { group, models }) => {
+        const groupHasQuota = group.buckets.some((bucket) => (bucket.remainingFraction ?? 0) > 0);
+        return groupHasQuota ? sum + models.length : sum;
+      }, 0)
+    : (antigravityQuota?.models.filter((m) => (m.remainingFraction ?? 0) > 0).length ?? 0);
 
   const accountsWithQuotaData = isAntigravity
-    ? (antigravityQuota?.models.filter((m) => (m.remainingFraction ?? 0) > 0).length ?? 0)
+    ? antigravityUsableModelCount
     : countAccountsWithQuotaData(accounts, quotas);
 
   const availableQuotaAccounts = isAntigravity
-    ? (antigravityQuota?.models.filter((m) => (m.remainingFraction ?? 0) > 0).length ?? 0)
+    ? antigravityUsableModelCount
     : countAccountsWithAvailableQuota(accounts, quotas);
 
   const sessionTotal = isAntigravity
     ? 0
     : accounts.reduce((sum, account) => sum + account.sessionCount, 0);
 
-  const totalCount = isAntigravity ? (antigravityQuota?.models.length ?? 0) : accounts.length;
+  const totalCount = isAntigravity ? antigravityModelCount : accounts.length;
 
   const providersCount = isAntigravity ? 1 : providers.length;
 
@@ -211,7 +299,11 @@ export function Overview({
           label={isAntigravity ? 'Models' : 'Accounts'}
           value={`${accountsWithQuotaData}/${totalCount}`}
         />
-        <Metric icon="sessions" label="Sessions" value={isAntigravity ? 'N/A' : sessionTotal} />
+        <Metric
+          icon="sessions"
+          label={isAntigravity ? 'Groups' : 'Sessions'}
+          value={isAntigravity ? antigravityGroupCount : sessionTotal}
+        />
         <Metric icon="providers" label="Providers" value={providersCount} />
         <Metric
           icon="quota"
@@ -241,10 +333,11 @@ export function Overview({
         <Accounts
           accounts={accounts}
           quotas={quotas}
-          select={select}
-          openSync={openSync}
-          rename={rename}
-          login={login}
+            select={select}
+            openSync={openSync}
+            rename={rename}
+            deleteAccount={deleteAccount}
+            login={login}
           switchAccount={switchAccount}
           exportCpa={exportCpa}
           openHandoff={openHandoff}
@@ -269,20 +362,10 @@ export function Overview({
   );
 }
 
-
 function AuthModeBadge({ authMode }: { authMode?: string | null }) {
-  if (!authMode) return null;
-  
-  const modeLabels: Record<string, string> = {
-    personal_token: 'PAT',
-    oauth: 'OAuth',
-    api_key: 'API Key',
-    uploaded: 'Uploaded',
-    config: 'Config',
-  };
-  
-  const label = modeLabels[authMode] ?? authMode;
-  
+  const label = authModeLabel(authMode);
+  if (!label) return null;
+
   return (
     <span className="badge badge--authMode" title={`Auth mode: ${label}`}>
       {label}
@@ -290,20 +373,20 @@ function AuthModeBadge({ authMode }: { authMode?: string | null }) {
   );
 }
 
-function TokenExpirationBadge({ 
-  status 
-}: { 
-  status?: { isExpired: boolean; daysUntilExpiration?: number | null; warningLevel: string } | null 
+function TokenExpirationBadge({
+  status,
+}: {
+  status?: { isExpired: boolean; daysUntilExpiration?: number | null; warningLevel: string } | null;
 }) {
   if (!status) return null;
-  
+
   const { isExpired, daysUntilExpiration, warningLevel } = status;
-  
+
   if (warningLevel === 'ok') return null; // Don't show badge when >30 days
-  
+
   let badgeClass = 'badge';
   let label = '';
-  
+
   if (isExpired) {
     badgeClass += ' badge--expired';
     label = 'Token expired';
@@ -314,7 +397,7 @@ function TokenExpirationBadge({
     badgeClass += ' badge--warning';
     label = `Expires in ${daysUntilExpiration}d`;
   }
-  
+
   return (
     <span className={badgeClass} title="PAT token expiration">
       {label}
@@ -327,6 +410,7 @@ export function Accounts({
   select,
   openSync,
   rename,
+  deleteAccount,
   login,
   switchAccount,
   exportCpa,
@@ -346,6 +430,7 @@ export function Accounts({
   select: (id: string) => void;
   openSync: (id: string) => void;
   rename: (account: CodexAccount) => void;
+  deleteAccount: (account: CodexAccount) => void;
   login: (account: CodexAccount) => void;
   switchAccount: (account: CodexAccount) => void;
   exportCpa: (account: CodexAccount) => void;
@@ -366,7 +451,7 @@ export function Accounts({
       const patAccounts = accounts.filter(
         (acc) => acc.authMode === 'personal_token' || acc.authMode === 'uploaded',
       );
-      
+
       for (const account of patAccounts) {
         try {
           const status = await checkProfileTokenExpiration(account.id);
@@ -377,7 +462,7 @@ export function Accounts({
         }
       }
     };
-    
+
     if (accounts.length > 0) {
       fetchTokenStatuses();
     }
@@ -403,12 +488,14 @@ export function Accounts({
         <span>{authMode === 'pat' ? 'Active auth' : 'Active source'}</span>
         <strong>
           {activeAccount?.displayName ??
-            (authMode === 'pat' ? 'Unrecognized' : currentSession?.accountId ?? 'No active session')}
+            (authMode === 'pat'
+              ? 'Unrecognized'
+              : (currentSession?.accountId ?? 'No active session'))}
         </strong>
         <em className="mono">
           {authMode === 'pat'
-            ? activeAccount?.codexHome ?? 'No unique tokens.account_id match'
-            : currentSession?.id ?? 'No session found'}
+            ? (activeAccount?.codexHome ?? 'No unique tokens.account_id match')
+            : (currentSession?.id ?? 'No session found')}
         </em>
       </div>
       <div className="cardGrid accountCardGrid">
@@ -434,17 +521,25 @@ export function Accounts({
                 <div className="cardTitleRow">
                   <h3>{account.displayName}</h3>
                   {resetCredits ? (
-                    <span className="resetCreditDots" aria-label={resetCredits.title}>
-                      {resetCredits.dots.map((dot) => (
-                        <span
-                          key={dot.key}
-                          className={`resetCreditDot resetCreditDot--${dot.color}`}
-                          data-tooltip={dot.title}
-                          aria-label={dot.title}
-                          tabIndex={0}
-                        />
-                      ))}
-                      {resetCredits.overflow > 0 ? <span className="resetCreditMore">+{resetCredits.overflow}</span> : null}
+                    <span className="resetCreditBadge" aria-label={resetCredits.title}>
+                      <span className="resetCreditDots">
+                        {resetCredits.dots.map((dot) => (
+                          <span
+                            key={dot.key}
+                            className={`resetCreditDot resetCreditDot--${dot.color}`}
+                            data-tooltip={dot.title}
+                            aria-label={dot.title}
+                            tabIndex={0}
+                          />
+                        ))}
+                        {resetCredits.overflow > 0 ? (
+                          <span className="resetCreditMore">+{resetCredits.overflow}</span>
+                        ) : null}
+                      </span>
+                      <span className="resetCreditText">{resetCredits.summary}</span>
+                      {resetCredits.nearestExpiry ? (
+                        <span className="resetCreditExpiry">{resetCredits.nearestExpiry}</span>
+                      ) : null}
                     </span>
                   ) : null}
                 </div>
@@ -515,8 +610,8 @@ export function Accounts({
                     authMode === 'pat'
                       ? 'Not available in PAT mode'
                       : currentSession
-                      ? `Relay latest active session ${currentSession.id} with ${account.displayName}`
-                      : 'No active session found'
+                        ? `Relay latest active session ${currentSession.id} with ${account.displayName}`
+                        : 'No active session found'
                   }
                   onClick={(e) => {
                     e.stopPropagation();
@@ -539,11 +634,7 @@ export function Accounts({
                     }
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (
-                        window.confirm(
-                          `Consume one reset credit for ${account.displayName}?`,
-                        )
-                      ) {
+                      if (window.confirm(`Consume one reset credit for ${account.displayName}?`)) {
                         void resetAccountQuota(account.id);
                       }
                     }}
@@ -591,8 +682,8 @@ export function Accounts({
                     authMode === 'pat' && isActiveAccount
                       ? 'Not available for active account in PAT mode'
                       : account.id === 'main'
-                      ? 'Main profile cannot be renamed'
-                      : `Rename ${account.displayName}`
+                        ? 'Main profile cannot be renamed'
+                        : `Rename ${account.displayName}`
                   }
                   onClick={(e) => {
                     e.stopPropagation();
@@ -602,6 +693,26 @@ export function Accounts({
                   <IconPencil size={13} />
                   Rename
                 </UIButton>
+                {authMode !== 'pat' ? (
+                  <UIButton
+                    size="sm"
+                    className="accountActionBtn"
+                    disabled={account.id === 'main'}
+                    aria-label={`Delete ${account.displayName}`}
+                    title={
+                      account.id === 'main'
+                        ? 'Main profile cannot be deleted'
+                        : `Delete ${account.displayName}`
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteAccount(account);
+                    }}
+                  >
+                    <IconTrash size={13} />
+                    Delete
+                  </UIButton>
+                ) : null}
                 <UIButton
                   size="sm"
                   className="accountActionBtn"
@@ -627,8 +738,8 @@ export function Accounts({
                     account.id === 'main'
                       ? 'Main profile is the active auth slot'
                       : authMode === 'pat' && isActiveAccount
-                      ? 'Already active in PAT mode'
-                      : 'Switch to this account'
+                        ? 'Already active in PAT mode'
+                        : 'Switch to this account'
                   }
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1027,8 +1138,8 @@ export function SyncHome({
 
 export function Settings({
   health,
-  themeMode,
-  resolvedTheme,
+  themeMode: _themeMode,
+  resolvedTheme: _resolvedTheme,
   divergedStrategy,
   setDivergedStrategy,
   hideDockIcon,
@@ -1044,6 +1155,21 @@ export function Settings({
   setHideDockIcon: (hide: boolean) => void;
   resetUsageStatistics: () => void;
 }) {
+  const [rateCard, setRateCard] = useState<UsageRateCardEntry[]>([]);
+  useEffect(() => {
+    let active = true;
+    getUsageRateCard()
+      .then((entries) => {
+        if (active) setRateCard(entries);
+      })
+      .catch(() => {
+        if (active) setRateCard([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
     <section className="panel pagePanel">
       <h3 className="sectionTitle">Settings</h3>
@@ -1077,8 +1203,8 @@ export function Settings({
         <label className="settingsSelectRow">
           <span>Dock icon visibility</span>
           <select
-            value={hideDockIcon ? "true" : "false"}
-            onChange={(event) => setHideDockIcon(event.target.value === "true")}
+            value={hideDockIcon ? 'true' : 'false'}
+            onChange={(event) => setHideDockIcon(event.target.value === 'true')}
           >
             <option value="false">Show Dock icon</option>
             <option value="true">Hide Dock icon (Accessory mode)</option>
@@ -1093,6 +1219,46 @@ export function Settings({
           </UIButton>
         </div>
       </div>
+      <section className="usageSection usageRateCardTable">
+        <div>
+          <h3>Usage rate card</h3>
+          <p>Built-in local estimate. Prices are USD per 1M tokens.</p>
+        </div>
+        <div className="usageTableWrap">
+          <table className="usageTable">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Context</th>
+                <th>Input</th>
+                <th>Cached input</th>
+                <th>Output</th>
+                <th>Pricing model</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rateCard.map((entry) => (
+                <tr key={`${entry.model}-${entry.contextWindow}`}>
+                  <td>{entry.model}</td>
+                  <td>{entry.contextWindow}</td>
+                  <td>{formatCost(entry.inputPerMillion)}</td>
+                  <td>{formatCost(entry.cachedInputPerMillion)}</td>
+                  <td>{formatCost(entry.outputPerMillion)}</td>
+                  <td>
+                    {entry.pricingModel}
+                    {entry.estimated ? ' (estimated)' : ''}
+                  </td>
+                </tr>
+              ))}
+              {rateCard.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>No local rate card available.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </section>
   );
 }
