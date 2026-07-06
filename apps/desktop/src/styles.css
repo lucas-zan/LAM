@@ -297,6 +297,13 @@ p {
   font-size: 12px;
   color: var(--muted);
   background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.themeToggle button:hover {
+  color: var(--text);
 }
 .themeToggle button.active {
   color: var(--text);
@@ -309,43 +316,72 @@ p {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--line);
-  font-weight: 500;
-  transition: all 0.15s ease;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: var(--shadow-sm);
 }
 .uiBtn:hover {
   background: var(--surface2);
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--text) 15%, var(--line));
+}
+.uiBtn:active {
+  transform: translateY(0);
 }
 .uiBtn--sm {
   padding: 6px 12px;
   min-height: 32px;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 .uiBtn--md {
-  padding: 8px 14px;
-  min-height: 36px;
+  padding: 8px 16px;
+  min-height: 38px;
   font-size: 13px;
 }
 .uiBtn--primary {
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 85%, #000) 100%);
   color: #fff;
-  border-color: var(--accent);
+  border: none;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 .uiBtn--primary:hover {
-  filter: brightness(1.05);
-  background: var(--accent);
+  filter: brightness(1.1);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 30%, transparent);
+  background: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 85%, #000) 100%);
+}
+.uiBtn--primary:active {
+  filter: brightness(0.95);
 }
 .uiBtn--danger {
-  color: var(--red);
-  border-color: color-mix(in srgb, var(--red) 35%, var(--line));
+  color: #fff;
+  background: linear-gradient(135deg, var(--red) 0%, color-mix(in srgb, var(--red) 85%, #000) 100%);
+  border: none;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--red) 15%, transparent);
+}
+.uiBtn--danger:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--red) 25%, transparent);
+  background: linear-gradient(135deg, var(--red) 0%, color-mix(in srgb, var(--red) 85%, #000) 100%);
+}
+.uiBtn--danger:active {
+  filter: brightness(0.95);
 }
 .uiBtn--ghost {
   background: transparent;
   color: var(--muted);
   border-color: transparent;
+  box-shadow: none;
+}
+.uiBtn--ghost:hover {
+  background: var(--surface2);
+  color: var(--text);
+  border-color: transparent;
+  transform: none;
 }
 .uiBtn--icon {
   width: 30px;
@@ -937,37 +973,96 @@ p {
   overflow-wrap: anywhere;
 }
 
-/* Create Account Mode Tabs */
+/* Create Account Mode Tabs (Segmented Control) */
 .createModeTabs {
   display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 2px;
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+  margin-bottom: 20px;
 }
 
 .createModeTabs button {
   flex: 1;
-  padding: 8px 16px;
+  padding: 8px 12px;
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-radius: 8px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .createModeTabs button:hover {
-  color: var(--fg);
-  background: var(--surface1);
+  color: var(--text);
 }
 
 .createModeTabs button.active {
-  color: var(--primary);
-  border-bottom-color: var(--primary);
+  background: var(--surface);
+  color: var(--accent);
   font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Sub-segmented control */
+.subModeTabs {
+  display: flex;
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 2.5px;
+  gap: 2px;
+  margin-bottom: 20px;
+  width: 100%;
+}
+
+.subModeTabs button {
+  flex: 1;
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.subModeTabs button:hover {
+  color: var(--text);
+}
+
+.subModeTabs button.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Credentials Sensitive Warning Banner */
+.credentialsWarning {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--amber) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--amber) 25%, transparent);
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 16px;
+  line-height: 1.4;
+}
+
+.credentialsWarning svg {
+  flex-shrink: 0;
+  color: var(--amber);
 }
 
 .badge {
@@ -2353,7 +2448,7 @@ html[data-tray-popover='1'] #root {
   z-index: 20;
 }
 .modal {
-  width: min(720px, calc(100vw - 38px));
+  width: min(500px, calc(100vw - 38px));
   max-height: calc(100vh - 52px);
   overflow: hidden;
   display: flex;
@@ -3380,6 +3475,9 @@ pre {
   grid-template-columns: 1fr 1fr;
   gap: 12px;
 }
+.formGrid--single {
+  grid-template-columns: 1fr;
+}
 .syncRoute {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -3415,19 +3513,40 @@ pre {
 }
 .syncOption {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: flex-start;
-  padding: 12px;
+  padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface2);
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+.syncOption:hover {
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface2));
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--line));
 }
 .syncOption input {
   width: 16px;
   height: 16px;
   min-height: 0;
   accent-color: var(--accent);
+  margin-top: 3px;
+}
+.syncOption > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.syncOption strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.syncOption span span {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.35;
 }
 .previewBox {
   border: 1px solid var(--line);

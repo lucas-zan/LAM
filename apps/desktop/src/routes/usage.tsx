@@ -707,7 +707,7 @@ export function UsagePage({
       0,
       Math.min(columns - 1, Math.floor((firstDay + dayCount - 1) / 7)),
     );
-    if (labels.at(-1)?.text !== endMonthLabel) {
+    if (labels[labels.length - 1]?.text !== endMonthLabel) {
       labels.push({
         text: endMonthLabel,
         colIndex: endColIndex,

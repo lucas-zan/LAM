@@ -8,7 +8,7 @@ import { useUsageStore } from './stores/usage';
 import { useProviderStore } from './stores/providers';
 import * as api from './lib/api';
 import * as Shell from './components/shell';
-import { IconClock, IconLogo, IconRefresh, IconPlus, IconSync, IconTrash } from './components/icons';
+import { IconClock, IconLogo, IconRefresh, IconPlus, IconSync, IconTrash, IconInfo } from './components/icons';
 import { SyncModal } from './components/sync-modal';
 import { ThemeToggle } from './components/theme-toggle';
 import { UIButton } from './components/ui-button';
@@ -424,6 +424,7 @@ export function App() {
     setNewPatToken('');
     setNewPatSessionOpen(false);
     setNewPatSessionJson('');
+    setProfileSessionImportOpen(false);
     openModal('account');
   }
 
@@ -921,201 +922,241 @@ export function App() {
           <div className="createModeTabs">
             <button
               className={createMode === 'oauth' ? 'active' : ''}
-              onClick={() => setCreateMode('oauth')}
+              onClick={() => {
+                setCreateMode('oauth');
+                setProfileSessionImportOpen(false);
+              }}
             >
-              OAuth (Traditional)
+              Profile Account
             </button>
             <button
               className={createMode === 'pat' ? 'active' : ''}
-              onClick={() => setCreateMode('pat')}
+              onClick={() => {
+                setCreateMode('pat');
+                setNewPatSessionOpen(false);
+              }}
             >
-              PAT (Personal Access Token)
+              PAT Account
             </button>
           </div>
 
           {createMode === 'oauth' ? (
-            profileSessionImportOpen ? (
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  const name = profileSessionName.trim();
-                  if (!name) {
-                    useAppStore.getState().setError('Please provide an account name');
-                    return;
-                  }
-                  try {
-                    const sessionJson = JSON.parse(profileSessionJson);
-                    const result = await api.addSessionProfileAccount({
-                      accountId: name,
-                      sessionJson,
-                      overwriteWrapper: profileSessionOverwriteWrapper,
-                    });
-                    await refresh();
-                    setSelectedAccountId(result.profileId);
-                    await useSessionStore.getState().loadSessions(result.profileId);
-                    useAppStore
-                      .getState()
-                      .setStatus(`Imported session profile '${result.profileId}'`);
-                    closeModal();
-                  } catch (err) {
-                    useAppStore.getState().setError(
-                      err instanceof Error ? err.message : 'Failed to import session profile'
-                    );
-                  }
-                }}
-              >
-                <div className="formGrid">
+            <>
+              <div className="subModeTabs">
+                <button
+                  type="button"
+                  className={!profileSessionImportOpen ? 'active' : ''}
+                  onClick={() => setProfileSessionImportOpen(false)}
+                >
+                  CLI Auth
+                </button>
+                <button
+                  type="button"
+                  className={profileSessionImportOpen ? 'active' : ''}
+                  onClick={() => setProfileSessionImportOpen(true)}
+                >
+                  Import Session
+                </button>
+              </div>
+
+              {profileSessionImportOpen ? (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const name = profileSessionName.trim();
+                    if (!name) {
+                      useAppStore.getState().setError('Please provide an account name');
+                      return;
+                    }
+                    try {
+                      const sessionJson = JSON.parse(profileSessionJson);
+                      const result = await api.addSessionProfileAccount({
+                        accountId: name,
+                        sessionJson,
+                        overwriteWrapper: profileSessionOverwriteWrapper,
+                      });
+                      await refresh();
+                      setSelectedAccountId(result.profileId);
+                      await useSessionStore.getState().loadSessions(result.profileId);
+                      useAppStore
+                        .getState()
+                        .setStatus(`Imported session profile '${result.profileId}'`);
+                      closeModal();
+                    } catch (err) {
+                      useAppStore.getState().setError(
+                        err instanceof Error ? err.message : 'Failed to import session profile'
+                      );
+                    }
+                  }}
+                >
+                  <div className="formGrid formGrid--single">
+                    <label>
+                      Account name *
+                      <input
+                        value={profileSessionName}
+                        onChange={(e) => setProfileSessionName(e.target.value)}
+                        placeholder="luna"
+                        required
+                      />
+                    </label>
+                  </div>
+                  
+                  <div className="credentialsWarning">
+                    <IconInfo size={16} />
+                    <span>Sensitive credentials - Do not share or expose session JSON files. Only paste trusted session data.</span>
+                  </div>
+
                   <label>
-                    Account name
-                    <input
-                      value={profileSessionName}
-                      onChange={(e) => setProfileSessionName(e.target.value)}
-                      placeholder="luna"
+                    Session JSON *
+                    <textarea
+                      value={profileSessionJson}
+                      onChange={(e) => setProfileSessionJson(e.target.value)}
+                      rows={8}
+                      placeholder='{"accessToken":"...","idToken":"..."}'
                       required
                     />
                   </label>
-                </div>
-                <label>
-                  Session JSON
-                  <textarea
-                    value={profileSessionJson}
-                    onChange={(e) => setProfileSessionJson(e.target.value)}
-                    rows={12}
-                    placeholder='{"accessToken":"...","idToken":"..."}'
-                    required
-                  />
-                </label>
-                <div className="previewBox">
-                  <div className="previewLine">
-                    <span>CODEX_HOME</span>
-                    <strong>~/.codex-{profileSessionName || 'name'}</strong>
+                  <div className="previewBox">
+                    <div className="previewLine">
+                      <span>CODEX_HOME</span>
+                      <strong>~/.codex-{profileSessionName || 'name'}</strong>
+                    </div>
+                    <div className="previewLine">
+                      <span>Auth</span>
+                      <strong>Converted Codex auth.json</strong>
+                    </div>
                   </div>
-                  <div className="previewLine">
-                    <span>Auth</span>
-                    <strong>Converted Codex auth.json</strong>
-                  </div>
-                </div>
-                <label className="syncOption">
-                  <input
-                    type="checkbox"
-                    checked={profileSessionOverwriteWrapper}
-                    onChange={(e) => setProfileSessionOverwriteWrapper(e.target.checked)}
-                  />
-                  <span>
-                    <strong>Overwrite wrapper if it exists</strong>
-                    <span>The imported profile remains a separate CODEX_HOME.</span>
-                  </span>
-                </label>
-                <div className="modalFoot">
-                  <UIButton
-                    type="button"
-                    variant="ghost"
-                    onClick={() => setProfileSessionImportOpen(false)}
-                  >
-                    Back
-                  </UIButton>
-                  <div className="modalFootPrimary">
-                    <UIButton type="submit" variant="primary">
-                      <IconSync size={14} /> Import Profile
-                    </UIButton>
-                  </div>
-                </div>
-              </form>
-            ) : (
-              <>
-                <div className="formGrid">
-                  <label>
-                    Account name
+                  <label className="syncOption">
                     <input
-                      value={accountReq.name}
-                      onChange={(e) => setAccountReq({ ...accountReq, name: e.target.value })}
+                      type="checkbox"
+                      checked={profileSessionOverwriteWrapper}
+                      onChange={(e) => setProfileSessionOverwriteWrapper(e.target.checked)}
                     />
+                    <span>
+                      <strong>Overwrite wrapper if it exists</strong>
+                      <span>The imported profile remains a separate CODEX_HOME.</span>
+                    </span>
                   </label>
-                  <label>
-                    Copy config from
-                    <select
-                      value={accountReq.copyConfigFrom ?? ''}
+                  <div className="modalFoot">
+                    <UIButton
+                      type="button"
+                      variant="ghost"
+                      onClick={closeModal}
+                    >
+                      Cancel
+                    </UIButton>
+                    <div className="modalFootPrimary">
+                      <UIButton type="submit" variant="primary">
+                        <IconSync size={14} /> Import Profile
+                      </UIButton>
+                    </div>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <div className="formGrid">
+                    <label>
+                      Account name *
+                      <input
+                        value={accountReq.name}
+                        onChange={(e) => setAccountReq({ ...accountReq, name: e.target.value })}
+                        required
+                      />
+                    </label>
+                    <label>
+                      Copy config from
+                      <select
+                        value={accountReq.copyConfigFrom ?? ''}
+                        onChange={(e) =>
+                          setAccountReq({ ...accountReq, copyConfigFrom: e.target.value || null })
+                        }
+                      >
+                        <option value="">None</option>
+                        {accounts
+                          .filter((a) => a.hasConfig)
+                          .map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.id}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="previewBox">
+                    <div className="previewLine">
+                      <span>CODEX_HOME</span>
+                      <strong>~/.codex-{accountReq.name || 'name'}</strong>
+                    </div>
+                    <div className="previewLine">
+                      <span>Wrapper</span>
+                      <strong>~/bin/codex-{accountReq.name || 'name'}</strong>
+                    </div>
+                  </div>
+                  <label className="syncOption">
+                    <input
+                      type="checkbox"
+                      checked={accountReq.overwriteWrapper}
                       onChange={(e) =>
-                        setAccountReq({ ...accountReq, copyConfigFrom: e.target.value || null })
+                        setAccountReq({ ...accountReq, overwriteWrapper: e.target.checked })
                       }
-                    >
-                      <option value="">None</option>
-                      {accounts
-                        .filter((a) => a.hasConfig)
-                        .map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.id}
-                          </option>
-                        ))}
-                    </select>
+                    />
+                    <span>
+                      <strong>Overwrite wrapper if it exists</strong>
+                      <span>Keeps CODEX_HOME untouched; only wrapper script is replaced.</span>
+                    </span>
                   </label>
-                </div>
-                <div className="previewBox">
-                  <div className="previewLine">
-                    <span>CODEX_HOME</span>
-                    <strong>~/.codex-{accountReq.name || 'name'}</strong>
-                  </div>
-                  <div className="previewLine">
-                    <span>Wrapper</span>
-                    <strong>~/bin/codex-{accountReq.name || 'name'}</strong>
-                  </div>
-                </div>
-                <label className="syncOption">
-                  <input
-                    type="checkbox"
-                    checked={accountReq.overwriteWrapper}
-                    onChange={(e) =>
-                      setAccountReq({ ...accountReq, overwriteWrapper: e.target.checked })
-                    }
-                  />
-                  <span>
-                    <strong>Overwrite wrapper if it exists</strong>
-                    <span>Keeps CODEX_HOME untouched; only wrapper script is replaced.</span>
-                  </span>
-                </label>
-                <Views.PlanView plan={plan} />
-                <div className="modalFoot">
-                  <UIButton type="button" variant="ghost" onClick={closeModal}>
-                    Cancel
-                  </UIButton>
-                  <div className="modalFootPrimary">
-                    <UIButton
-                      type="button"
-                      onClick={() => {
-                        setProfileSessionName(accountReq.name === 'luna' ? '' : accountReq.name);
-                        setProfileSessionJson('');
-                        setProfileSessionOverwriteWrapper(accountReq.overwriteWrapper);
-                        setProfileSessionImportOpen(true);
-                      }}
-                    >
-                      Import Session
+                  <Views.PlanView plan={plan} />
+                  <div className="modalFoot">
+                    <UIButton type="button" variant="ghost" onClick={closeModal}>
+                      Cancel
                     </UIButton>
-                    <UIButton
-                      type="button"
-                      onClick={async () => setPlan(await api.planCreateAccount(accountReq))}
-                    >
-                      Dry Run
-                    </UIButton>
-                    <UIButton
-                      type="button"
-                      variant="primary"
-                      disabled={!plan}
-                      onClick={async () => {
-                        await api.executeCreateAccount(accountReq);
-                        closeModal();
-                        setPlan(null);
-                        await refresh();
-                      }}
-                    >
-                      Create
-                    </UIButton>
+                    <div className="modalFootPrimary">
+                      <UIButton
+                        type="button"
+                        onClick={async () => setPlan(await api.planCreateAccount(accountReq))}
+                      >
+                        Dry Run
+                      </UIButton>
+                      <UIButton
+                        type="button"
+                        variant="primary"
+                        disabled={!plan}
+                        onClick={async () => {
+                          await api.executeCreateAccount(accountReq);
+                          closeModal();
+                          setPlan(null);
+                          await refresh();
+                        }}
+                      >
+                        Create
+                      </UIButton>
+                    </div>
                   </div>
-                </div>
-              </>
-            )
+                </>
+              )}
+            </>
           ) : (
             <div>
-              <p className="modalHint">Upload auth.json, or paste a ChatGPT session when using PAT.</p>
+              <div className="subModeTabs">
+                <button
+                  type="button"
+                  className={!newPatSessionOpen ? 'active' : ''}
+                  onClick={() => {
+                    setNewPatSessionOpen(false);
+                    setNewPatToken('');
+                  }}
+                >
+                  Upload auth.json
+                </button>
+                <button
+                  type="button"
+                  className={newPatSessionOpen ? 'active' : ''}
+                  onClick={() => setNewPatSessionOpen(true)}
+                >
+                  Token & Session
+                </button>
+              </div>
+
               <form onSubmit={async (e) => {
                 e.preventDefault();
                 const formData = new FormData(e.currentTarget);
@@ -1131,7 +1172,7 @@ export function App() {
 
                 try {
                   const file = formData.get('authFile') as File | null;
-                  const authJson = personalAccessToken
+                  const authJson = newPatSessionOpen
                     ? JSON.parse(newPatSessionJson)
                     : JSON.parse(await file!.text());
 
@@ -1162,43 +1203,43 @@ export function App() {
                       This will create ~/.codex-{'{'}name{'}'}/
                     </span>
                   </label>
-                  <label>
-                    Personal Access Token (optional)
-                    <input
-                      name="personalAccessToken"
-                      type="password"
-                      placeholder="Enter token"
-                      autoComplete="off"
-                      onChange={(e) => setNewPatToken((e.target as HTMLInputElement).value)}
-                      onInput={(e) => setNewPatToken((e.target as HTMLInputElement).value)}
-                    />
-                  </label>
-                  {newPatToken.trim() ? (
-                    <label>
-                      Paste Session *
-                      {newPatSessionOpen ? (
+
+                  {newPatSessionOpen ? (
+                    <>
+                      <label>
+                        Personal Access Token *
+                        <input
+                          name="personalAccessToken"
+                          type="password"
+                          placeholder="Enter token"
+                          autoComplete="off"
+                          onChange={(e) => setNewPatToken((e.target as HTMLInputElement).value)}
+                          onInput={(e) => setNewPatToken((e.target as HTMLInputElement).value)}
+                          required
+                        />
+                      </label>
+                      <div className="credentialsWarning">
+                        <IconInfo size={16} />
+                        <span>Sensitive credentials - Do not share or expose session JSON files. Only paste trusted session data.</span>
+                      </div>
+                      <label>
+                        Paste Session JSON *
                         <textarea
                           value={newPatSessionJson}
                           onChange={(e) => setNewPatSessionJson(e.target.value)}
-                          rows={12}
+                          rows={8}
                           placeholder='{"accessToken":"...","idToken":"..."}'
                           required
                         />
-                      ) : (
-                        <>
-                          <span className="inputHint">Paste the JSON returned by https://chatgpt.com/api/auth/session</span>
-                          <UIButton type="button" onClick={() => setNewPatSessionOpen(true)}>
-                            Paste Session
-                          </UIButton>
-                        </>
-                      )}
-                    </label>
+                      </label>
+                    </>
                   ) : (
                     <label className="fileUploadLabel">
                       Select auth.json file *
                       <input name="authFile" type="file" accept=".json,application/json" required />
                     </label>
                   )}
+
                   <label>
                     Token expiration (optional)
                     <input name="tokenExpiration" type="datetime-local" />
@@ -1210,7 +1251,7 @@ export function App() {
                   </UIButton>
                   <div className="modalFootPrimary">
                     <UIButton type="submit" variant="primary">
-                      <IconSync size={14} /> {newPatToken.trim() ? 'Save' : 'Upload'}
+                      <IconSync size={14} /> {newPatSessionOpen ? 'Save' : 'Upload'}
                     </UIButton>
                   </div>
                 </div>
