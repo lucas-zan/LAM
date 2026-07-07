@@ -655,6 +655,10 @@ p {
 .resetCreditDot--yellow { --reset-credit-color: #ca8a04; }
 .resetCreditDot--red { --reset-credit-color: #dc2626; }
 .resetCreditDot--black { --reset-credit-color: #111827; }
+:root[data-theme='dark'] .resetCreditDot--black,
+.trayPopoverPanel[data-theme='dark'] .resetCreditDot--black {
+  --reset-credit-color: #e5e7eb;
+}
 .resetCreditDot::after {
   content: attr(data-tooltip);
   position: absolute;
