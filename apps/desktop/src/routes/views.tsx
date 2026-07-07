@@ -754,26 +754,28 @@ export function Accounts({
                   <IconKey size={13} />
                   {authMode === 'pat' && account.hasPersonalAccessToken ? 'Update' : 'Login'}
                 </UIButton>
-                <UIButton
-                  size="sm"
-                  className="accountActionBtn"
-                  disabled={account.id === 'main' || (authMode === 'pat' && isActiveAccount)}
-                  aria-label="Switch to this account"
-                  title={
-                    account.id === 'main'
-                      ? 'Main profile is the active auth slot'
-                      : authMode === 'pat' && isActiveAccount
-                        ? 'Already active in PAT mode'
-                        : 'Switch to this account'
-                  }
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    switchAccount(account);
-                  }}
-                >
-                  <IconSync size={13} />
-                  Switch
-                </UIButton>
+                {authMode === 'pat' ? (
+                  <UIButton
+                    size="sm"
+                    className="accountActionBtn"
+                    disabled={account.id === 'main' || isActiveAccount}
+                    aria-label="Switch to this account"
+                    title={
+                      account.id === 'main'
+                        ? 'Main profile is the active auth slot'
+                        : isActiveAccount
+                          ? 'Already active in PAT mode'
+                          : 'Switch to this account'
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      switchAccount(account);
+                    }}
+                  >
+                    <IconSync size={13} />
+                    Switch
+                  </UIButton>
+                ) : null}
               </div>
             </article>
           );
@@ -1172,6 +1174,8 @@ export function Settings({
   terminalTargets,
   terminalTargetId,
   setTerminalTargetId,
+  modeAvailability,
+  setModeAvailability,
   resetUsageStatistics,
 }: {
   health: HealthCheck | null;
@@ -1184,6 +1188,8 @@ export function Settings({
   terminalTargets: TerminalTarget[];
   terminalTargetId: string;
   setTerminalTargetId: (targetId: string) => void;
+  modeAvailability: 'profile' | 'pat' | 'both';
+  setModeAvailability: (availability: 'profile' | 'pat' | 'both') => void;
   resetUsageStatistics: () => void;
 }) {
   const [rateCard, setRateCard] = useState<UsageRateCardEntry[]>([]);
@@ -1314,6 +1320,20 @@ export function Settings({
                   <h5>Terminal & Handoff</h5>
                 </div>
                 <div className="settingsCardBody">
+                  <label className="settingsFieldLabel">
+                    <span>Mode availability</span>
+                    <select
+                      value={modeAvailability}
+                      onChange={(event) =>
+                        setModeAvailability(event.target.value as 'profile' | 'pat' | 'both')
+                      }
+                    >
+                      <option value="profile">Profile Only</option>
+                      <option value="pat">PAT Only</option>
+                      <option value="both">Profile & PAT</option>
+                    </select>
+                    <em>Controls which account mode information and titlebar controls are shown.</em>
+                  </label>
                   <label className="settingsFieldLabel">
                     <span>Handoff terminal</span>
                     <select

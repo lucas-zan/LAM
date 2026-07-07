@@ -142,6 +142,13 @@ describe('handoff navigation and entry points', () => {
     expect(screen.getAllByRole('button', { name: /relay latest/i })).toHaveLength(accounts.length);
   });
 
+  it('does not show Switch actions in Profile mode', () => {
+    render(<Overview {...overviewProps()} authMode="oauth" />);
+
+    expect(screen.queryByRole('button', { name: /switch to this account/i })).toBeNull();
+    expect(screen.queryByText('Switch')).toBeNull();
+  });
+
   it('disables Relay and Handoff, and shows Export CPA in PAT mode', () => {
     render(<Overview {...overviewProps()} authMode="pat" />);
 

@@ -231,6 +231,7 @@ function session(accountId: string, id: string, modifiedAt: number): CodexSessio
 beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  localStorage.clear();
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     value: vi.fn(() => ({
@@ -737,14 +738,15 @@ describe('App handoff modal', () => {
     await waitFor(() => expect(api.resetProfileQuota).toHaveBeenCalledWith('codex-c'));
   });
 
-  it('uses login switching for every account in Auth mode', async () => {
+  it('uses the Login action for every account in Auth mode', async () => {
     vi.mocked(api.listSessions).mockResolvedValue([]);
 
     render(<App />);
     const accountCard = (await screen.findByText('codex-c')).closest('article');
     expect(accountCard).not.toBeNull();
+    expect(within(accountCard!).queryByRole('button', { name: /switch to this account/i })).toBeNull();
 
-    fireEvent.click(within(accountCard!).getByRole('button', { name: /switch to this account/i }));
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /^login$/i }));
 
     await waitFor(() => expect(api.openTerminalForLogin).toHaveBeenCalledWith('codex-c'));
     expect(api.switchToPatAccount).not.toHaveBeenCalled();
@@ -1132,6 +1134,7 @@ describe('App handoff modal', () => {
     useAppStore.setState({ route: 'settings' });
 
     render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /advanced/i }));
     fireEvent.click(await screen.findByRole('button', { name: /reset usage statistics/i }));
 
     await waitFor(() => expect(api.resetUsageIndex).toHaveBeenCalled());
@@ -1156,12 +1159,13 @@ describe('App handoff modal', () => {
     useAppStore.setState({ route: 'settings' });
 
     render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /rate card/i }));
 
-    expect(await screen.findByText('Usage rate card')).toBeTruthy();
+    expect(await screen.findByText('Usage Rate Card')).toBeTruthy();
     expect((await screen.findAllByText('gpt-5')).length).toBeGreaterThan(0);
     expect(await screen.findByText('$4.38')).toBeTruthy();
     expect(await screen.findByText('$35.00')).toBeTruthy();
-    const rateCardTable = document.querySelector('.usageRateCardTable');
+    const rateCardTable = document.querySelector('.settingsRateCardTable');
     expect(rateCardTable?.closest('.rows')).toBeNull();
   });
 
@@ -1178,6 +1182,57 @@ describe('App handoff modal', () => {
     fireEvent.change(terminalSelect, { target: { value: 'ghostty' } });
 
     await waitFor(() => expect(api.setSelectedTerminalTarget).toHaveBeenCalledWith('ghostty'));
+  });
+
+  it('uses Profile Only mode availability from settings', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    useAppStore.setState({ route: 'settings' });
+
+    render(<App />);
+
+    const availabilitySelect = (await screen.findByLabelText(/mode availability/i)) as HTMLSelectElement;
+    fireEvent.change(availabilitySelect, { target: { value: 'profile' } });
+
+    expect(await screen.findByText('Profile Mode')).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: /^pat$/i })).toBeNull();
+    await waitFor(() => expect(api.setAuthMode).toHaveBeenCalledWith('oauth'));
+
+    fireEvent.click(screen.getByRole('button', { name: /new account/i }));
+    expect(screen.queryByRole('button', { name: /pat account/i })).toBeNull();
+    expect(await screen.findByRole('button', { name: /cli auth/i })).toBeTruthy();
+  });
+
+  it('uses PAT Only mode availability from settings', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    useAppStore.setState({ route: 'settings' });
+
+    render(<App />);
+
+    const availabilitySelect = (await screen.findByLabelText(/mode availability/i)) as HTMLSelectElement;
+    fireEvent.change(availabilitySelect, { target: { value: 'pat' } });
+
+    expect(await screen.findByText('PAT Mode')).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: /^profile$/i })).toBeNull();
+    await waitFor(() => expect(api.setAuthMode).toHaveBeenCalledWith('pat'));
+
+    fireEvent.click(screen.getByRole('button', { name: /new account/i }));
+    expect(screen.queryByRole('button', { name: /profile account/i })).toBeNull();
+    expect(await screen.findByText(/upload auth\.json/i)).toBeTruthy();
+  });
+
+  it('keeps both titlebar tabs in Profile & PAT mode availability', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    useAppStore.setState({ route: 'settings' });
+
+    render(<App />);
+
+    const availabilitySelect = (await screen.findByLabelText(/mode availability/i)) as HTMLSelectElement;
+    expect(availabilitySelect.value).toBe('both');
+    expect(screen.getByRole('tab', { name: /^profile$/i })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /^pat$/i })).toBeTruthy();
   });
 
   it('loads PAT usage without creating a React-owned usage interval', async () => {

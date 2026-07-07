@@ -33,6 +33,23 @@ import type {
 } from './lib/types';
 import * as Views from './routes/views';
 
+type AuthMode = 'oauth' | 'pat';
+type ModeAvailability = 'profile' | 'pat' | 'both';
+
+const MODE_AVAILABILITY_KEY = 'lam-mode-availability';
+
+function readModeAvailability(): ModeAvailability {
+  const saved = localStorage.getItem(MODE_AVAILABILITY_KEY);
+  if (saved === 'profile' || saved === 'pat' || saved === 'both') return saved;
+  return 'both';
+}
+
+function clampAuthMode(mode: AuthMode, availability: ModeAvailability): AuthMode {
+  if (availability === 'profile') return 'oauth';
+  if (availability === 'pat') return 'pat';
+  return mode;
+}
+
 const emptyAccountReq: CreateAccountRequest = {
   name: 'luna',
   copyConfigFrom: null,
@@ -193,8 +210,9 @@ export function App() {
   const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
   const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
-  const [createMode, setCreateMode] = useState<'oauth' | 'pat'>('oauth');
-  const [authMode, setAuthMode] = useState<'oauth' | 'pat'>('oauth');
+  const [createMode, setCreateMode] = useState<AuthMode>('oauth');
+  const [authMode, setAuthMode] = useState<AuthMode>('oauth');
+  const [modeAvailability, setModeAvailability] = useState<ModeAvailability>(readModeAvailability);
   const [usageTab, setUsageTab] = useState<'insights' | 'calls' | 'threads' | 'diagnostics'>('insights');
   const [usageWindow, setUsageWindow] = useState<UsageWindow>({ preset: 'all', from: null, to: null });
   const [includeArchivedUsage, setIncludeArchivedUsage] = useState(false);
@@ -203,18 +221,49 @@ export function App() {
 
   // Load auth mode and settings on mount
   useEffect(() => {
-    api.getAuthMode().then(mode => setAuthMode(mode as 'oauth' | 'pat'));
+    api.getAuthMode().then(mode => {
+      const savedAvailability = readModeAvailability();
+      const backendMode = mode === 'pat' ? 'pat' : 'oauth';
+      const nextMode = clampAuthMode(backendMode, savedAvailability);
+      setModeAvailability(savedAvailability);
+      setAuthMode(nextMode);
+      if (nextMode !== backendMode) {
+        api.setAuthMode(nextMode).catch(err => {
+          useAppStore.getState().setError('Failed to save auth mode');
+          console.error('Failed to save auth mode:', err);
+        });
+      }
+    });
     useAppStore.getState().loadSettings();
   }, []);
 
   // Save auth mode when changed
-  const handleSetAuthMode = useCallback((mode: 'oauth' | 'pat') => {
-    setAuthMode(mode);
-    api.setAuthMode(mode).catch(err => {
+  const handleSetAuthMode = useCallback((mode: AuthMode) => {
+    const nextMode = clampAuthMode(mode, modeAvailability);
+    setAuthMode(nextMode);
+    api.setAuthMode(nextMode).catch(err => {
       useAppStore.getState().setError('Failed to save auth mode');
       console.error('Failed to save auth mode:', err);
     });
-  }, []);
+  }, [modeAvailability]);
+
+  const handleSetModeAvailability = useCallback((availability: ModeAvailability) => {
+    localStorage.setItem(MODE_AVAILABILITY_KEY, availability);
+    setModeAvailability(availability);
+    const nextMode = clampAuthMode(authMode, availability);
+    if (nextMode !== authMode) {
+      setAuthMode(nextMode);
+    }
+    api.setAuthMode(nextMode).catch(err => {
+      useAppStore.getState().setError('Failed to save auth mode');
+      console.error('Failed to save auth mode:', err);
+    });
+  }, [authMode]);
+
+  useEffect(() => {
+    if (modeAvailability === 'profile') setCreateMode('oauth');
+    if (modeAvailability === 'pat') setCreateMode('pat');
+  }, [modeAvailability]);
 
   const resolvedTheme = useMemo(() => {
     if (themeMode === 'system')
@@ -708,39 +757,56 @@ export function App() {
         </div>
         <div className="titlebarCenter">
           <div className="titlebarCenterCluster">
-            <div className="authModeTabs">
-              <input
-                type="checkbox"
-                aria-label="PAT Mode"
-                checked={authMode === 'pat'}
-                readOnly
-                style={{ display: 'none' }}
-              />
-              <div
-                role="tab"
-                aria-selected={authMode === 'oauth'}
-                className={`authModeTab ${authMode === 'oauth' ? 'active' : ''}`}
-                onClick={() => handleSetAuthMode('oauth')}
-              >
-                Profile
-                <div className="authModeTooltip">
-                  <strong>Profile Mode (OAuth)</strong>
-                  <p>Workspace-scoped account profiles. Allows different workspaces or directories to use separate logins.</p>
+            {modeAvailability === 'both' ? (
+              <div className="authModeTabs">
+                <input
+                  type="checkbox"
+                  aria-label="PAT Mode"
+                  checked={authMode === 'pat'}
+                  readOnly
+                  style={{ display: 'none' }}
+                />
+                <div
+                  role="tab"
+                  aria-label="Profile"
+                  aria-selected={authMode === 'oauth'}
+                  className={`authModeTab ${authMode === 'oauth' ? 'active' : ''}`}
+                  onClick={() => handleSetAuthMode('oauth')}
+                >
+                  Profile
+                  <div className="authModeTooltip">
+                    <strong>Profile Mode (OAuth)</strong>
+                    <p>Workspace-scoped account profiles. Allows different workspaces or directories to use separate logins.</p>
+                  </div>
+                </div>
+                <div
+                  role="tab"
+                  aria-label="PAT"
+                  aria-selected={authMode === 'pat'}
+                  className={`authModeTab ${authMode === 'pat' ? 'active' : ''}`}
+                  onClick={() => handleSetAuthMode('pat')}
+                >
+                  PAT
+                  <div className="authModeTooltip">
+                    <strong>PAT Mode (Tokens)</strong>
+                    <p>Personal Access Tokens mapped across workspaces. Suitable for simple user credential switching.</p>
+                  </div>
                 </div>
               </div>
-              <div
-                role="tab"
-                aria-selected={authMode === 'pat'}
-                className={`authModeTab ${authMode === 'pat' ? 'active' : ''}`}
-                onClick={() => handleSetAuthMode('pat')}
-              >
-                PAT
-                <div className="authModeTooltip">
-                  <strong>PAT Mode (Tokens)</strong>
-                  <p>Personal Access Tokens mapped across workspaces. Suitable for simple user credential switching.</p>
+            ) : (
+              <div className="authModeTabs">
+                <input
+                  type="checkbox"
+                  aria-label="PAT Mode"
+                  checked={authMode === 'pat'}
+                  readOnly
+                  style={{ display: 'none' }}
+                />
+                <div className="authModeTab active">
+                  {modeAvailability === 'profile' ? 'Profile Mode' : 'PAT Mode'}
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
         <div className="titlebarActions">
@@ -862,6 +928,8 @@ export function App() {
             terminalTargets={terminalTargets}
             terminalTargetId={terminalTargetId}
             setTerminalTargetId={setTerminalTargetId}
+            modeAvailability={modeAvailability}
+            setModeAvailability={handleSetModeAvailability}
             resetUsageStatistics={resetUsageStatistics}
           />
         ) : null}
@@ -933,26 +1001,28 @@ export function App() {
 
       {modal === 'account' ? (
         <Shell.Modal title="Add Account" close={closeModal}>
-          <div className="createModeTabs">
-            <button
-              className={createMode === 'oauth' ? 'active' : ''}
-              onClick={() => {
-                setCreateMode('oauth');
-                setProfileSessionImportOpen(false);
-              }}
-            >
-              Profile Account
-            </button>
-            <button
-              className={createMode === 'pat' ? 'active' : ''}
-              onClick={() => {
-                setCreateMode('pat');
-                setNewPatSessionOpen(false);
-              }}
-            >
-              PAT Account
-            </button>
-          </div>
+          {modeAvailability === 'both' ? (
+            <div className="createModeTabs">
+              <button
+                className={createMode === 'oauth' ? 'active' : ''}
+                onClick={() => {
+                  setCreateMode('oauth');
+                  setProfileSessionImportOpen(false);
+                }}
+              >
+                Profile Account
+              </button>
+              <button
+                className={createMode === 'pat' ? 'active' : ''}
+                onClick={() => {
+                  setCreateMode('pat');
+                  setNewPatSessionOpen(false);
+                }}
+              >
+                PAT Account
+              </button>
+            </div>
+          ) : null}
 
           {createMode === 'oauth' ? (
             <>
