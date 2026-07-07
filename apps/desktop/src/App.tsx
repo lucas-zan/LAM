@@ -723,6 +723,10 @@ export function App() {
                 onClick={() => handleSetAuthMode('oauth')}
               >
                 Profile
+                <div className="authModeTooltip">
+                  <strong>Profile Mode (OAuth)</strong>
+                  <p>Workspace-scoped account profiles. Allows different workspaces or directories to use separate logins.</p>
+                </div>
               </div>
               <div
                 role="tab"
@@ -731,6 +735,10 @@ export function App() {
                 onClick={() => handleSetAuthMode('pat')}
               >
                 PAT
+                <div className="authModeTooltip">
+                  <strong>PAT Mode (Tokens)</strong>
+                  <p>Personal Access Tokens mapped across workspaces. Suitable for simple user credential switching.</p>
+                </div>
               </div>
             </div>
           </div>
