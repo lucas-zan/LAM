@@ -1,8 +1,24 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { routes } from './types';
 import { Overview, Sessions } from './views';
 import type { CodexAccount, CodexSession, UsageQuotaSnapshot } from '../lib/types';
+
+const { tauriDialogConfirm } = vi.hoisted(() => ({
+  tauriDialogConfirm: vi.fn(),
+}));
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  confirm: tauriDialogConfirm,
+}));
+
+vi.mock('../lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/api')>();
+  return {
+    ...actual,
+    inTauri: () => true,
+  };
+});
 
 const accounts: CodexAccount[] = [
   {
@@ -110,6 +126,10 @@ function overviewProps() {
 }
 
 describe('handoff navigation and entry points', () => {
+  beforeEach(() => {
+    tauriDialogConfirm.mockReset();
+  });
+
   it('does not expose Relay as a first-level route', () => {
     expect(routes.map((route) => route.id)).not.toContain('relay');
     expect(routes.map((route) => route.label)).not.toContain('Relay');
@@ -134,9 +154,30 @@ describe('handoff navigation and entry points', () => {
     expect(screen.queryByRole('button', { name: /sync sessions/i })).toBeNull();
   });
 
-  it('keeps PAT reset clickable when reset credit count is zero', async () => {
+  it('uses Tauri confirm before resetting PAT quota', async () => {
     const resetAccountQuota = vi.fn();
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    tauriDialogConfirm.mockResolvedValue(true);
+    render(
+      <Overview
+        {...overviewProps()}
+        authMode="pat"
+        quotas={[{ ...quotas[0], resetCreditCount: 1 }]}
+        resetAccountQuota={resetAccountQuota}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /reset codex-a quota/i }));
+
+    await waitFor(() => expect(tauriDialogConfirm).toHaveBeenCalled());
+    expect(confirmSpy).not.toHaveBeenCalled();
+    await waitFor(() => expect(resetAccountQuota).toHaveBeenCalledWith('a'));
+  });
+
+  it('disables PAT reset when reset credit count is zero', async () => {
+    const resetAccountQuota = vi.fn();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    tauriDialogConfirm.mockResolvedValue(true);
     render(
       <Overview
         {...overviewProps()}
@@ -147,12 +188,13 @@ describe('handoff navigation and entry points', () => {
     );
 
     const button = screen.getByRole('button', { name: /reset codex-a quota/i });
-    expect(button).toHaveProperty('disabled', false);
+    expect(button).toHaveProperty('disabled', true);
 
     fireEvent.click(button);
 
-    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
-    await waitFor(() => expect(resetAccountQuota).toHaveBeenCalledWith('a'));
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(tauriDialogConfirm).not.toHaveBeenCalled();
+    expect(resetAccountQuota).not.toHaveBeenCalled();
   });
 
   it('uses backend auth identity for PAT switch availability', () => {
