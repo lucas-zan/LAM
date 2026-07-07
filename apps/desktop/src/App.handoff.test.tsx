@@ -231,6 +231,11 @@ function session(accountId: string, id: string, modifiedAt: number): CodexSessio
 beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  vi.mocked(api.getUsageRateCard).mockResolvedValue([]);
+  vi.mocked(api.healthCheck).mockResolvedValue({ ok: true, version: '0.1.1', homeRoot: '/fake/home' });
+  vi.mocked(api.listCachedAccounts).mockResolvedValue([]);
+  vi.mocked(api.listAccounts).mockResolvedValue([]);
+  vi.mocked(api.listSessions).mockResolvedValue([]);
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     value: vi.fn(() => ({
@@ -1129,9 +1134,10 @@ describe('App handoff modal', () => {
   it('resets usage statistics from settings and reloads summary', async () => {
     vi.mocked(api.getAuthMode).mockResolvedValue('pat');
     vi.mocked(api.listSessions).mockResolvedValue([]);
-    useAppStore.setState({ route: 'settings' });
+    useAppStore.setState({ route: 'settings', appReady: true });
 
     render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /advanced/i }));
     fireEvent.click(await screen.findByRole('button', { name: /reset usage statistics/i }));
 
     await waitFor(() => expect(api.resetUsageIndex).toHaveBeenCalled());
@@ -1153,22 +1159,24 @@ describe('App handoff modal', () => {
         notes: null,
       },
     ]);
-    useAppStore.setState({ route: 'settings' });
+    useAppStore.setState({ route: 'settings', appReady: true });
 
     render(<App />);
 
-    expect(await screen.findByText('Usage rate card')).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: /rate card/i }));
+
+    expect(await screen.findByText('Usage Rate Card')).toBeTruthy();
     expect((await screen.findAllByText('gpt-5')).length).toBeGreaterThan(0);
     expect(await screen.findByText('$4.38')).toBeTruthy();
     expect(await screen.findByText('$35.00')).toBeTruthy();
-    const rateCardTable = document.querySelector('.usageRateCardTable');
+    const rateCardTable = document.querySelector('.settingsRateCardTable');
     expect(rateCardTable?.closest('.rows')).toBeNull();
   });
 
   it('selects a terminal target from settings', async () => {
     vi.mocked(api.getAuthMode).mockResolvedValue('pat');
     vi.mocked(api.listSessions).mockResolvedValue([]);
-    useAppStore.setState({ route: 'settings' });
+    useAppStore.setState({ route: 'settings', appReady: true });
 
     render(<App />);
 
