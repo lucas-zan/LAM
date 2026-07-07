@@ -9,6 +9,7 @@ fn should_hide_instead_of_close(label: &str) -> bool {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
             if should_hide_instead_of_close(window.label()) {
                 if let WindowEvent::CloseRequested { api, .. } = event {

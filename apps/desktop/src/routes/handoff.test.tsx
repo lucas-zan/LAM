@@ -134,6 +134,27 @@ describe('handoff navigation and entry points', () => {
     expect(screen.queryByRole('button', { name: /sync sessions/i })).toBeNull();
   });
 
+  it('keeps PAT reset clickable when reset credit count is zero', async () => {
+    const resetAccountQuota = vi.fn();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(
+      <Overview
+        {...overviewProps()}
+        authMode="pat"
+        quotas={[{ ...quotas[0], resetCreditCount: 0 }]}
+        resetAccountQuota={resetAccountQuota}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /reset codex-a quota/i });
+    expect(button).toHaveProperty('disabled', false);
+
+    fireEvent.click(button);
+
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
+    await waitFor(() => expect(resetAccountQuota).toHaveBeenCalledWith('a'));
+  });
+
   it('uses backend auth identity for PAT switch availability', () => {
     const patAccounts: CodexAccount[] = [
       {

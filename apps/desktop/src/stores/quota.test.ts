@@ -140,4 +140,16 @@ describe("useQuotaStore", () => {
     expect(useAppStore.getState().status).toBe("Reset quota: reset");
     expect(api.syncTrayQuota).toHaveBeenCalled();
   });
+
+  it("surfaces reset quota backend failures", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(api.resetProfileQuota).mockRejectedValue(new Error("api down"));
+
+    await useQuotaStore.getState().resetAccountQuota("a");
+
+    expect(useQuotaStore.getState().resettingQuotaIds).toEqual([]);
+    expect(useAppStore.getState().status).toBe("a: reset quota failed: api down");
+    expect(useAppStore.getState().error).toBe("a: reset quota failed: api down");
+    expect(console.error).toHaveBeenCalled();
+  });
 });

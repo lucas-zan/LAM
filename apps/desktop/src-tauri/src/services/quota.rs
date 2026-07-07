@@ -12,6 +12,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 const CODEX_APP_SERVER_QUOTA_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const CODEX_WHAM_USER_AGENT: &str = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal";
 
 struct QuotaAuthHome {
     path: PathBuf,
@@ -184,7 +185,7 @@ pub fn reset_profile_quota(home_root: &Path, profile_id: &str) -> Result<ResetQu
     let _guard = ResetAccountGuard::acquire(profile_id)?;
     let account = quota_account(home_root, profile_id)?;
     let operation = get_or_create_reset_operation(home_root, profile_id)?;
-    match consume_reset_credit_with_app_server(home_root, &account, &operation.id) {
+    match consume_reset_credit(home_root, &account, &operation.id) {
         Ok(outcome) => {
             if matches!(
                 outcome.as_str(),
@@ -223,6 +224,22 @@ pub fn reset_profile_quota(home_root: &Path, profile_id: &str) -> Result<ResetQu
             Err(err)
         }
     }
+}
+
+fn consume_reset_credit(
+    home_root: &Path,
+    account: &CodexAccount,
+    idempotency_key: &str,
+) -> Result<String> {
+    if let Some(access_token) = account_access_token(account)? {
+        let account_id = account_chatgpt_account_id(account)?;
+        return consume_reset_credit_with_wham(
+            &access_token,
+            account_id.as_deref(),
+            idempotency_key,
+        );
+    }
+    consume_reset_credit_with_app_server(home_root, account, idempotency_key)
 }
 
 struct ResetAccountGuard {
@@ -468,29 +485,23 @@ fn try_codex_app_server_quota(
     account: &CodexAccount,
 ) -> Result<UsageQuotaSnapshot> {
     if account.has_personal_access_token {
-        match try_codex_app_server_rate_limit_quota(home_root, account) {
-            Ok(mut snapshot) => {
-                enrich_reset_credit_expiry(home_root, account, &mut snapshot, None)?;
+        match try_chatgpt_usage_quota(home_root, account) {
+            Ok(Some(snapshot)) => return Ok(snapshot),
+            Ok(None) => {
+                let mut snapshot = try_codex_app_server_rate_limit_quota(home_root, account)?;
+                enrich_reset_credit_expiry(home_root, account, &mut snapshot, None, None)?;
                 return Ok(snapshot);
             }
-            Err(app_server_err) => match try_chatgpt_usage_quota(home_root, account) {
-                Ok(Some(mut snapshot)) => {
+            Err(chatgpt_err) => match try_codex_app_server_rate_limit_quota(home_root, account) {
+                Ok(mut snapshot) => {
                     snapshot.alerts.push(format!(
-                        "Codex app-server quota unavailable: {}",
-                        app_server_err.message
+                        "ChatGPT usage quota unavailable: {}",
+                        chatgpt_err.message
                     ));
+                    enrich_reset_credit_expiry(home_root, account, &mut snapshot, None, None)?;
                     return Ok(snapshot);
                 }
-                Ok(None) => return Err(app_server_err),
-                Err(chatgpt_err) => {
-                    return Err(AppError::new(
-                        "QUOTA_REFRESH_FAILED",
-                        format!(
-                            "Codex app-server quota failed: {}; ChatGPT usage fallback failed: {}",
-                            app_server_err.message, chatgpt_err.message
-                        ),
-                    ));
-                }
+                Err(_) => return Err(chatgpt_err),
             },
         }
     }
@@ -504,7 +515,7 @@ fn try_codex_app_server_quota(
                     "ChatGPT usage quota unavailable: {}",
                     chatgpt_err.message
                 ));
-                enrich_reset_credit_expiry(home_root, account, &mut snapshot, None)?;
+                enrich_reset_credit_expiry(home_root, account, &mut snapshot, None, None)?;
                 return Ok(snapshot);
             }
             Err(_) => return Err(chatgpt_err),
@@ -512,7 +523,7 @@ fn try_codex_app_server_quota(
     }
 
     let mut snapshot = try_codex_app_server_rate_limit_quota(home_root, account)?;
-    enrich_reset_credit_expiry(home_root, account, &mut snapshot, None)?;
+    enrich_reset_credit_expiry(home_root, account, &mut snapshot, None, None)?;
     Ok(snapshot)
 }
 
@@ -829,6 +840,44 @@ fn consume_reset_credit_with_app_server(
     }
 }
 
+fn consume_reset_credit_with_wham(
+    access_token: &str,
+    account_id: Option<&str>,
+    idempotency_key: &str,
+) -> Result<String> {
+    let body = serde_json::json!({
+        "redeem_request_id": idempotency_key,
+    })
+    .to_string();
+    let output = curl_bearer_json_request(
+        access_token,
+        "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
+        "POST",
+        &[
+            ("Accept", "application/json"),
+            ("Content-Type", "application/json"),
+            ("User-Agent", CODEX_WHAM_USER_AGENT),
+        ],
+        Some(&body),
+        account_id,
+    )
+    .map_err(|err| AppError::new("CODEX_RESET_FAILED", err.message))?;
+    if !output.status.success() {
+        return Err(AppError::new(
+            "CODEX_RESET_FAILED",
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    let value: Value = serde_json::from_slice(&output.stdout).map_err(|err| {
+        AppError::new(
+            "CODEX_RESET_FAILED",
+            format!("Invalid reset quota response: {err}"),
+        )
+    })?;
+    parse_reset_consume_value(&value)
+        .ok_or_else(|| AppError::new("CODEX_RESET_FAILED", "reset quota response missing code"))
+}
+
 fn parse_reset_consume_line(line: &str) -> Result<Option<String>> {
     let Ok(value) = serde_json::from_str::<Value>(line) else {
         return Ok(None);
@@ -843,13 +892,27 @@ fn parse_reset_consume_line(line: &str) -> Result<Option<String>> {
             .unwrap_or("reset quota failed");
         return Err(AppError::new("CODEX_RESET_FAILED", message));
     }
+    Ok(parse_reset_consume_value(&value))
+}
+
+fn parse_reset_consume_value(value: &Value) -> Option<String> {
     let result = value.get("result").unwrap_or(&value);
     let outcome = result
         .as_str()
         .or_else(|| result.get("outcome").and_then(Value::as_str))
         .or_else(|| result.get("status").and_then(Value::as_str))
-        .or_else(|| result.get("type").and_then(Value::as_str));
-    Ok(outcome.map(str::to_string))
+        .or_else(|| result.get("type").and_then(Value::as_str))
+        .or_else(|| result.get("code").and_then(Value::as_str));
+    outcome.map(normalize_reset_outcome)
+}
+
+fn normalize_reset_outcome(value: &str) -> String {
+    match value {
+        "already_redeemed" => "alreadyRedeemed".to_string(),
+        "nothing_to_reset" => "nothingToReset".to_string(),
+        "no_credit" => "noCredit".to_string(),
+        _ => value.to_string(),
+    }
 }
 
 fn try_chatgpt_usage_quota(
@@ -859,10 +922,15 @@ fn try_chatgpt_usage_quota(
     let Some(access_token) = account_access_token(account)? else {
         return Ok(None);
     };
-    let output = curl_bearer_json(
+    let account_id = account_chatgpt_account_id(account)?;
+    let output = curl_bearer_json_with_account_id(
         &access_token,
         "https://chatgpt.com/backend-api/wham/usage",
-        &[],
+        &[
+            ("Content-Type", "application/json"),
+            ("User-Agent", CODEX_WHAM_USER_AGENT),
+        ],
+        account_id.as_deref(),
     )
     .map_err(|err| AppError::new("CHATGPT_USAGE_UNAVAILABLE", err.message))?;
     if !output.status.success() {
@@ -878,7 +946,13 @@ fn try_chatgpt_usage_quota(
         )
     })?;
     let mut snapshot = parse_chatgpt_usage_snapshot(&value, &account.id)?;
-    enrich_reset_credit_expiry(home_root, account, &mut snapshot, Some(&access_token))?;
+    enrich_reset_credit_expiry(
+        home_root,
+        account,
+        &mut snapshot,
+        Some(&access_token),
+        account_id.as_deref(),
+    )?;
     Ok(Some(snapshot))
 }
 
@@ -914,11 +988,46 @@ fn access_token_from_file(path: &Path) -> Result<Option<String>> {
     )
 }
 
+fn account_chatgpt_account_id(account: &CodexAccount) -> Result<Option<String>> {
+    if let Some(account_id) = chatgpt_account_id_from_file(&account.codex_home.join("auth.json"))? {
+        return Ok(Some(account_id));
+    }
+    chatgpt_account_id_from_file(&account.codex_home.join("auth-f.json"))
+}
+
+fn chatgpt_account_id_from_file(path: &Path) -> Result<Option<String>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let auth_content = fs::read_to_string(path).map_err(|err| {
+        AppError::new(
+            "QUOTA_AUTH_READ_FAILED",
+            format!("Failed to read auth account file: {err}"),
+        )
+    })?;
+    let auth_json: Value = serde_json::from_str(&auth_content).map_err(|err| {
+        AppError::new(
+            "QUOTA_AUTH_INVALID",
+            format!("Invalid auth account file: {err}"),
+        )
+    })?;
+    Ok(auth_string_alias(
+        &auth_json,
+        &["account_id", "accountId", "chatgpt_account_id"],
+    )
+    .or_else(|| {
+        auth_json.get("tokens").and_then(|tokens| {
+            auth_string_alias(tokens, &["account_id", "accountId", "chatgpt_account_id"])
+        })
+    }))
+}
+
 fn enrich_reset_credit_expiry(
     home_root: &Path,
     account: &CodexAccount,
     snapshot: &mut UsageQuotaSnapshot,
     access_token: Option<&str>,
+    account_id: Option<&str>,
 ) -> Result<()> {
     if snapshot.reset_credit_count.unwrap_or(0) <= 0 || snapshot.reset_credit_expires_at.is_some() {
         return Ok(());
@@ -940,7 +1049,7 @@ fn enrich_reset_credit_expiry(
     };
 
     if let Some(token) = token.as_deref() {
-        match probe_reset_credit_details(token) {
+        match probe_reset_credit_details(token, account_id) {
             Ok(Some((count, details))) => {
                 if snapshot.reset_credit_count.is_none() {
                     snapshot.reset_credit_count = count.map(i64::from);
@@ -985,16 +1094,20 @@ fn enrich_reset_credit_expiry(
 
 fn probe_reset_credit_details(
     access_token: &str,
+    account_id: Option<&str>,
 ) -> Result<Option<(Option<u32>, Vec<ResetCreditDetail>)>> {
     let url = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
-    let output = curl_bearer_json(
+    let output = curl_bearer_json_with_account_id(
         access_token,
         url,
         &[
             ("Accept", "application/json"),
+            ("Content-Type", "application/json"),
+            ("User-Agent", CODEX_WHAM_USER_AGENT),
             ("OpenAI-Beta", "codex-1"),
             ("Originator", "Codex Desktop"),
         ],
+        account_id,
     )
     .map_err(|err| AppError::new("CODEX_RESET_DETAIL_UNAVAILABLE", err.message))?;
     if !output.status.success() {
@@ -1183,8 +1296,28 @@ fn curl_bearer_json(
     url: &str,
     headers: &[(&str, &str)],
 ) -> Result<std::process::Output> {
+    curl_bearer_json_request(access_token, url, "GET", headers, None, None)
+}
+
+fn curl_bearer_json_with_account_id(
+    access_token: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    account_id: Option<&str>,
+) -> Result<std::process::Output> {
+    curl_bearer_json_request(access_token, url, "GET", headers, None, account_id)
+}
+
+fn curl_bearer_json_request(
+    access_token: &str,
+    url: &str,
+    method: &str,
+    headers: &[(&str, &str)],
+    body: Option<&str>,
+    account_id: Option<&str>,
+) -> Result<std::process::Output> {
     let mut child = Command::new("curl")
-        .args(["-sS", "--fail", "--max-time", "12", "--config", "-", url])
+        .args(["-sS", "--max-time", "12", "--config", "-", url])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1197,8 +1330,22 @@ fn curl_bearer_json(
             access_token.replace('"', "\\\"")
         )
         .map_err(|err| AppError::new("CURL_WRITE_FAILED", err.to_string()))?;
+        if let Some(account_id) = account_id.filter(|value| !value.is_empty()) {
+            writeln!(
+                stdin,
+                "header = \"Chatgpt-Account-Id: {}\"",
+                account_id.replace('"', "\\\"")
+            )
+            .map_err(|err| AppError::new("CURL_WRITE_FAILED", err.to_string()))?;
+        }
         for (name, value) in headers {
             writeln!(stdin, "header = \"{name}: {}\"", value.replace('"', "\\\""))
+                .map_err(|err| AppError::new("CURL_WRITE_FAILED", err.to_string()))?;
+        }
+        writeln!(stdin, "request = \"{}\"", method.replace('"', "\\\""))
+            .map_err(|err| AppError::new("CURL_WRITE_FAILED", err.to_string()))?;
+        if let Some(body) = body {
+            writeln!(stdin, "data = \"{}\"", body.replace('"', "\\\""))
                 .map_err(|err| AppError::new("CURL_WRITE_FAILED", err.to_string()))?;
         }
     }
@@ -1673,6 +1820,43 @@ mod tests {
     }
 
     #[test]
+    fn account_chatgpt_account_id_reads_auth_aliases() {
+        let temp = tempfile::TempDir::new().unwrap();
+        fs::write(
+            temp.path().join("auth-f.json"),
+            r#"{"tokens":{"account_id":"account-auth-f"}}"#,
+        )
+        .unwrap();
+        let account = CodexAccount {
+            id: "a".into(),
+            display_name: "a".into(),
+            codex_home: temp.path().to_path_buf(),
+            wrapper_path: None,
+            has_auth: true,
+            has_config: true,
+            has_history: false,
+            session_count: 0,
+            latest_session_modified_at: None,
+            managed: false,
+            is_relay: false,
+            relay_source: None,
+            relay_identity: None,
+            provider_id: None,
+            model: None,
+            auth_mode: None,
+            is_active_auth: false,
+            has_personal_access_token: false,
+            renewal_date: None,
+            note: None,
+        };
+
+        assert_eq!(
+            account_chatgpt_account_id(&account).unwrap().as_deref(),
+            Some("account-auth-f")
+        );
+    }
+
+    #[test]
     fn parses_chatgpt_wham_usage_quota() {
         let usage = serde_json::json!({
             "plan_type": "plus",
@@ -1782,6 +1966,17 @@ mod tests {
                 Some(outcome.to_string())
             );
         }
+        for (wire, expected) in [
+            ("already_redeemed", "alreadyRedeemed"),
+            ("nothing_to_reset", "nothingToReset"),
+            ("no_credit", "noCredit"),
+        ] {
+            let line = serde_json::json!({"id": 2, "result": {"outcome": wire}}).to_string();
+            assert_eq!(
+                parse_reset_consume_line(&line).unwrap(),
+                Some(expected.to_string())
+            );
+        }
         let ignored = serde_json::json!({"id": 1, "result": {"outcome": "reset"}}).to_string();
         assert_eq!(parse_reset_consume_line(&ignored).unwrap(), None);
         let error = serde_json::json!({"id": 2, "error": {"message": "nope"}}).to_string();
@@ -1792,6 +1987,15 @@ mod tests {
             "CODEX_APP_SERVER_WRITE_FAILED",
             "broken pipe"
         )));
+    }
+
+    #[test]
+    fn direct_reset_consume_parser_reads_code() {
+        let consume = serde_json::json!({"code": "already_redeemed"});
+        assert_eq!(
+            parse_reset_consume_value(&consume),
+            Some("alreadyRedeemed".to_string())
+        );
     }
 
     #[test]

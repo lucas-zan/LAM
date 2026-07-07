@@ -516,7 +516,6 @@ export function Accounts({
           const isResetting = resettingQuotaIds.includes(account.id);
           const quota = quotas.find((item) => item.profileId === account.id);
           const resetCredits = resetCreditDisplay(quota);
-          const canResetQuota = (quota?.resetCreditCount ?? 0) > 0 && !isResetting;
           const providerLabel = account.providerId ?? 'unknown';
           const modelLabel = account.model ?? 'unknown';
           const isActiveAccount =
@@ -637,14 +636,9 @@ export function Accounts({
                   <UIButton
                     size="sm"
                     className="accountActionBtn resetQuotaBtn"
-                    disabled={!canResetQuota}
                     aria-label={`Reset ${account.displayName} quota`}
-                    title={
-                      quota?.resetCreditCount
-                        ? `Reset ${account.displayName} quota`
-                        : 'No reset credits available'
-                    }
-                    onClick={(e) => {
+                    title={`Reset ${account.displayName} quota`}
+                    onClick={async (e) => {
                       e.stopPropagation();
                       if (window.confirm(`Consume one reset credit for ${account.displayName}?`)) {
                         void resetAccountQuota(account.id);

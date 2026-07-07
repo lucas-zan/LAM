@@ -95,7 +95,10 @@ export const useQuotaStore = create<QuotaState>()((set, get) => ({
       useAppStore.getState().setStatus(`Reset quota: ${result.outcome}`);
       api.syncTrayQuota();
     } catch (err) {
-      useAppStore.getState().setError(`${profileId}: ${formatError(err)}`);
+      const message = `${profileId}: reset quota failed: ${formatError(err)}`;
+      console.error(message, err);
+      useAppStore.getState().setStatus(message);
+      useAppStore.getState().setError(message);
     } finally {
       set((s) => ({
         resettingQuotaIds: s.resettingQuotaIds.filter((id) => id !== profileId),
