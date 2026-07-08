@@ -639,6 +639,25 @@ export function Accounts({
                               <IconCloud size={13} />
                               <span>Sync Sessions...</span>
                             </button>
+                            <button
+                              type="button"
+                              className="cardMenuDropdownItem"
+                              disabled={!canResetQuota}
+                              title={
+                                quota?.resetCreditCount
+                                  ? `Reset ${account.displayName} quota`
+                                  : 'No reset credits available'
+                              }
+                              onClick={async () => {
+                                setActiveMenuId(null);
+                                if (await confirmResetQuota(account.displayName)) {
+                                  void resetAccountQuota(account.id);
+                                }
+                              }}
+                            >
+                              <IconPlay size={13} />
+                              <span>{isResetting ? 'Resetting...' : 'Reset Quota'}</span>
+                            </button>
                             {account.hasAuth && (
                               <button
                                 type="button"
@@ -691,6 +710,25 @@ export function Accounts({
                             >
                               <IconCloud size={13} />
                               <span>Export CPA</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="cardMenuDropdownItem"
+                              disabled={!canResetQuota}
+                              title={
+                                quota?.resetCreditCount
+                                  ? `Reset ${account.displayName} quota`
+                                  : 'No reset credits available'
+                              }
+                              onClick={async () => {
+                                setActiveMenuId(null);
+                                if (await confirmResetQuota(account.displayName)) {
+                                  void resetAccountQuota(account.id);
+                                }
+                              }}
+                            >
+                              <IconPlay size={13} />
+                              <span>{isResetting ? 'Resetting...' : 'Reset Quota'}</span>
                             </button>
                             <button
                               type="button"
@@ -807,7 +845,7 @@ export function Accounts({
                 ) : (
                   // PAT mode
                   <>
-                    {isActiveAccount ? (
+                    {(isActiveAccount || account.id === 'main') ? (
                       <UIButton
                         size="sm"
                         variant="primary"

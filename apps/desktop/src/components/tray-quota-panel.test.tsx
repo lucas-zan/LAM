@@ -163,7 +163,7 @@ describe('TrayQuotaPanel', () => {
     const intervals: Array<{ handler: TimerHandler; timeout?: number }> = [];
     const setIntervalSpy = vi.spyOn(window, 'setInterval').mockImplementation((handler, timeout) => {
       intervals.push({ handler, timeout });
-      return intervals.length as unknown as number;
+      return intervals.length as unknown as ReturnType<typeof window.setInterval>;
     });
 
     render(<TrayQuotaPanel />);
