@@ -216,6 +216,7 @@ export function App() {
   const [usageTab, setUsageTab] = useState<'insights' | 'calls' | 'threads' | 'diagnostics'>('insights');
   const [usageWindow, setUsageWindow] = useState<UsageWindow>({ preset: 'all', from: null, to: null });
   const [includeArchivedUsage, setIncludeArchivedUsage] = useState(false);
+  const antigravityRefreshInFlightRef = useRef(false);
   const loadedUsageSummaryKeyRef = useRef<string | null>(null);
   const defaultScopeUsageSummaryBaseKeyRef = useRef<string | null>(null);
 
@@ -376,6 +377,8 @@ export function App() {
 
   const loadAntigravity = useCallback(async (forceRefresh = false) => {
     if (!api.inTauri()) return;
+    if (antigravityRefreshInFlightRef.current) return;
+    antigravityRefreshInFlightRef.current = true;
     if (forceRefresh) {
       setRefreshingAntigravity(true);
     }
@@ -385,6 +388,7 @@ export function App() {
     } catch (err) {
       console.error('Failed to load Antigravity quota:', err);
     } finally {
+      antigravityRefreshInFlightRef.current = false;
       setRefreshingAntigravity(false);
     }
   }, []);

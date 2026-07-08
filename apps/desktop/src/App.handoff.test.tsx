@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import * as api from './lib/api';
 import { useAccountStore } from './stores/accounts';
@@ -442,7 +442,39 @@ beforeEach(() => {
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe('App handoff modal', () => {
+  it('does not start overlapping Antigravity auto-refresh requests', async () => {
+    const pending = deferred<{ ok: boolean; models: never[] }>();
+    vi.mocked(api.getAntigravityQuota).mockReturnValue(pending.promise);
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    const intervals: Array<{ handler: TimerHandler; timeout?: number }> = [];
+    const setIntervalSpy = vi.spyOn(window, 'setInterval').mockImplementation((handler, timeout) => {
+      intervals.push({ handler, timeout });
+      return intervals.length as unknown as number;
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(api.getAntigravityQuota).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      for (const interval of intervals.filter((item) => item.timeout === 2 * 60_000)) {
+        if (typeof interval.handler === 'function') {
+          interval.handler();
+        }
+      }
+    });
+    expect(api.getAntigravityQuota).toHaveBeenCalledTimes(1);
+
+    pending.resolve({ ok: true, models: [] });
+    await Promise.resolve();
+    setIntervalSpy.mockRestore();
+  });
+
   it('does not load Usage sections during normal app startup on Overview', async () => {
     vi.mocked(api.listSessions).mockResolvedValue([]);
 

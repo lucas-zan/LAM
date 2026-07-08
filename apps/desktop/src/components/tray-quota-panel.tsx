@@ -1008,6 +1008,7 @@ export function TrayQuotaPanel() {
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>(() => readResolvedTheme());
   const panelRef = useRef<HTMLDivElement>(null);
+  const antigravityRefreshInFlightRef = useRef(false);
 
   const applyTheme = useCallback(() => {
     const resolved = readResolvedTheme();
@@ -1065,6 +1066,8 @@ export function TrayQuotaPanel() {
 
   const loadAntigravity = useCallback(async (forceRefresh = false) => {
     if (!inTauri()) return;
+    if (antigravityRefreshInFlightRef.current) return;
+    antigravityRefreshInFlightRef.current = true;
     if (forceRefresh) {
       setRefreshingAntigravity(true);
     }
@@ -1074,6 +1077,7 @@ export function TrayQuotaPanel() {
     } catch (err) {
       console.error('Failed to load Antigravity quota:', err);
     } finally {
+      antigravityRefreshInFlightRef.current = false;
       setRefreshingAntigravity(false);
     }
   }, []);

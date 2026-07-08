@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TrayQuotaPanel } from './tray-quota-panel';
 import * as api from '../lib/api';
 import { listen } from '@tauri-apps/api/event';
@@ -86,6 +86,14 @@ const freshQuota = {
   remainingPercent: 80,
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 function setTauriInternals(enabled: boolean) {
   if (enabled) {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
@@ -144,7 +152,38 @@ beforeEach(() => {
   vi.mocked(listen).mockResolvedValue(vi.fn());
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe('TrayQuotaPanel', () => {
+  it('does not start overlapping Antigravity auto-refresh requests', async () => {
+    const pending = deferred<{ ok: boolean; models: never[] }>();
+    vi.mocked(api.getAntigravityQuota).mockReturnValue(pending.promise);
+    const intervals: Array<{ handler: TimerHandler; timeout?: number }> = [];
+    const setIntervalSpy = vi.spyOn(window, 'setInterval').mockImplementation((handler, timeout) => {
+      intervals.push({ handler, timeout });
+      return intervals.length as unknown as number;
+    });
+
+    render(<TrayQuotaPanel />);
+
+    await waitFor(() => expect(api.getAntigravityQuota).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      for (const interval of intervals.filter((item) => item.timeout === 2 * 60_000)) {
+        if (typeof interval.handler === 'function') {
+          interval.handler();
+        }
+      }
+    });
+    expect(api.getAntigravityQuota).toHaveBeenCalledTimes(1);
+
+    pending.resolve({ ok: true, models: [] });
+    await Promise.resolve();
+    setIntervalSpy.mockRestore();
+  });
+
   it('uses cached quota when the main app sync event fires', async () => {
     const listeners = new Map<string, Array<() => void>>();
     vi.mocked(listen).mockImplementation((event, handler) => {
