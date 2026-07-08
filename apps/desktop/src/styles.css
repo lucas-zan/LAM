@@ -1009,18 +1009,21 @@ p {
   font-size: 12px;
 }
 .accountNoteSummary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 8px;
-  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line));
-  border-radius: 8px;
-  padding: 8px;
-  background: color-mix(in srgb, var(--surface) 86%, var(--accent-soft));
+  gap: 12px;
+  border: none;
+  border-left: 3px solid var(--accent);
+  border-radius: 0;
+  padding: 4px 0 4px 10px;
+  background: transparent;
+  margin: 10px 0;
 }
 .accountNoteSummary div {
   min-width: 0;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 2px;
 }
 .accountNoteSummary strong,
@@ -1032,10 +1035,11 @@ p {
 .accountNoteSummary strong {
   color: var(--text);
   font-size: 12px;
+  font-weight: 600;
 }
 .accountNoteSummary span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11.5px;
 }
 .accountNoteEditBtn {
   white-space: nowrap;
@@ -1043,10 +1047,11 @@ p {
 .accountNoteForm {
   display: grid;
   gap: 8px;
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  border: 1px dashed var(--accent);
   border-radius: 8px;
-  padding: 8px;
-  background: color-mix(in srgb, var(--surface) 90%, var(--accent-soft));
+  padding: 10px;
+  background: var(--surface2);
+  margin: 10px 0;
 }
 .accountNoteForm label {
   display: grid;
@@ -1058,6 +1063,18 @@ p {
 .accountNoteForm textarea {
   width: 100%;
   min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.accountNoteForm input:focus,
+.accountNoteForm textarea:focus {
+  border-color: var(--accent);
 }
 .accountNoteForm textarea {
   resize: vertical;
@@ -4278,11 +4295,16 @@ pre {
 .settingsPagePanel {
   padding: 0 !important;
   overflow: hidden !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  margin: -20px -24px -120px !important;
 }
 
 .settingsLayout {
   display: flex;
-  height: calc(100vh - 100px); /* Subtract header and footer height */
+  height: calc(100vh - 82px); /* Subtract header and statusbar height */
   min-height: 500px;
 }
 
@@ -4296,6 +4318,108 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* Settings Sidebar Footer (System Info) */
+.settingsSidebarFooter {
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settingsSidebarFooterRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.settingsSidebarFooterRow--path {
+  cursor: pointer;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.settingsSidebarFooterRow--path:hover {
+  background: var(--surface3, var(--surface));
+}
+
+.settingsSidebarFooterLabel {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.settingsSidebarFooterValue {
+  color: var(--text);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.settingsSidebarFooterValue.status--ok {
+  color: var(--green) !important;
+}
+
+.settingsSidebarFooterValue.status--error {
+  color: var(--red) !important;
+}
+
+.settingsSidebarFooterValue .statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status--ok .statusDot {
+  background: var(--green);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--green) 60%, transparent);
+}
+
+.status--error .statusDot {
+  background: var(--red);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--red) 60%, transparent);
+}
+
+.settingsSidebarFooterValue.pathValue {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--surface);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.settingsSidebarFooterValue.pathValue:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+}
+
+.settingsSidebarFooterValue .copyIcon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.settingsSidebarFooterValue .copiedHint {
+  font-size: 9px;
+  color: var(--green);
+  font-family: var(--font-sans);
+  font-weight: bold;
 }
 
 .settingsSidebarTitle {
@@ -4354,7 +4478,7 @@ pre {
 /* Content Area Styling */
 .settingsContent {
   flex: 1;
-  padding: 32px 40px;
+  padding: 32px 40px 140px;
   overflow-y: auto;
   background: var(--surface);
 }
@@ -4401,6 +4525,115 @@ pre {
   background: var(--surface);
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  margin-bottom: 24px;
+}
+
+/* Card layout rows aligned */
+.settingsRowLayout {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settingsRowLayout:last-child {
+  border-bottom: 0;
+}
+
+.settingsRowInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.settingsRowTitle {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settingsRowDesc {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.settingsRowControl {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.settingsRowControl select {
+  min-width: 180px;
+  max-width: 240px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 32px 6px 12px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 12.5px;
+  outline: 0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+.settingsRowControl select:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+}
+
+.settingsRowControl select:focus {
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.settingsSectionTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 8px 4px;
+}
+
+.settingsSectionDesc {
+  font-size: 13px;
+  color: var(--muted);
+  margin: -4px 0 16px 4px;
+}
+
+.settingsStaticText {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Sidebar Section Headers */
+.settingsSidebarSectionHeader {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 12px 14px 4px 14px;
+  margin-top: 8px;
+}
+
+.settingsSidebarSectionHeader:first-child {
+  margin-top: 0;
 }
 
 .settingsGroupCardHeader {
@@ -4615,4 +4848,157 @@ pre {
 
 .settingsRateCardTable table {
   margin: 0;
+}
+
+/* Card Header Ellipsis Dropdown */
+.cardMenuContainer {
+  position: relative;
+  display: inline-flex;
+}
+
+.cardMenuDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 150px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cardMenuDropdownItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: transparent;
+  border: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.cardMenuDropdownItem:hover:not(:disabled) {
+  background: var(--surface2);
+}
+
+.cardMenuDropdownItem:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cardMenuDropdownItem svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.cardMenuDropdownItem--danger {
+  color: var(--red);
+}
+
+.cardMenuDropdownItem--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  color: var(--red);
+}
+
+.cardMenuDropdownItem--danger svg {
+  color: var(--red);
+}
+
+/* Inline editable note style */
+.accountNoteSummary--editable {
+  position: relative;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.accountNoteSummary--editable:not(.accountNoteSummary--empty):hover {
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.accountNoteSummary--empty {
+  border-left: none !important;
+  border: 1px dashed var(--line) !important;
+  border-radius: 6px !important;
+  padding: 8px 12px !important;
+  background: var(--surface) !important;
+  justify-content: center !important;
+}
+
+.accountNoteSummary--empty:hover {
+  border-color: var(--accent) !important;
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface)) !important;
+}
+
+.accountNotePlaceholder {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.accountNoteSummaryContent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.accountNoteSummaryEditIndicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  flex-shrink: 0;
+}
+
+.accountNoteSummary--editable:hover .accountNoteSummaryEditIndicator {
+  opacity: 0.7;
+}
+
+/* Single-row button layout for cards */
+.cardActions--singleRow {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.cardActions--singleRow .accountActionBtn {
+  margin: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+}
+
+.accountActionBtn--primary {
+  flex: 1; /* symmetrical 50% width */
+}
+
+.accountActionBtn--secondary {
+  flex: 1; /* symmetrical 50% width */
+}
+
+.accountActionBtn--full {
+  flex: 1;
+  width: 100%;
 }

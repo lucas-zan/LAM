@@ -493,8 +493,8 @@ describe('App handoff modal', () => {
     await waitFor(() => expect(api.switchToPatAccount).toHaveBeenCalledWith('codex-c'));
     await waitFor(() =>
       expect(
-        within(accountCard!).getByRole('button', { name: /switch to this account/i }),
-      ).toHaveProperty('disabled', true),
+        within(accountCard!).getByRole('button', { name: /reset codex-c quota/i }),
+      ).toBeTruthy(),
     );
     expect(api.openTerminalForLogin).not.toHaveBeenCalled();
   });
@@ -675,7 +675,8 @@ describe('App handoff modal', () => {
     const accountCard = (await screen.findByText('codex-c')).closest('article');
     expect(accountCard).not.toBeNull();
 
-    fireEvent.click(within(accountCard!).getByRole('button', { name: /export cpa/i }));
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /more options/i }));
+    fireEvent.click(screen.getByRole('button', { name: /export cpa/i }));
 
     await waitFor(() => expect(api.exportCpaCredentials).toHaveBeenCalledWith('codex-c'));
     const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
@@ -693,6 +694,11 @@ describe('App handoff modal', () => {
   it('shows reset expiry rows in Shanghai order and confirms before reset', async () => {
     vi.mocked(api.getAuthMode).mockResolvedValue('pat');
     vi.mocked(api.listSessions).mockResolvedValue([]);
+    vi.mocked(api.listAccounts).mockResolvedValue(
+      accounts.map((account) =>
+        account.id === 'codex-c' ? { ...account, isActiveAuth: true } : account,
+      ),
+    );
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     useQuotaStore.setState({
@@ -723,7 +729,7 @@ describe('App handoff modal', () => {
 
     render(<App />);
     await waitFor(() => expect(screen.getByLabelText(/pat mode/i)).toHaveProperty('checked', true));
-    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    const accountCard = (await screen.findByRole('heading', { name: 'codex-c' })).closest('article');
     expect(accountCard).not.toBeNull();
 
     expect(within(accountCard!).queryByLabelText('Manual reset expiry')).toBeNull();
@@ -746,7 +752,8 @@ describe('App handoff modal', () => {
     expect(accountCard).not.toBeNull();
     expect(within(accountCard!).queryByRole('button', { name: /switch to this account/i })).toBeNull();
 
-    fireEvent.click(within(accountCard!).getByRole('button', { name: /^login$/i }));
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /more options/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^login$/i }));
 
     await waitFor(() => expect(api.openTerminalForLogin).toHaveBeenCalledWith('codex-c'));
     expect(api.switchToPatAccount).not.toHaveBeenCalled();
@@ -760,7 +767,8 @@ describe('App handoff modal', () => {
     const accountCard = (await screen.findByText('codex-c')).closest('article');
     expect(accountCard).not.toBeNull();
 
-    fireEvent.click(within(accountCard!).getByRole('button', { name: /delete codex-c/i }));
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /more options/i }));
+    fireEvent.click(screen.getByRole('button', { name: /delete codex-c/i }));
 
     expect(await screen.findByRole('heading', { name: /delete account/i })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /delete account/i }));
@@ -775,7 +783,8 @@ describe('App handoff modal', () => {
     const accountCard = (await screen.findByText('codex-c')).closest('article');
     expect(accountCard).not.toBeNull();
 
-    fireEvent.click(within(accountCard!).getByRole('button', { name: /delete codex-c/i }));
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /more options/i }));
+    fireEvent.click(screen.getByRole('button', { name: /delete codex-c/i }));
     fireEvent.click(await screen.findByRole('button', { name: /cancel/i }));
 
     expect(api.deleteAccount).not.toHaveBeenCalled();
@@ -790,7 +799,8 @@ describe('App handoff modal', () => {
     const accountCard = (await screen.findByText('codex-c')).closest('article');
     expect(accountCard).not.toBeNull();
 
-    expect(within(accountCard!).queryByRole('button', { name: /delete codex-c/i })).toBeNull();
+    fireEvent.click(within(accountCard!).getByRole('button', { name: /more options/i }));
+    expect(screen.queryByRole('button', { name: /delete codex-c/i })).toBeNull();
   });
 
   it('uses the Login action as session auth update for PAT token accounts', async () => {

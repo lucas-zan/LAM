@@ -150,6 +150,15 @@ export function IconCloud(props: IconProps) {
 export function IconTrash(props: IconProps) {
   return <Svg {...props}><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 15H6L5 6" /><path d="M10 11v6M14 11v6" /></Svg>;
 }
+export function IconDots(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="2" fill="currentColor" />
+      <circle cx="12" cy="5" r="2" fill="currentColor" />
+      <circle cx="12" cy="19" r="2" fill="currentColor" />
+    </Svg>
+  );
+}
 
 export type NavIconName = "overview" | "usage" | "sessions" | "relay" | "providers" | "sync" | "settings";
 

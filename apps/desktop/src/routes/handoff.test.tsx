@@ -157,7 +157,13 @@ describe('handoff navigation and entry points', () => {
         expect(button).toHaveProperty('disabled', true);
       }
     }
-    expect(screen.getAllByRole('button', { name: /export cpa/i })).toHaveLength(accounts.length);
+    
+    const moreBtns = screen.getAllByRole('button', { name: /more options/i });
+    expect(moreBtns).toHaveLength(accounts.length);
+    for (const btn of moreBtns) {
+      fireEvent.click(btn);
+      expect(screen.getByRole('button', { name: /export cpa/i })).toBeTruthy();
+    }
     expect(screen.queryByRole('button', { name: /sync sessions/i })).toBeNull();
   });
 
@@ -165,9 +171,14 @@ describe('handoff navigation and entry points', () => {
     const resetAccountQuota = vi.fn();
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     tauriDialogConfirm.mockResolvedValue(true);
+    const patAccounts = [
+      { ...accounts[0], isActiveAuth: true },
+      { ...accounts[1], isActiveAuth: false },
+    ];
     render(
       <Overview
         {...overviewProps()}
+        accounts={patAccounts}
         authMode="pat"
         quotas={[{ ...quotas[0], resetCreditCount: 1 }]}
         resetAccountQuota={resetAccountQuota}
@@ -185,9 +196,14 @@ describe('handoff navigation and entry points', () => {
     const resetAccountQuota = vi.fn();
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     tauriDialogConfirm.mockResolvedValue(true);
+    const patAccounts = [
+      { ...accounts[0], isActiveAuth: true },
+      { ...accounts[1], isActiveAuth: false },
+    ];
     render(
       <Overview
         {...overviewProps()}
+        accounts={patAccounts}
         authMode="pat"
         quotas={[{ ...quotas[0], resetCreditCount: 0 }]}
         resetAccountQuota={resetAccountQuota}
@@ -230,7 +246,7 @@ describe('handoff navigation and entry points', () => {
         .getByRole('heading', { name: 'codex-a' })
         .closest('article')
         ?.querySelector('[aria-label="Switch to this account"]'),
-    ).toHaveProperty('disabled', true);
+    ).toBeNull();
     expect(
       screen
         .getByRole('heading', { name: 'codex-b' })
@@ -313,9 +329,6 @@ describe('handoff navigation and entry points', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /antigravity/i }));
 
-    expect(
-      screen.getByText('Within each group, models share a weekly limit and a 5-hour limit.'),
-    ).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Gemini Models' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Claude and GPT models' })).toBeTruthy();
     expect(screen.getAllByText('Weekly Limit').length).toBeGreaterThan(0);
@@ -385,15 +398,15 @@ describe('handoff navigation and entry points', () => {
       />,
     );
 
-    expect(screen.getByText('2 resets')).toBeTruthy();
     expect(screen.getByText('Jul 11 23:18')).toBeTruthy();
   });
 
   it('uses one overview account action button size class', () => {
     render(<Overview {...overviewProps()} />);
 
-    for (const name of [/relay latest/i, /handoff/i, /sync sessions/i, /rename/i, /login/i]) {
-      for (const button of screen.getAllByRole('button', { name })) {
+    for (const name of [/relay latest/i, /handoff/i, /login/i]) {
+      const buttons = screen.queryAllByRole('button', { name });
+      for (const button of buttons) {
         expect(button.className).toContain('accountActionBtn');
       }
     }

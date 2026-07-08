@@ -41,12 +41,21 @@ import {
   IconSliders,
   IconCoins,
   IconDevice,
+  IconDots,
 } from '../components/icons';
 import { UIButton } from '../components/ui-button';
 import { PlanTypeBadge } from '../components/plan-type-badge';
 import { confirm as tauriConfirm } from '@tauri-apps/plugin-dialog';
 import { checkProfileTokenExpiration, getUsageRateCard, inTauri } from '../lib/api';
 import { formatCost } from '../lib/usage-pricing';
+
+function shortenPath(path: string | null | undefined): string {
+  if (!path) return '';
+  return path
+    .replace(/^\/Users\/[^/]+/, '~')
+    .replace(/^\/home\/[^/]+/, '~')
+    .replace(/^[a-zA-Z]:\\Users\\[^\\]+/, '~');
+}
 
 async function confirmResetQuota(displayName: string): Promise<boolean> {
   const message = `Reset quota for ${displayName}? This will consume one reset credit if one is available.`;
@@ -119,7 +128,7 @@ export function AntigravityModels({
             {refreshing ? 'Refreshing...' : 'Refresh'}
           </UIButton>
         </div>
-        {quota.description ? <p className="cardMeta">{quota.description}</p> : null}
+
         <div className="cardGrid accountCardGrid">
           {groupedModels.map(({ group, models }) => (
             <article className="card accountCard antigravityGroupCard" key={group.displayName}>
@@ -128,9 +137,7 @@ export function AntigravityModels({
                   <h3>{group.displayName}</h3>
                 </div>
               </div>
-              {group.description ? (
-                <p className="antigravityGroupDescription">{group.description}</p>
-              ) : null}
+
               <div className="accountQuota">
                 {[...group.buckets]
                   .sort((a, b) => {
@@ -471,6 +478,21 @@ export function Accounts({
   authMode?: 'oauth' | 'pat';
 }) {
   const [tokenStatuses, setTokenStatuses] = useState<Record<string, TokenExpirationStatus>>({});
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (activeMenuId !== null) {
+        const target = e.target as HTMLElement;
+        if (!target.closest('.cardMenuDropdown') && !target.closest('.cardMenuBtn')) {
+          setActiveMenuId(null);
+        }
+      }
+    };
+    window.addEventListener('click', handleOutsideClick);
+    return () => window.removeEventListener('click', handleOutsideClick);
+  }, [activeMenuId]);
+
   useEffect(() => {
     const fetchTokenStatuses = async () => {
       const patAccounts = accounts.filter(
@@ -530,8 +552,14 @@ export function Accounts({
           const quota = quotas.find((item) => item.profileId === account.id);
           const resetCredits = resetCreditDisplay(quota);
           const canResetQuota = (quota?.resetCreditCount ?? 0) > 0 && !isResetting;
-          const providerLabel = account.providerId ?? 'unknown';
           const modelLabel = account.model ?? 'unknown';
+          const hasProvider = account.providerId && account.providerId !== 'unknown';
+          const providerPart = hasProvider ? `Provider: ${account.providerId}` : '';
+          const metaText = [
+            `${account.sessionCount} sessions`,
+            providerPart,
+            modelLabel,
+          ].filter(Boolean).join(' · ');
           const isActiveAccount =
             authMode === 'pat'
               ? account.isActiveAuth === true
@@ -561,7 +589,6 @@ export function Accounts({
                           <span className="resetCreditMore">+{resetCredits.overflow}</span>
                         ) : null}
                       </span>
-                      <span className="resetCreditText">{resetCredits.summary}</span>
                       {resetCredits.nearestExpiry ? (
                         <span className="resetCreditExpiry">{resetCredits.nearestExpiry}</span>
                       ) : null}
@@ -583,6 +610,105 @@ export function Accounts({
                   >
                     ↻
                   </UIButton>
+                  <div className="cardMenuContainer">
+                    <UIButton
+                      variant="icon"
+                      size="sm"
+                      className="iconCircleBtn cardMenuBtn"
+                      title="More options"
+                      aria-label="More options"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveMenuId(activeMenuId === account.id ? null : account.id);
+                      }}
+                    >
+                      <IconDots size={14} />
+                    </UIButton>
+                    {activeMenuId === account.id && (
+                      <div className="cardMenuDropdown" onClick={(e) => e.stopPropagation()}>
+                        {authMode === 'oauth' ? (
+                          <>
+                            <button
+                              type="button"
+                              className="cardMenuDropdownItem"
+                              onClick={() => {
+                                setActiveMenuId(null);
+                                openSync(account.id);
+                              }}
+                            >
+                              <IconCloud size={13} />
+                              <span>Sync Sessions...</span>
+                            </button>
+                            {account.hasAuth && (
+                              <button
+                                type="button"
+                                className="cardMenuDropdownItem"
+                                aria-label="Login"
+                                onClick={() => {
+                                  setActiveMenuId(null);
+                                  login(account);
+                                }}
+                              >
+                                <IconKey size={13} />
+                                <span>Login</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="cardMenuDropdownItem"
+                              disabled={account.id === 'main'}
+                              onClick={() => {
+                                setActiveMenuId(null);
+                                rename(account);
+                              }}
+                            >
+                              <IconPencil size={13} />
+                              <span>Rename</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="cardMenuDropdownItem cardMenuDropdownItem--danger"
+                              disabled={account.id === 'main'}
+                              aria-label={`Delete ${account.displayName}`}
+                              onClick={() => {
+                                setActiveMenuId(null);
+                                deleteAccount(account);
+                              }}
+                            >
+                              <IconTrash size={13} />
+                              <span>Delete</span>
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="cardMenuDropdownItem"
+                              onClick={() => {
+                                setActiveMenuId(null);
+                                exportCpa(account);
+                              }}
+                            >
+                              <IconCloud size={13} />
+                              <span>Export CPA</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="cardMenuDropdownItem"
+                              disabled={account.id === 'main' || isActiveAccount}
+                              onClick={() => {
+                                setActiveMenuId(null);
+                                rename(account);
+                              }}
+                            >
+                              <IconPencil size={13} />
+                              <span>Rename</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="cardTagsRow">
@@ -604,13 +730,13 @@ export function Accounts({
                 <TokenExpirationBadge status={tokenStatuses[account.id]} />
               </div>
               <p className="cardPath mono" title={account.codexHome}>
-                {account.codexHome}
+                {shortenPath(account.codexHome)}
               </p>
               <p
                 className="cardMeta"
-                title={`${account.sessionCount} sessions · Provider: ${providerLabel} · ${modelLabel}`}
+                title={metaText}
               >
-                {account.sessionCount} sessions · Provider: {providerLabel} · {modelLabel}
+                {metaText}
               </p>
               <AccountNotePanel account={account} onSave={onSaveAccountNote} />
               <div className="accountQuota">
@@ -624,158 +750,121 @@ export function Accounts({
                   />
                 ))}
               </div>
-              <div className="cardActions">
-                <UIButton
-                  size="sm"
-                  variant="primary"
-                  className="accountActionBtn"
-                  disabled={authMode === 'pat' || !currentSession}
-                  aria-label="Relay Latest"
-                  title={
-                    authMode === 'pat'
-                      ? 'Not available in PAT mode'
-                      : currentSession
-                        ? `Relay latest active session ${currentSession.id} with ${account.displayName}`
-                        : 'No active session found'
-                  }
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    relayLatest(account);
-                  }}
-                >
-                  <IconPlay size={13} />
-                  Relay Latest
-                </UIButton>
-                {authMode === 'pat' ? (
-                  <UIButton
-                    size="sm"
-                    className="accountActionBtn resetQuotaBtn"
-                    disabled={!canResetQuota}
-                    aria-label={`Reset ${account.displayName} quota`}
-                    title={
-                      quota?.resetCreditCount
-                        ? `Reset ${account.displayName} quota`
-                        : 'No reset credits available'
-                    }
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      if (await confirmResetQuota(account.displayName)) {
-                        void resetAccountQuota(account.id);
-                      }
-                    }}
-                  >
-                    <IconPlay size={13} />
-                    {isResetting ? 'Resetting' : 'Reset Quota'}
-                  </UIButton>
+              <div className="cardActions cardActions--singleRow">
+                {authMode === 'oauth' ? (
+                  account.hasAuth ? (
+                    <>
+                      <UIButton
+                        size="sm"
+                        variant="primary"
+                        className="accountActionBtn accountActionBtn--primary"
+                        disabled={!currentSession}
+                        aria-label="Relay Latest"
+                        title={
+                          currentSession
+                            ? `Relay latest active session ${currentSession.id} with ${account.displayName}`
+                            : 'No active session found'
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          relayLatest(account);
+                        }}
+                      >
+                        <IconPlay size={13} />
+                        Relay Latest
+                      </UIButton>
+                       <UIButton
+                        size="sm"
+                        variant="default"
+                        className="accountActionBtn accountActionBtn--secondary"
+                        disabled={accounts.length < 2}
+                        aria-label="Handoff"
+                        title={`Choose a session to continue with ${account.displayName}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openHandoff(account);
+                        }}
+                      >
+                        <IconPlay size={13} />
+                        Handoff
+                      </UIButton>
+                    </>
+                  ) : (
+                    <UIButton
+                      size="sm"
+                      variant="primary"
+                      className="accountActionBtn accountActionBtn--full"
+                      title="Login to this account"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        login(account);
+                      }}
+                    >
+                      <IconKey size={13} />
+                      Login
+                    </UIButton>
+                  )
                 ) : (
-                  <UIButton
-                    size="sm"
-                    className="accountActionBtn"
-                    disabled={accounts.length < 2}
-                    aria-label="Handoff"
-                    title={`Choose a session to continue with ${account.displayName}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openHandoff(account);
-                    }}
-                  >
-                    <IconPlay size={13} />
-                    Handoff
-                  </UIButton>
+                  // PAT mode
+                  <>
+                    {isActiveAccount ? (
+                      <UIButton
+                        size="sm"
+                        variant="primary"
+                        className="accountActionBtn accountActionBtn--primary"
+                        disabled={!canResetQuota}
+                        aria-label={`Reset ${account.displayName} quota`}
+                        title={
+                          quota?.resetCreditCount
+                            ? `Reset ${account.displayName} quota`
+                            : 'No reset credits available'
+                        }
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (await confirmResetQuota(account.displayName)) {
+                            void resetAccountQuota(account.id);
+                          }
+                        }}
+                      >
+                        <IconPlay size={13} />
+                        {isResetting ? 'Resetting' : 'Reset Quota'}
+                      </UIButton>
+                    ) : (
+                      <UIButton
+                        size="sm"
+                        variant="primary"
+                        className="accountActionBtn accountActionBtn--primary"
+                        disabled={account.id === 'main'}
+                        aria-label="Switch to this account"
+                        title={
+                          account.id === 'main'
+                            ? 'Main profile is the active auth slot'
+                            : 'Switch to this account'
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          switchAccount(account);
+                        }}
+                      >
+                        <IconSync size={13} />
+                        Switch
+                      </UIButton>
+                    )}
+                    <UIButton
+                      size="sm"
+                      variant="default"
+                      className="accountActionBtn accountActionBtn--secondary"
+                      title={account.hasPersonalAccessToken ? 'Update session auth JSON' : 'Login to this account'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        login(account);
+                      }}
+                    >
+                      <IconKey size={13} />
+                      {account.hasPersonalAccessToken ? 'Update' : 'Login'}
+                    </UIButton>
+                  </>
                 )}
-                <UIButton
-                  size="sm"
-                  className="accountActionBtn"
-                  title={authMode === 'pat' ? 'Export CPA auth JSON' : 'Sync sessions'}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (authMode === 'pat') {
-                      exportCpa(account);
-                    } else {
-                      openSync(account.id);
-                    }
-                  }}
-                >
-                  <IconCloud size={13} />
-                  {authMode === 'pat' ? 'Export CPA' : 'Sync Sessions...'}
-                </UIButton>
-                <UIButton
-                  size="sm"
-                  className="accountActionBtn"
-                  disabled={account.id === 'main' || (authMode === 'pat' && isActiveAccount)}
-                  title={
-                    authMode === 'pat' && isActiveAccount
-                      ? 'Not available for active account in PAT mode'
-                      : account.id === 'main'
-                        ? 'Main profile cannot be renamed'
-                        : `Rename ${account.displayName}`
-                  }
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    rename(account);
-                  }}
-                >
-                  <IconPencil size={13} />
-                  Rename
-                </UIButton>
-                {authMode !== 'pat' ? (
-                  <UIButton
-                    size="sm"
-                    className="accountActionBtn"
-                    disabled={account.id === 'main'}
-                    aria-label={`Delete ${account.displayName}`}
-                    title={
-                      account.id === 'main'
-                        ? 'Main profile cannot be deleted'
-                        : `Delete ${account.displayName}`
-                    }
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteAccount(account);
-                    }}
-                  >
-                    <IconTrash size={13} />
-                    Delete
-                  </UIButton>
-                ) : null}
-                <UIButton
-                  size="sm"
-                  className="accountActionBtn"
-                  title={
-                    authMode === 'pat' && account.hasPersonalAccessToken
-                      ? 'Update session auth JSON'
-                      : 'Login to this account'
-                  }
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    login(account);
-                  }}
-                >
-                  <IconKey size={13} />
-                  {authMode === 'pat' && account.hasPersonalAccessToken ? 'Update' : 'Login'}
-                </UIButton>
-                {authMode === 'pat' ? (
-                  <UIButton
-                    size="sm"
-                    className="accountActionBtn"
-                    disabled={account.id === 'main' || isActiveAccount}
-                    aria-label="Switch to this account"
-                    title={
-                      account.id === 'main'
-                        ? 'Main profile is the active auth slot'
-                        : isActiveAccount
-                          ? 'Already active in PAT mode'
-                          : 'Switch to this account'
-                    }
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      switchAccount(account);
-                    }}
-                  >
-                    <IconSync size={13} />
-                    Switch
-                  </UIButton>
-                ) : null}
               </div>
             </article>
           );
@@ -856,16 +945,43 @@ function AccountNotePanel({
     );
   }
 
+  const hasNotes = !!(account.renewalDate || account.note);
   return (
-    <div className="accountNoteSummary" onClick={(event) => event.stopPropagation()}>
-      <div>
-        <strong>{account.renewalDate ? `Renews ${account.renewalDate}` : 'No renewal date'}</strong>
-        <span>{account.note || 'No note'}</span>
+    <div
+      role="button"
+      tabIndex={0}
+      className={`accountNoteSummary accountNoteSummary--editable ${!hasNotes ? 'accountNoteSummary--empty' : ''}`}
+      title="Click to edit renewal date and notes"
+      aria-label="Edit note"
+      onClick={(event) => {
+        event.stopPropagation();
+        startEditing();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.stopPropagation();
+          event.preventDefault();
+          startEditing();
+        }
+      }}
+    >
+      <div className="accountNoteSummaryContent">
+        {hasNotes ? (
+          <>
+            {account.renewalDate && (
+              <strong>Renews {account.renewalDate}</strong>
+            )}
+            {account.note && (
+              <span>{account.note}</span>
+            )}
+          </>
+        ) : (
+          <span className="accountNotePlaceholder">+ Add renewal date or note</span>
+        )}
       </div>
-      <UIButton size="sm" className="accountNoteEditBtn" onClick={startEditing}>
-        <IconPencil size={13} />
-        Edit note
-      </UIButton>
+      <span className="accountNoteSummaryEditIndicator" aria-hidden>
+        <IconPencil size={12} />
+      </span>
     </div>
   );
 }
@@ -1233,8 +1349,8 @@ export function Settings({
       <div className="settingsLayout">
         {/* Left Sidebar */}
         <aside className="settingsSidebar">
-          <h3 className="settingsSidebarTitle">Settings</h3>
           <nav className="settingsSidebarNav" aria-label="Settings Categories">
+            <div className="settingsSidebarSectionHeader">App Settings</div>
             <button
               type="button"
               className={`settingsSidebarBtn ${activeTab === 'general' ? 'active' : ''}`}
@@ -1251,6 +1367,18 @@ export function Settings({
               <IconKey size={16} />
               <span>Advanced</span>
             </button>
+
+            <div className="settingsSidebarSectionHeader">Integrations</div>
+            <button
+              type="button"
+              className={`settingsSidebarBtn ${activeTab === 'system' ? 'active' : ''}`}
+              onClick={() => setActiveTab('system')}
+            >
+              <IconDevice size={16} />
+              <span>System & Desktop</span>
+            </button>
+
+            <div className="settingsSidebarSectionHeader">Resources</div>
             <button
               type="button"
               className={`settingsSidebarBtn ${activeTab === 'rate-card' ? 'active' : ''}`}
@@ -1259,15 +1387,37 @@ export function Settings({
               <IconCoins size={16} />
               <span>Rate Card</span>
             </button>
-            <button
-              type="button"
-              className={`settingsSidebarBtn ${activeTab === 'system' ? 'active' : ''}`}
-              onClick={() => setActiveTab('system')}
-            >
-              <IconDevice size={16} />
-              <span>System</span>
-            </button>
           </nav>
+          <div className="settingsSidebarFooter">
+            <div className="settingsSidebarFooterRow">
+              <span className="settingsSidebarFooterLabel">Status</span>
+              <span className={`settingsSidebarFooterValue ${health?.ok ? 'status--ok' : 'status--error'}`}>
+                <span className="statusDot" />
+                {health?.ok ? 'Connected' : 'Disconnected'}
+              </span>
+            </div>
+            <div className="settingsSidebarFooterRow">
+              <span className="settingsSidebarFooterLabel">Version</span>
+              <span className="settingsSidebarFooterValue">{health?.version ?? '0.1.1'}</span>
+            </div>
+            {health?.homeRoot && (
+              <div
+                className="settingsSidebarFooterRow settingsSidebarFooterRow--path"
+                onClick={handleCopyHomeRoot}
+                title="Click to copy Home Root path"
+              >
+                <span className="settingsSidebarFooterLabel">Home Root</span>
+                <span className="settingsSidebarFooterValue pathValue">
+                  {health.homeRoot}
+                  {copiedHomeRoot ? (
+                    <span className="copiedHint">Copied!</span>
+                  ) : (
+                    <IconCopy size={11} className="copyIcon" />
+                  )}
+                </span>
+              </div>
+            )}
+          </div>
         </aside>
 
         {/* Right Content Pane */}
@@ -1279,50 +1429,17 @@ export function Settings({
                 <p>Configure core application parameters and system details.</p>
               </div>
 
-              {/* System Info Card */}
+              {/* App Preferences */}
+              <div className="settingsSectionTitle">App Preferences</div>
               <div className="settingsGroupCard">
-                <div className="settingsGroupCardHeader">
-                  <h5>System Info</h5>
-                </div>
-                <div className="settingsCardBody">
-                  <div className="settingsInfoItem">
-                    <span className="infoLabel">Status</span>
-                    <span className="infoValue">
-                      <span className={`statusBadge ${health?.ok ? 'statusBadge--ok' : 'statusBadge--error'}`}>
-                        {health?.ok ? 'Connected' : 'Disconnected'}
-                      </span>
-                    </span>
+                <div className="settingsRowLayout">
+                  <div className="settingsRowInfo">
+                    <label htmlFor="modeAvailabilitySelect" className="settingsRowTitle">Mode availability</label>
+                    <p className="settingsRowDesc">Controls which account mode information and titlebar controls are shown.</p>
                   </div>
-                  <div className="settingsInfoItem">
-                    <span className="infoLabel">Version</span>
-                    <span className="infoValue">{health?.version ?? '0.1.1'}</span>
-                  </div>
-                  <div className="settingsInfoItem">
-                    <span className="infoLabel">Home Root</span>
-                    <span className="infoValue monospacePath">
-                      <code>{health?.homeRoot ?? 'unknown'}</code>
-                      <button
-                        type="button"
-                        className="infoCopyBtn"
-                        title="Copy Home Root Path"
-                        onClick={handleCopyHomeRoot}
-                      >
-                        {copiedHomeRoot ? 'Copied!' : <IconCopy size={12} />}
-                      </button>
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Terminal & Handoff Card */}
-              <div className="settingsGroupCard">
-                <div className="settingsGroupCardHeader">
-                  <h5>Terminal & Handoff</h5>
-                </div>
-                <div className="settingsCardBody">
-                  <label className="settingsFieldLabel">
-                    <span>Mode availability</span>
+                  <div className="settingsRowControl">
                     <select
+                      id="modeAvailabilitySelect"
                       value={modeAvailability}
                       onChange={(event) =>
                         setModeAvailability(event.target.value as 'profile' | 'pat' | 'both')
@@ -1332,11 +1449,17 @@ export function Settings({
                       <option value="pat">PAT Only</option>
                       <option value="both">Profile & PAT</option>
                     </select>
-                    <em>Controls which account mode information and titlebar controls are shown.</em>
-                  </label>
-                  <label className="settingsFieldLabel">
-                    <span>Handoff terminal</span>
+                  </div>
+                </div>
+
+                <div className="settingsRowLayout">
+                  <div className="settingsRowInfo">
+                    <label htmlFor="terminalTargetSelect" className="settingsRowTitle">Handoff terminal</label>
+                    <p className="settingsRowDesc">Terminal app used by profile relay, resume, and login commands.</p>
+                  </div>
+                  <div className="settingsRowControl">
                     <select
+                      id="terminalTargetSelect"
                       value={terminalTargetId}
                       onChange={(event) => setTerminalTargetId(event.target.value)}
                     >
@@ -1349,10 +1472,11 @@ export function Settings({
                         </option>
                       ))}
                     </select>
-                    <em>Used by Profile relay, resume, and login commands.</em>
-                  </label>
+                  </div>
                 </div>
               </div>
+
+
             </div>
           )}
 
@@ -1363,15 +1487,17 @@ export function Settings({
                 <p>Configure conflict strategies, statistics tracking, and background processes.</p>
               </div>
 
-              {/* Session Strategy Card */}
+              {/* Session Strategy */}
+              <div className="settingsSectionTitle">Session Conflict Resolution</div>
               <div className="settingsGroupCard">
-                <div className="settingsGroupCardHeader">
-                  <h5>Session Strategy</h5>
-                </div>
-                <div className="settingsCardBody">
-                  <label className="settingsFieldLabel">
-                    <span>Diverged session strategy</span>
+                <div className="settingsRowLayout">
+                  <div className="settingsRowInfo">
+                    <label htmlFor="divergedStrategySelect" className="settingsRowTitle">Diverged session strategy</label>
+                    <p className="settingsRowDesc">Strategy used when both local and remote accounts continued the same session differently.</p>
+                  </div>
+                  <div className="settingsRowControl">
                     <select
+                      id="divergedStrategySelect"
                       value={divergedStrategy}
                       onChange={(event) => setDivergedStrategy(event.target.value as DivergedSessionStrategy)}
                     >
@@ -1383,26 +1509,29 @@ export function Settings({
                       <option value="prefer_source">Prefer source with backup</option>
                       <option value="prefer_target">Prefer target and save source fork</option>
                     </select>
-                    <em>Used when both accounts continued the same session differently.</em>
-                  </label>
+                  </div>
                 </div>
               </div>
 
-              {/* Data & Tracking Card */}
+              {/* Data & History */}
+              <div className="settingsSectionTitle">Data & History (Danger Zone)</div>
               <div className="settingsGroupCard">
-                <div className="settingsGroupCardHeader">
-                  <h5>Data & Tracking</h5>
-                </div>
-                <div className="settingsCardBody">
-                  <div className="settingsInfoItem">
-                    <span className="infoLabel">Usage statistics</span>
-                    <span className="infoValue">LAM-owned tracker state</span>
+                <div className="settingsRowLayout">
+                  <div className="settingsRowInfo">
+                    <span className="settingsRowTitle">Usage statistics</span>
+                    <p className="settingsRowDesc">LAM-owned token tracker database state.</p>
                   </div>
-                  <div className="settingsDangerZone">
-                    <div>
-                      <h6>Reset usage statistics history</h6>
-                      <p>Clear all local estimates and cached events from SQLite databases.</p>
-                    </div>
+                  <div className="settingsRowControl">
+                    <span className="settingsStaticText">Active</span>
+                  </div>
+                </div>
+
+                <div className="settingsRowLayout">
+                  <div className="settingsRowInfo">
+                    <span className="settingsRowTitle">Reset usage statistics history</span>
+                    <p className="settingsRowDesc">Clear all local estimates and cached events from SQLite databases.</p>
+                  </div>
+                  <div className="settingsRowControl">
                     <UIButton variant="danger" size="sm" onClick={resetUsageStatistics}>
                       Reset Usage Statistics
                     </UIButton>
@@ -1475,23 +1604,24 @@ export function Settings({
                 <p>Configure macOS system integration, Dock behaviour, and tray sync schedules.</p>
               </div>
 
-              {/* Desktop Integration Card */}
+              {/* Desktop Integration */}
+              <div className="settingsSectionTitle">macOS System Integration</div>
               <div className="settingsGroupCard">
-                <div className="settingsGroupCardHeader">
-                  <h5>macOS System Integration</h5>
-                </div>
-                <div className="settingsCardBody">
-                  <label className="settingsFieldLabel">
-                    <span>Dock icon visibility</span>
+                <div className="settingsRowLayout">
+                  <div className="settingsRowInfo">
+                    <label htmlFor="hideDockIconSelect" className="settingsRowTitle">Dock icon behavior</label>
+                    <p className="settingsRowDesc">Hide Dock icon on macOS while maintaining the status bar menu tray (Accessory mode).</p>
+                  </div>
+                  <div className="settingsRowControl">
                     <select
+                      id="hideDockIconSelect"
                       value={hideDockIcon ? 'true' : 'false'}
                       onChange={(event) => setHideDockIcon(event.target.value === 'true')}
                     >
                       <option value="false">Show Dock icon</option>
                       <option value="true">Hide Dock icon (Accessory mode)</option>
                     </select>
-                    <em>Hide Dock icon on macOS while maintaining the status bar menu tray.</em>
-                  </label>
+                  </div>
                 </div>
               </div>
             </div>
