@@ -26,6 +26,8 @@ help:
 	@echo "  make test        Same as make check"
 	@echo "  make build       Build frontend and Tauri bundle"
 	@echo "  make dmg         Build macOS .app and .dmg installer"
+	@echo "  make dmg VERSION=0.2.1"
+	@echo "                   Sync package/Tauri/Cargo versions before building"
 	@echo "  make install     npm install in apps/desktop"
 	@echo ""
 	@echo "Optional:"
@@ -74,6 +76,9 @@ check test: install node-check cargo-check
 tauri-info: status
 
 build dmg: install node-check cargo-check
+ifneq ($(strip $(VERSION)),)
+	cd $(APP_DIR) && node scripts/sync-release-version.mjs "$(VERSION)"
+endif
 	cd $(APP_DIR) && $(NPM) run tauri:build
 
 clean:
