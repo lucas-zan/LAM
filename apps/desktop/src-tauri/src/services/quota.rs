@@ -128,6 +128,28 @@ pub fn get_profile_quota(
             }
         }
     }
+    if force_refresh {
+        match try_chatgpt_usage_quota(home_root, &account) {
+            Ok(Some(mut snapshot)) => {
+                apply_manual_reset_credit_expiry(home_root, &account.id, &mut snapshot);
+                write_quota_cache(home_root, &snapshot)?;
+                return Ok(snapshot);
+            }
+            Ok(None) => {}
+            Err(err) => {
+                if let Some(mut cached) = read_quota_cache(home_root, profile_id)? {
+                    cached
+                        .alerts
+                        .push(format!("ChatGPT usage quota unavailable: {}", err.message));
+                    return Ok(cached);
+                }
+                return Ok(unavailable_quota_snapshot(
+                    profile_id,
+                    Some(format!("ChatGPT usage quota unavailable: {}", err.message)),
+                ));
+            }
+        }
+    }
     if let Some(cached) = read_quota_cache(home_root, profile_id)? {
         return Ok(cached);
     }
@@ -1860,7 +1882,12 @@ mod tests {
     fn parses_chatgpt_wham_usage_quota() {
         let usage = serde_json::json!({
             "plan_type": "plus",
-            "rateLimitResetCredits": {"availableCount": 2},
+            "rateLimitResetCredits": {
+                "availableCount": 2,
+                "credits": [
+                    {"id": "soon", "status": "available", "expiresAt": "2026-07-12T00:00:00Z"}
+                ]
+            },
             "rate_limit": {
                 "primary_window": {
                     "used_percent": 72,
@@ -1887,6 +1914,11 @@ mod tests {
         assert_eq!(snapshot.remaining_percent, Some(28));
         assert_eq!(snapshot.reset_credit_count, Some(2));
         assert_eq!(snapshot.reset_credit_expires_at, None);
+        assert_eq!(snapshot.reset_credit_details.len(), 1);
+        assert_eq!(
+            snapshot.reset_credit_details[0].expires_at.as_deref(),
+            Some("2026-07-12T08:00:00+08:00")
+        );
     }
 
     #[test]
