@@ -1795,6 +1795,49 @@ pub fn switch_to_pat_account(home_root: &Path, account_id: &str) -> Result<()> {
     }
 
     record_pat_usage_switch(home_root, &account_id)?;
+
+    let source_auth_f = codex_dir.join("auth-f.json");
+    let target_auth_f = target_codex.join("auth-f.json");
+    if source_auth_f.exists() {
+        let source_content_f = fs::read(&source_auth_f)
+            .map_err(|e| AppError::new("READ_FAILED", format!("Failed to read auth-f.json: {e}")))?;
+        let parsed_f: serde_json::Value = serde_json::from_slice(&source_content_f)
+            .map_err(|e| AppError::new("INVALID_AUTH_JSON", format!("Invalid auth-f.json: {e}")))?;
+        if !parsed_f.is_object() {
+            return Err(AppError::new(
+                "INVALID_AUTH_JSON",
+                "auth-f.json must contain a JSON object",
+            ));
+        }
+
+        let temp_auth_f = target_codex.join(format!(".auth-f.json.lam-{}.tmp", std::process::id()));
+        let write_result_f = (|| -> Result<()> {
+            let mut temp_file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp_auth_f)?;
+            temp_file.write_all(&source_content_f)?;
+            temp_file.sync_all()?;
+            set_file_private(&temp_auth_f)?;
+            fs::rename(&temp_auth_f, &target_auth_f)?;
+            set_file_private(&target_auth_f)?;
+            Ok(())
+        })();
+        if write_result_f.is_err() {
+            let _ = fs::remove_file(&temp_auth_f);
+        }
+        write_result_f?;
+    } else {
+        if target_auth_f.exists() {
+            fs::remove_file(&target_auth_f).map_err(|e| {
+                AppError::new(
+                    "REMOVE_FAILED",
+                    format!("Failed to remove stale auth-f.json: {e}"),
+                )
+            })?;
+        }
+    }
+
     Ok(())
 }
 
@@ -2186,6 +2229,34 @@ mod pat_tests {
         assert_eq!(event["accountLabel"], "codex-c");
         assert_eq!(event["workspaceId"], "workspace:main");
         assert!(event["endedAt"].is_null());
+    }
+
+    #[test]
+    fn pat_switch_copies_and_removes_auth_f_json() {
+        let temp = TempDir::new().unwrap();
+        let home_root = temp.path();
+        let account_home = home_root.join(".codex-c");
+        std::fs::create_dir_all(&account_home).unwrap();
+        std::fs::write(account_home.join("auth.json"), r#"{"source":"runtime"}"#).unwrap();
+        std::fs::write(account_home.join("auth-f.json"), r#"{"tokens":{"access_token":"token-c"}}"#).unwrap();
+
+        let target_codex = home_root.join(".codex");
+        let target_auth_f = target_codex.join("auth-f.json");
+
+        // 1. Switch to account "c" (should copy auth-f.json)
+        switch_to_pat_account(home_root, "c").unwrap();
+        assert!(target_auth_f.exists());
+        let content: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&target_auth_f).unwrap()).unwrap();
+        assert_eq!(content["tokens"]["access_token"], "token-c");
+
+        // 2. Switch to account "d" which does NOT have auth-f.json (should remove stale target auth-f.json)
+        let account_home_d = home_root.join(".codex-d");
+        std::fs::create_dir_all(&account_home_d).unwrap();
+        std::fs::write(account_home_d.join("auth.json"), r#"{"source":"runtime-d"}"#).unwrap();
+
+        switch_to_pat_account(home_root, "d").unwrap();
+        assert!(!target_auth_f.exists());
     }
 
     #[cfg(unix)]
