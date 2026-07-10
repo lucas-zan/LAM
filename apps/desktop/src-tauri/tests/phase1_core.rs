@@ -1850,6 +1850,28 @@ fn keychain_secret_failure_does_not_write_provider_metadata() {
 }
 
 #[test]
+fn provider_creation_rejects_reserved_ids() {
+    let home = temp_home("reserved-ids");
+    let err = create_provider(
+        &home,
+        &CreateProviderRequest {
+            id: "openai".into(),
+            name: "Fake OpenAI".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            wire_api: "responses".into(),
+            default_model: "gpt-5".into(),
+            env_key: None,
+            secret: None,
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(err.code, "PROVIDER_RESERVED_ID");
+    assert_eq!(err.message, "openai");
+}
+
+
+#[test]
 fn attach_provider_writes_reference_and_backs_up_config_without_secret() {
     let home = temp_home("attach-provider");
     let profile = seed_codex_home(&home, "a");
@@ -1889,6 +1911,12 @@ fn attach_provider_writes_reference_and_backs_up_config_without_secret() {
     assert!(config.contains("model_provider = \"company-proxy\""));
     assert!(config.contains("model = \"gpt-5.4\""));
     assert!(config.contains("env_key = \"COMPANY_PROXY_API_KEY\""));
+    assert!(config.contains("[model_providers.company-proxy]"));
+    assert!(config.contains("name = \"Company Proxy\""));
+    assert!(config.contains("base_url = \"https://proxy.example.test/v1\""));
+    assert!(config.contains("wire_api = \"openai\""));
+    assert!(!config.contains("provider_base_url"));
+    assert!(!config.contains("provider_wire_api"));
     assert!(!config.contains("sk-"));
     execute_attach_provider_to_profile(&home, &req).unwrap();
 }

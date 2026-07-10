@@ -199,17 +199,20 @@ pub fn execute_attach_provider_to_profile(
         .model
         .clone()
         .unwrap_or_else(|| provider.default_model.clone());
+    let env_line = provider
+        .env_key
+        .as_ref()
+        .map(|key| format!("env_key = \"{}\"\n", json_escape(key)))
+        .unwrap_or_default();
     let body = format!(
-        "model = \"{}\"\nmodel_provider = \"{}\"\nprovider_base_url = \"{}\"\nprovider_wire_api = \"{}\"\nenv_key = {}\n",
+        "model = \"{}\"\nmodel_provider = \"{}\"\n\n[model_providers.{}]\nname = \"{}\"\nbase_url = \"{}\"\n{}wire_api = \"{}\"\n",
         json_escape(&model),
         json_escape(&provider.id),
+        json_escape(&provider.id),
+        json_escape(&provider.name),
         json_escape(&provider.base_url),
+        env_line,
         json_escape(&provider.wire_api),
-        provider
-            .env_key
-            .as_ref()
-            .map(|key| format!("\"{}\"", json_escape(key)))
-            .unwrap_or_else(|| "null".into())
     );
     write_file_private(&config_path, &body)?;
     Ok(AttachProviderResult {
@@ -330,6 +333,10 @@ fn validate_provider_id(input: &str) -> Result<String> {
     }
     if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') {
         return Err(AppError::new("PROVIDER_INVALID_ID", input));
+    }
+    const RESERVED_IDS: &[&str] = &["openai", "ollama", "lmstudio"];
+    if RESERVED_IDS.contains(&id) {
+        return Err(AppError::new("PROVIDER_RESERVED_ID", id));
     }
     Ok(id.to_string())
 }

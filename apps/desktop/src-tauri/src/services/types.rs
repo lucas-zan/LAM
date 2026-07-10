@@ -120,6 +120,10 @@ pub(crate) struct CodexConfigBinding {
     pub auth_mode: Option<String>,
 }
 
+/// Reads top-level keys from a Codex config.toml.
+/// Top-level keys (model, model_provider) are still line-parseable even with
+/// [model_providers.<id>] sections, because TOML top-level keys appear before sections.
+/// TODO: Migrate to `toml` crate for full TOML support once the dependency is added.
 pub(crate) fn parse_codex_config(path: &Path) -> Result<CodexConfigBinding> {
     if !path.exists() {
         return Ok(CodexConfigBinding::default());
