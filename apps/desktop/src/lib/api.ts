@@ -477,7 +477,7 @@ export async function setHideDockIcon(hide: boolean): Promise<void> {
   return invoke<void>("set_hide_dock_icon", { hide });
 }
 
-export async function restartCodex(): Promise<void> {
+export async function restartChatgpt(): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("restart_codex");
+  return invoke<void>("restart_chatgpt");
 }

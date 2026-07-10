@@ -47,6 +47,7 @@ vi.mock('./lib/api', () => ({
   openTerminalForLogin: vi.fn(),
   buildLoginCommand: vi.fn(),
   switchToPatAccount: vi.fn(),
+  restartChatgpt: vi.fn(),
   exportCpaCredentials: vi.fn(),
   updatePatSessionAuth: vi.fn(),
   addPatAccount: vi.fn(),
@@ -231,7 +232,16 @@ function session(accountId: string, id: string, modifiedAt: number): CodexSessio
 beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
-  localStorage.clear();
+  // Re-install localStorage mock destroyed by unstubAllGlobals (originally set in vitest.setup.ts)
+  const store: Record<string, string> = {};
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => store[k] ?? null,
+    setItem: (k: string, v: string) => { store[k] = v; },
+    removeItem: (k: string) => { delete store[k]; },
+    clear: () => { for (const k in store) delete store[k]; },
+    get length() { return Object.keys(store).length; },
+    key: (i: number) => Object.keys(store)[i] ?? null,
+  });
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     value: vi.fn(() => ({
@@ -407,6 +417,7 @@ beforeEach(() => {
   vi.mocked(api.openTerminalWithCommand).mockResolvedValue();
   vi.mocked(api.openTerminalForLogin).mockResolvedValue();
   vi.mocked(api.switchToPatAccount).mockResolvedValue();
+  vi.mocked(api.restartChatgpt).mockResolvedValue();
   vi.mocked(api.updatePatSessionAuth).mockResolvedValue();
   vi.mocked(api.exportCpaCredentials).mockResolvedValue({
     fileName: 'codex-c-cpa.json',
@@ -546,6 +557,13 @@ describe('App handoff modal', () => {
 
     await waitFor(() => expect(api.switchToPatAccount).toHaveBeenCalledWith('codex-c'));
     await waitFor(() => expect(refreshAccountQuota).toHaveBeenCalledWith('main'));
+    await waitFor(() => expect(api.restartChatgpt).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.switchToPatAccount).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(api.restartChatgpt).mock.invocationCallOrder[0],
+    );
+    expect(refreshAccountQuota.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(api.restartChatgpt).mock.invocationCallOrder[0],
+    );
   });
 
   it('refreshes the new PAT card after uploading auth.json', async () => {

@@ -72,11 +72,11 @@ fn home_root() -> Result<std::path::PathBuf, AppError> {
 }
 
 #[cfg(target_os = "macos")]
-const CODEX_APP_PATH: &str = "/Applications/Codex.app";
+const CHATGPT_APP_PATH: &str = "/Applications/ChatGPT.app";
 #[cfg(all(test, target_os = "macos"))]
-const CODEX_BUNDLE_PATH_PREFIX: &str = "/Applications/Codex.app/Contents/";
+const CHATGPT_BUNDLE_PATH_PREFIX: &str = "/Applications/ChatGPT.app/Contents/";
 #[cfg(target_os = "macos")]
-const CODEX_BUNDLE_PROCESS_PATTERN: &str = "/Applications/Codex[.]app/Contents/";
+const CHATGPT_BUNDLE_PROCESS_PATTERN: &str = "/Applications/ChatGPT[.]app/Contents/";
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy)]
@@ -106,13 +106,13 @@ fn parse_window_bounds(output: &str) -> Option<WindowBounds> {
 }
 
 #[cfg(target_os = "macos")]
-fn codex_window_bounds() -> Option<WindowBounds> {
+fn chatgpt_window_bounds() -> Option<WindowBounds> {
     let output = std::process::Command::new("osascript")
         .args([
             "-e",
             r#"tell application "System Events"
-if exists process "Codex" then
-  tell process "Codex"
+if exists process "ChatGPT" then
+  tell process "ChatGPT"
     if exists window 1 then return (position of window 1 as list) & (size of window 1 as list)
   end tell
 end if
@@ -127,12 +127,12 @@ end tell"#,
 }
 
 #[cfg(target_os = "macos")]
-fn restore_codex_window_bounds(bounds: WindowBounds) {
+fn restore_chatgpt_window_bounds(bounds: WindowBounds) {
     let script = format!(
         r#"tell application "System Events"
 repeat 20 times
-  if exists process "Codex" then
-    tell process "Codex"
+  if exists process "ChatGPT" then
+    tell process "ChatGPT"
       if exists window 1 then
         set position of window 1 to {{{}, {}}}
         set size of window 1 to {{{}, {}}}
@@ -151,24 +151,24 @@ end tell"#,
 }
 
 #[cfg(all(test, target_os = "macos"))]
-fn codex_bundle_path_matches(path: &str) -> bool {
-    path.starts_with(CODEX_BUNDLE_PATH_PREFIX)
+fn chatgpt_bundle_path_matches(path: &str) -> bool {
+    path.starts_with(CHATGPT_BUNDLE_PATH_PREFIX)
 }
 
 #[cfg(target_os = "macos")]
-fn codex_bundle_processes_running() -> bool {
+fn chatgpt_bundle_processes_running() -> bool {
     std::process::Command::new("pgrep")
-        .args(["-f", CODEX_BUNDLE_PROCESS_PATTERN])
+        .args(["-f", CHATGPT_BUNDLE_PROCESS_PATTERN])
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
 }
 
 #[cfg(target_os = "macos")]
-fn wait_for_codex_exit(timeout: std::time::Duration) -> bool {
+fn wait_for_chatgpt_exit(timeout: std::time::Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if !codex_bundle_processes_running() {
+        if !chatgpt_bundle_processes_running() {
             return true;
         }
         if std::time::Instant::now() >= deadline {
@@ -179,41 +179,41 @@ fn wait_for_codex_exit(timeout: std::time::Duration) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn stop_codex_app_processes() -> Result<(), AppError> {
+fn stop_chatgpt_app_processes() -> Result<(), AppError> {
     let _ = std::process::Command::new("osascript")
         .args([
             "-e",
             r#"tell application "System Events"
-if exists process "Codex" then
-  tell application "Codex" to quit
+if exists process "ChatGPT" then
+  tell application "ChatGPT" to quit
 end if
 end tell"#,
         ])
         .output();
 
-    if wait_for_codex_exit(std::time::Duration::from_secs(2)) {
+    if wait_for_chatgpt_exit(std::time::Duration::from_secs(2)) {
         return Ok(());
     }
 
     let _ = std::process::Command::new("pkill")
-        .args(["-TERM", "-f", CODEX_BUNDLE_PROCESS_PATTERN])
+        .args(["-TERM", "-f", CHATGPT_BUNDLE_PROCESS_PATTERN])
         .output();
 
-    if wait_for_codex_exit(std::time::Duration::from_secs(2)) {
+    if wait_for_chatgpt_exit(std::time::Duration::from_secs(2)) {
         return Ok(());
     }
 
     let _ = std::process::Command::new("pkill")
-        .args(["-KILL", "-f", CODEX_BUNDLE_PROCESS_PATTERN])
+        .args(["-KILL", "-f", CHATGPT_BUNDLE_PROCESS_PATTERN])
         .output();
 
-    if wait_for_codex_exit(std::time::Duration::from_millis(500)) {
+    if wait_for_chatgpt_exit(std::time::Duration::from_millis(500)) {
         return Ok(());
     }
 
     Err(AppError::new(
-        "STOP_CODEX_FAILED",
-        "Codex processes did not exit",
+        "STOP_CHATGPT_FAILED",
+        "ChatGPT processes did not exit",
     ))
 }
 
@@ -788,20 +788,26 @@ pub fn set_hide_dock_icon(app_handle: tauri::AppHandle, hide: bool) -> Result<()
 }
 
 #[tauri::command]
-pub async fn restart_codex() -> Result<(), AppError> {
+pub async fn restart_chatgpt() -> Result<(), AppError> {
     run_blocking(|| {
         #[cfg(target_os = "macos")]
         {
-            let bounds = codex_window_bounds();
-            stop_codex_app_processes()?;
+            let bounds = chatgpt_window_bounds();
+            stop_chatgpt_app_processes()?;
 
-            std::process::Command::new("open")
-                .arg(CODEX_APP_PATH)
-                .spawn()
-                .map_err(|e| AppError::new("RESTART_CODEX_FAILED", e.to_string()))?;
+            let status = std::process::Command::new("/usr/bin/open")
+                .arg(CHATGPT_APP_PATH)
+                .status()
+                .map_err(|e| AppError::new("RESTART_CHATGPT_FAILED", e.to_string()))?;
+            if !status.success() {
+                return Err(AppError::new(
+                    "RESTART_CHATGPT_FAILED",
+                    format!("open exited with {status}"),
+                ));
+            }
 
             if let Some(bounds) = bounds {
-                restore_codex_window_bounds(bounds);
+                restore_chatgpt_window_bounds(bounds);
             }
 
             Ok(())
@@ -810,8 +816,8 @@ pub async fn restart_codex() -> Result<(), AppError> {
         #[cfg(not(target_os = "macos"))]
         {
             Err(AppError::new(
-                "RESTART_CODEX_UNSUPPORTED",
-                "Codex restart is only supported on macOS",
+                "RESTART_CHATGPT_UNSUPPORTED",
+                "ChatGPT restart is only supported on macOS",
             ))
         }
     })
@@ -827,8 +833,8 @@ pub async fn quit_app(app_handle: tauri::AppHandle) -> Result<(), AppError> {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::{
-        call_raw_contents_from_reader, codex_bundle_path_matches, parse_window_bounds,
-        CODEX_BUNDLE_PATH_PREFIX, CODEX_BUNDLE_PROCESS_PATTERN,
+        call_raw_contents_from_reader, chatgpt_bundle_path_matches, parse_window_bounds,
+        CHATGPT_BUNDLE_PATH_PREFIX, CHATGPT_BUNDLE_PROCESS_PATTERN,
     };
     use serde_json::json;
     use std::io::Cursor;
@@ -843,28 +849,30 @@ mod tests {
     }
 
     #[test]
-    fn codex_process_matcher_covers_bundle_helpers_only() {
+    fn chatgpt_process_matcher_covers_bundle_helpers_only() {
         assert_eq!(
-            CODEX_BUNDLE_PROCESS_PATTERN,
-            "/Applications/Codex[.]app/Contents/"
+            CHATGPT_BUNDLE_PROCESS_PATTERN,
+            "/Applications/ChatGPT[.]app/Contents/"
         );
-        assert!(CODEX_BUNDLE_PROCESS_PATTERN.contains("Codex[.]app"));
-        assert!(!CODEX_BUNDLE_PROCESS_PATTERN.contains("Codex.app"));
+        assert!(CHATGPT_BUNDLE_PROCESS_PATTERN.contains("ChatGPT[.]app"));
+        assert!(!CHATGPT_BUNDLE_PROCESS_PATTERN.contains("ChatGPT.app"));
 
         assert_eq!(
-            CODEX_BUNDLE_PATH_PREFIX,
-            "/Applications/Codex.app/Contents/"
+            CHATGPT_BUNDLE_PATH_PREFIX,
+            "/Applications/ChatGPT.app/Contents/"
         );
-        assert!(codex_bundle_path_matches(
-            "/Applications/Codex.app/Contents/MacOS/Codex"
+        assert!(chatgpt_bundle_path_matches(
+            "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
         ));
-        assert!(codex_bundle_path_matches("/Applications/Codex.app/Contents/Frameworks/Codex Framework.framework/Versions/149.0.7827.197/Helpers/browser_crashpad_handler"));
-        assert!(codex_bundle_path_matches(
-            "/Applications/Codex.app/Contents/Resources/native/bare-modifier-monitor"
+        assert!(chatgpt_bundle_path_matches("/Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/149.0.7827.197/Helpers/browser_crashpad_handler"));
+        assert!(chatgpt_bundle_path_matches(
+            "/Applications/ChatGPT.app/Contents/Resources/native/bare-modifier-monitor"
         ));
-        assert!(!codex_bundle_path_matches("./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"));
-        assert!(!codex_bundle_path_matches(
-            "/Applications/CodexXapp/Contents/MacOS/Codex"
+        assert!(!chatgpt_bundle_path_matches(
+            "/Applications/ChatGPT Atlas.app/Contents/MacOS/ChatGPT Atlas"
+        ));
+        assert!(!chatgpt_bundle_path_matches(
+            "/Applications/ChatGPTX.app/Contents/MacOS/ChatGPT"
         ));
     }
 

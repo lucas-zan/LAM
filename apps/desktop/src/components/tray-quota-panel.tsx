@@ -15,7 +15,7 @@ import {
   getProfileQuota,
   getAuthMode,
   inTauri,
-  restartCodex,
+  restartChatgpt,
   setQuotaPopoverOpacity,
   showUsageStats,
   switchToPatAccount,
@@ -1253,8 +1253,8 @@ export function TrayQuotaPanel() {
       await switchToPatAccount(account.id);
       await load(false);
       await refreshAccountQuota(accounts.find((a) => a.id === 'main') ?? account);
-      setStatus(`Switched to ${account.displayName}. Restarting Codex...`);
-      await restartCodex();
+      setStatus(`Switched to ${account.displayName}. Restarting ChatGPT...`);
+      await restartChatgpt();
     } catch (err) {
       setStatus(formatError(err));
     } finally {

@@ -2,7 +2,7 @@
 
 **Base commit:** `6e4471e`  
 **Generated:** 2026-06-24  
-**Last updated:** 2026-06-29 (Plan 009 added)
+**Last updated:** 2026-07-10 (Plan 010 added)
 
 ## Plan Index
 
@@ -16,6 +16,7 @@
 | 007 | PAT-mode Codex usage statistics from JSONL into local SQLite | DONE | L | H | `make check` + real-home smoke + deep audit |
 | 008 | Usage statistics dashboard reference parity and full-page route | DONE | L | H | dashboard parity + tray smoke + installed-app verification |
 | 009 | Codex account usage parity, activity heatmap, and reset-credit dots | DONE | L | H | usage + quota + dashboard focused suites |
+| 010 | Restart ChatGPT after account switching | BLOCKED (pre-existing full-gate failures; live PID check pending) | S | M | 42 focused frontend + full Rust tests pass |
 
 ## Dependencies
 
@@ -39,6 +40,13 @@
   stats (`account/usage/read`), a calls/tokens activity heatmap with Daily,
   Weekly, and Cumulative modes, reset-credit count display from
   `account/rateLimits/read`, and a focused local-token undercount audit.
+- **010** is an independent bugfix for the renamed macOS desktop application.
+  It preserves PAT auth and quota ordering, but replaces the stale
+  `/Applications/Codex.app` restart path with the same
+  `/Applications/ChatGPT.app` path used by the current macOS Dock item. Its
+  implementation is present and focused gates pass, but it remains BLOCKED
+  until the repository's pre-existing Vitest/UI-smoke/clippy failures are
+  cleared and the live ChatGPT PID restart check is performed.
 
 ## Plan 009 execution note
 
