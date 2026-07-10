@@ -616,8 +616,8 @@ export function App() {
         refreshAccountQuota('main');
         useAppStore
           .getState()
-          .setStatus(`Switched auth.json to '${account.id}'. Restarting Codex…`);
-        await api.restartCodex();
+          .setStatus(`Switched auth.json to '${account.id}'. Restarting ChatGPT…`);
+        await api.restartChatgpt();
       } catch (err) {
         useAppStore.getState().setStatus('Failed to switch auth.json');
         useAppStore.getState().setError(err instanceof Error ? err.message : String(err));
@@ -625,9 +625,9 @@ export function App() {
     } else {
       login(account);
       try {
-        await api.restartCodex();
+        await api.restartChatgpt();
       } catch {
-        // Non-critical: Codex restart is best-effort
+        // Non-critical: ChatGPT restart is best-effort
       }
     }
   }

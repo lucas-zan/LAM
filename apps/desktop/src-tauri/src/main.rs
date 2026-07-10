@@ -114,7 +114,7 @@ fn main() {
             commands::set_auth_mode,
             commands::get_hide_dock_icon,
             commands::set_hide_dock_icon,
-            commands::restart_codex,
+            commands::restart_chatgpt,
             commands::quit_app,
         ])
         .run(tauri::generate_context!())

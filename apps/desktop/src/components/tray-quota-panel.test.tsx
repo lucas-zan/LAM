@@ -36,7 +36,7 @@ vi.mock('../lib/api', () => ({
   getProfileQuota: vi.fn(),
   getAuthMode: vi.fn(),
   inTauri: vi.fn(() => true),
-  restartCodex: vi.fn(),
+  restartChatgpt: vi.fn(),
   setQuotaPopoverOpacity: vi.fn(),
   showUsageStats: vi.fn(),
   switchToPatAccount: vi.fn(),
@@ -145,7 +145,7 @@ beforeEach(() => {
   ]);
   vi.mocked(api.getProfileQuota).mockResolvedValue(freshQuota);
   vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
-  vi.mocked(api.restartCodex).mockResolvedValue();
+  vi.mocked(api.restartChatgpt).mockResolvedValue();
   vi.mocked(api.showUsageStats).mockResolvedValue();
   vi.mocked(api.switchToPatAccount).mockResolvedValue();
   vi.mocked(api.getAntigravityQuota).mockResolvedValue({ ok: true, models: [] });
@@ -269,6 +269,14 @@ describe('TrayQuotaPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Switch' }));
 
     await waitFor(() => expect(api.switchToPatAccount).toHaveBeenCalledWith('codex-pat'));
+    await waitFor(() => expect(api.getProfileQuota).toHaveBeenCalledWith('main', true));
+    await waitFor(() => expect(api.restartChatgpt).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.switchToPatAccount).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(api.restartChatgpt).mock.invocationCallOrder[0],
+    );
+    expect(vi.mocked(api.getProfileQuota).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(api.restartChatgpt).mock.invocationCallOrder[0],
+    );
     expect(api.relayResumeSession).not.toHaveBeenCalled();
   });
 
@@ -355,7 +363,7 @@ describe('TrayQuotaPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /stats/i }));
 
     await waitFor(() => expect(api.showUsageStats).toHaveBeenCalledTimes(1));
-    expect(api.restartCodex).not.toHaveBeenCalled();
+    expect(api.restartChatgpt).not.toHaveBeenCalled();
     expect(invoke).not.toHaveBeenCalledWith('quit_app');
   });
 });
