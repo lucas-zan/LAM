@@ -1,0 +1,12 @@
+{
+  "operations": [
+    "backup config.toml /fixture/codex-home"
+  ],
+  "warnings": [
+    "Fixture warning"
+  ],
+  "blocked": [
+    "api_key",
+    "auth.json"
+  ]
+}

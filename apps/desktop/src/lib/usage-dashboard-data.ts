@@ -9,7 +9,9 @@ export function cachedInputTokens(row: UsageCallRow): number {
 }
 
 export function uncachedInputTokens(row: UsageCallRow): number {
-  return Number(row.uncachedInputTokens || Math.max(rowInputTokens(row) - cachedInputTokens(row), 0));
+  return Number(
+    row.uncachedInputTokens || Math.max(rowInputTokens(row) - cachedInputTokens(row), 0),
+  );
 }
 
 export function outputTokens(row: UsageCallRow): number {
@@ -33,7 +35,15 @@ export function buildCallAdjacencyIndex(rows: UsageCallRow[]) {
     const key = resolveThreadAttachment(row).key;
     threadRows.set(key, [...(threadRows.get(key) ?? []), row]);
   });
-  const adjacency = new Map<string, { calls: UsageCallRow[]; index: number; previous: UsageCallRow | null; next: UsageCallRow | null }>();
+  const adjacency = new Map<
+    string,
+    {
+      calls: UsageCallRow[];
+      index: number;
+      previous: UsageCallRow | null;
+      next: UsageCallRow | null;
+    }
+  >();
   threadRows.forEach((calls) => {
     calls.sort(chronological);
     calls.forEach((row, index) => {
@@ -48,11 +58,18 @@ export function buildCallAdjacencyIndex(rows: UsageCallRow[]) {
   return adjacency;
 }
 
-export function adjacentThreadCalls(rows: UsageCallRow[], row: UsageCallRow, adjacency = buildCallAdjacencyIndex(rows)) {
+export function adjacentThreadCalls(
+  rows: UsageCallRow[],
+  row: UsageCallRow,
+  adjacency = buildCallAdjacencyIndex(rows),
+) {
   return adjacency.get(row.recordId) ?? { calls: [row], index: 0, previous: null, next: null };
 }
 
-export function compactListSummary(values: Array<string | null | undefined>, fallback = 'Unknown'): string {
+export function compactListSummary(
+  values: Array<string | null | undefined>,
+  fallback = 'Unknown',
+): string {
   const unique = [...new Set(values.filter(Boolean) as string[])].sort();
   if (!unique.length) return fallback;
   return unique.length === 1 ? unique[0] : `${unique[0]} +${unique.length - 1}`;

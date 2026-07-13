@@ -139,7 +139,8 @@ export function resetCreditDisplay(quota?: UsageQuotaSnapshot | null): ResetCred
   if (!quota || count <= 0) return null;
   const visible = Math.min(count, 5);
   const details = sortedResetCreditDetails(quota);
-  const expiresAt = details.find((credit) => credit.expiresAt)?.expiresAt ?? quota.resetCreditExpiresAt;
+  const expiresAt =
+    details.find((credit) => credit.expiresAt)?.expiresAt ?? quota.resetCreditExpiresAt;
   const fallbackColor = resetCreditColor(expiresAt);
   const nearestExpiry = formatResetCreditExpiry(expiresAt);
   const source =
@@ -154,7 +155,9 @@ export function resetCreditDisplay(quota?: UsageQuotaSnapshot | null): ResetCred
       return {
         key: `${quota.profileId}-${index}`,
         color: dotExpiresAt ? resetCreditColor(dotExpiresAt) : fallbackColor,
-        title: dotExpiresAt ? `Expires: ${dotExpiresAt.replace('T', ' ').slice(0, 16)}` : 'Expiry unknown',
+        title: dotExpiresAt
+          ? `Expires: ${dotExpiresAt.replace('T', ' ').slice(0, 16)}`
+          : 'Expiry unknown',
       };
     }),
     details: Array.from({ length: count }, (_, index) => {
@@ -163,7 +166,9 @@ export function resetCreditDisplay(quota?: UsageQuotaSnapshot | null): ResetCred
       return {
         key: detail?.id ?? `${quota.profileId}-detail-${index}`,
         expiresAt: detail?.expiresAt,
-        title: formatted ? `Reset ${index + 1} expires ${formatted}` : `Reset ${index + 1} expiry unknown`,
+        title: formatted
+          ? `Reset ${index + 1} expires ${formatted}`
+          : `Reset ${index + 1} expiry unknown`,
       };
     }),
     overflow: Math.max(0, count - visible),
@@ -174,15 +179,18 @@ export function resetCreditDisplay(quota?: UsageQuotaSnapshot | null): ResetCred
 }
 
 export function sortedResetCreditDetails(quota?: UsageQuotaSnapshot | null) {
-  return (quota?.resetCreditDetails ?? []).map((credit) => ({
-    ...credit,
-    expiresAt: credit.source === 'api' ? resetCreditShanghaiTime(credit.expiresAt) : credit.expiresAt,
-  })).sort((a, b) => {
-    const aTime = resetCreditTime(a.expiresAt);
-    const bTime = resetCreditTime(b.expiresAt);
-    if (aTime !== bTime) return aTime - bTime;
-    return (a.id ?? '').localeCompare(b.id ?? '');
-  });
+  return (quota?.resetCreditDetails ?? [])
+    .map((credit) => ({
+      ...credit,
+      expiresAt:
+        credit.source === 'api' ? resetCreditShanghaiTime(credit.expiresAt) : credit.expiresAt,
+    }))
+    .sort((a, b) => {
+      const aTime = resetCreditTime(a.expiresAt);
+      const bTime = resetCreditTime(b.expiresAt);
+      if (aTime !== bTime) return aTime - bTime;
+      return (a.id ?? '').localeCompare(b.id ?? '');
+    });
 }
 
 function resetCreditShanghaiTime(expiresAt?: string | null): string | null | undefined {
@@ -201,7 +209,20 @@ function formatResetCreditExpiry(expiresAt?: string | null): string | null {
   const normalized = resetCreditShanghaiTime(expiresAt) ?? expiresAt;
   const match = normalized.match(/^\d{4}-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
   if (!match) return null;
-  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthNames = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
   const month = monthNames[Number(match[1]) - 1] ?? match[1];
   return `${month} ${Number(match[2])} ${match[3]}:${match[4]}`;
 }

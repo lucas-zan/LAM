@@ -1,0 +1,12 @@
+# Deliberately conflicting legacy auth settings for migration tests
+model = "example-response-model"
+model_provider = "legacy-responses-service"
+preferred_auth_method = "chatgpt"
+forced_login_method = "api"
+api_key = "PLACEHOLDER_NOT_A_SECRET"
+
+[model_providers.legacy-responses-service]
+name = "Example Responses Service"
+base_url = "https://responses.example.test/v1"
+env_key = "EXAMPLE_RESPONSES_API_KEY"
+wire_api = "responses"

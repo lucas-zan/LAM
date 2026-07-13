@@ -1,0 +1,28 @@
+{
+  "homeRoot": "/fixture",
+  "fetchedAt": 1700000000,
+  "accounts": [
+    {
+      "id": "fixture-profile",
+      "displayName": "codex-fixture-profile",
+      "codexHome": "/fixture/.codex-fixture-profile",
+      "wrapperPath": "/fixture/bin/codex-fixture-profile",
+      "hasAuth": true,
+      "hasConfig": true,
+      "hasHistory": false,
+      "sessionCount": 0,
+      "latestSessionModifiedAt": null,
+      "managed": true,
+      "isRelay": false,
+      "relaySource": null,
+      "relayIdentity": null,
+      "providerId": "legacy-responses-service",
+      "model": "example-response-model",
+      "authMode": "config",
+      "isActiveAuth": false,
+      "hasPersonalAccessToken": false,
+      "renewalDate": null,
+      "note": "Synthetic contract fixture"
+    }
+  ]
+}

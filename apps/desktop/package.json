@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test:ui": "node scripts/ui-smoke.mjs",
+    "test:gateway-phase0": "node --test scripts/capture-codex-contract.test.mjs scripts/verify-remote-provider-gateway-phase0.test.mjs && node scripts/verify-remote-provider-gateway-phase0.mjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "icons": "tauri icon src-tauri/icons/icon.svg -o src-tauri/icons",

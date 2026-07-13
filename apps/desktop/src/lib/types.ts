@@ -247,7 +247,13 @@ export type UsageRefreshResult = {
   parserDiagnostics: Record<string, number>;
 };
 
-export type UsageWindowPreset = 'all' | 'today' | 'this-week' | 'last-7-days' | 'this-month' | 'custom';
+export type UsageWindowPreset =
+  | 'all'
+  | 'today'
+  | 'this-week'
+  | 'last-7-days'
+  | 'this-month'
+  | 'custom';
 
 export type UsageWindow = {
   preset: UsageWindowPreset;

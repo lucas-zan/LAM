@@ -47,11 +47,17 @@ describe('usage dashboard helpers', () => {
   });
 
   it('sorts calls by timestamp then record id', () => {
-    expect(compareCalls(call({ recordId: 'b' }), call({ recordId: 'a' }), 'time', 'desc')).toBeGreaterThan(0);
+    expect(
+      compareCalls(call({ recordId: 'b' }), call({ recordId: 'a' }), 'time', 'desc'),
+    ).toBeGreaterThan(0);
   });
 
   it('groups thread sorting by thread name before session id', () => {
-    const rows = sortThreads([thread({ threadLabel: 'z' }), thread({ threadLabel: 'a' })], 'thread', 'asc');
+    const rows = sortThreads(
+      [thread({ threadLabel: 'z' }), thread({ threadLabel: 'a' })],
+      'thread',
+      'asc',
+    );
     expect(rows.map((row) => row.threadLabel)).toEqual(['a', 'z']);
   });
 
@@ -76,8 +82,18 @@ describe('usage dashboard helpers', () => {
       'context',
     ];
     const calls = [
-      call({ recordId: 'a', totalTokens: 1, cachedInputTokens: 1, eventTimestamp: '2026-06-28T00:00:00Z' }),
-      call({ recordId: 'b', totalTokens: 2, cachedInputTokens: 2, eventTimestamp: '2026-06-28T00:00:01Z' }),
+      call({
+        recordId: 'a',
+        totalTokens: 1,
+        cachedInputTokens: 1,
+        eventTimestamp: '2026-06-28T00:00:00Z',
+      }),
+      call({
+        recordId: 'b',
+        totalTokens: 2,
+        cachedInputTokens: 2,
+        eventTimestamp: '2026-06-28T00:00:01Z',
+      }),
     ];
 
     for (const key of keys) {

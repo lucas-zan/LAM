@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { IconRefresh, IconUsage } from '../components/icons';
 import { UIButton } from '../components/ui-button';
 import type {
@@ -42,6 +42,14 @@ const idleSectionLoading: UsageSectionLoading = {
   calls: false,
   threads: false,
   diagnostics: false,
+};
+const emptyUsageDiagnostics: UsageDashboard['diagnostics'] = {
+  parserDiagnostics: {},
+  skippedEvents: 0,
+  unknownModels: [],
+  lowCacheThreads: [],
+  highContextCalls: [],
+  lastRefreshError: null,
 };
 
 const loadLimitOptions: Array<[LoadLimit, string]> = [
@@ -183,7 +191,11 @@ function activityInsightRows(calls: UsageCallRow[], threads: UsageDashboard['top
   const totalCalls = calls.length;
   const fastEfforts = new Set(['fast', 'low', 'minimal', 'none']);
   const fastCount = calls.filter((call) =>
-    fastEfforts.has(String(call.effort ?? '').trim().toLowerCase()),
+    fastEfforts.has(
+      String(call.effort ?? '')
+        .trim()
+        .toLowerCase(),
+    ),
   ).length;
   const effortCounts = new Map<string, { label: string; count: number }>();
   const skills = new Set<string>();
@@ -220,7 +232,10 @@ function activityInsightRows(calls: UsageCallRow[], threads: UsageDashboard['top
   ];
 }
 
-function diagnosticRows(diagnostics: UsageDashboard['diagnostics'], summary: UsageDashboard | null) {
+function diagnosticRows(
+  diagnostics: UsageDashboard['diagnostics'],
+  summary: UsageDashboard | null,
+) {
   const parserRows = Object.entries(diagnostics.parserDiagnostics)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => [titleLabel(key), formatNumber(value)]);
@@ -376,7 +391,6 @@ export function UsagePage({
   loadUsageSection,
   refreshUsageSections,
   refreshUsageSection,
-  refreshUsage,
 }: Props) {
   const [search, setSearch] = useState('');
   const [showFilters, setShowFilters] = useState(() => {
@@ -390,8 +404,39 @@ export function UsagePage({
   const [pricingConfidence, setPricingConfidence] = useState('');
   const [sortKey, setSortKey] = useState('time');
   const [loadLimit, setLoadLimit] = useState<LoadLimit>(5000);
-  const [callOffset, setCallOffset] = useState(0);
-  const [threadOffset, setThreadOffset] = useState(0);
+  const paginationQueryKey = JSON.stringify([
+    activeScopeId,
+    effort,
+    includeArchivedUsage,
+    model,
+    pricingConfidence,
+    search,
+    sortKey,
+    usageWindow.preset,
+    usageWindow.from ?? null,
+    usageWindow.to ?? null,
+  ]);
+  const [pagination, setPagination] = useState({
+    queryKey: paginationQueryKey,
+    callOffset: 0,
+    threadOffset: 0,
+  });
+  const callOffset = pagination.queryKey === paginationQueryKey ? pagination.callOffset : 0;
+  const threadOffset = pagination.queryKey === paginationQueryKey ? pagination.threadOffset : 0;
+  const setCallOffset = (offset: number) => {
+    setPagination((current) => ({
+      queryKey: paginationQueryKey,
+      callOffset: offset,
+      threadOffset: current.queryKey === paginationQueryKey ? current.threadOffset : 0,
+    }));
+  };
+  const setThreadOffset = (offset: number) => {
+    setPagination((current) => ({
+      queryKey: paginationQueryKey,
+      callOffset: current.queryKey === paginationQueryKey ? current.callOffset : 0,
+      threadOffset: offset,
+    }));
+  };
   const [heatmapMetric, setHeatmapMetric] = useState<HeatmapMetric>('calls');
   const [heatmapMode, setHeatmapMode] = useState<HeatmapMode>('daily');
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
@@ -399,21 +444,22 @@ export function UsagePage({
   const [rawContents, setRawContents] = useState<CallRawContents | null>(null);
   const [isLoadingRaw, setIsLoadingRaw] = useState(false);
   const loading = sectionLoading ?? idleSectionLoading;
-  const loadSection = loadUsageSection ?? (() => undefined);
-  const refreshSections =
-    refreshUsageSections ??
-    ((sections: UsageSection[], req?: UsageDashboardRequest) => {
+  const loadSection = loadUsageSection;
+  const refreshSections = useCallback(
+    (sections: UsageSection[], req?: UsageDashboardRequest) => {
+      if (refreshUsageSections) {
+        refreshUsageSections(sections, req);
+        return;
+      }
       sections.forEach((section) => refreshUsageSection(section, req));
-    });
-  const refreshSection = refreshUsageSection ?? (() => undefined);
+    },
+    [refreshUsageSection, refreshUsageSections],
+  );
+  const refreshSection = refreshUsageSection;
   const loadSectionRef = useRef(loadSection);
   useEffect(() => {
     loadSectionRef.current = loadSection;
   }, [loadSection]);
-  useEffect(() => {
-    setCallOffset(0);
-    setThreadOffset(0);
-  }, [activeScopeId, effort, includeArchivedUsage, model, pricingConfidence, search, sortKey, usageWindow]);
   const detailRequest = useMemo<UsageDashboardRequest>(
     () => ({
       window: usageWindow,
@@ -520,19 +566,17 @@ export function UsagePage({
   }, [summary?.topThreads]);
   const visibleThreads = threads;
   const threadsPage = summary?.threadsPage ?? null;
-  const diagnostics = summary?.diagnostics ?? {
-    parserDiagnostics: {},
-    skippedEvents: 0,
-    unknownModels: [],
-    lowCacheThreads: [],
-    highContextCalls: [],
-    lastRefreshError: null,
-  };
+  const diagnostics = summary?.diagnostics ?? emptyUsageDiagnostics;
   const insightRows = useMemo(() => {
     const insights = summary?.insights;
     if (!insights) return activityInsightRows([], []);
     return [
-      ['Fast Mode', insights.fastModePercent === null || insights.fastModePercent === undefined ? '-' : formatPercent(insights.fastModePercent)],
+      [
+        'Fast Mode',
+        insights.fastModePercent === null || insights.fastModePercent === undefined
+          ? '-'
+          : formatPercent(insights.fastModePercent),
+      ],
       [
         'Most used reasoning',
         insights.mostUsedReasoning
@@ -680,9 +724,7 @@ export function UsagePage({
     let lastMonth = -1;
     let lastColIndex = -999;
     const dayCount = Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1;
-    const columns = heatmapColumnCount(
-      firstDay + dayCount,
-    );
+    const columns = heatmapColumnCount(firstDay + dayCount);
 
     for (let col = 0; col < columns; col++) {
       const dayOffset = col * 7 - firstDay;
@@ -1001,7 +1043,9 @@ export function UsagePage({
       )}
 
       <div className="usageOverviewCardsGrid">
-        <div className={`usageMetricCard ${refreshing || activeRefreshLoading ? 'isRefreshing' : ''}`}>
+        <div
+          className={`usageMetricCard ${refreshing || activeRefreshLoading ? 'isRefreshing' : ''}`}
+        >
           <div className="cardHeader">
             <span className="cardIcon">
               <svg
@@ -1048,7 +1092,9 @@ export function UsagePage({
           </div>
         </div>
 
-        <div className={`usageMetricCard ${refreshing || activeRefreshLoading ? 'isRefreshing' : ''}`}>
+        <div
+          className={`usageMetricCard ${refreshing || activeRefreshLoading ? 'isRefreshing' : ''}`}
+        >
           <div className="cardHeader">
             <span className="cardIcon">
               <svg
@@ -1092,7 +1138,9 @@ export function UsagePage({
           </div>
         </div>
 
-        <div className={`usageMetricCard ${refreshing || activeRefreshLoading ? 'isRefreshing' : ''}`}>
+        <div
+          className={`usageMetricCard ${refreshing || activeRefreshLoading ? 'isRefreshing' : ''}`}
+        >
           <div className="cardHeader">
             <span className="cardIcon">
               <svg
@@ -1436,11 +1484,12 @@ export function UsagePage({
                   <td>{formatCost(thread.estimatedCostUsd)}</td>
                 </tr>
               ))}
-              {threadsPage && (threadsPage.total > visibleThreads.length || threadsPage.offset > 0) ? (
+              {threadsPage &&
+              (threadsPage.total > visibleThreads.length || threadsPage.offset > 0) ? (
                 <tr className="usageTableNotice">
                   <td colSpan={8}>
-                    Showing {threadsPage.offset + 1}-{threadsPage.offset + visibleThreads.length}{' '}
-                    of {threadsPage.total} threads.
+                    Showing {threadsPage.offset + 1}-{threadsPage.offset + visibleThreads.length} of{' '}
+                    {threadsPage.total} threads.
                     <button
                       type="button"
                       disabled={threadsPage.offset === 0 || loading.threads}

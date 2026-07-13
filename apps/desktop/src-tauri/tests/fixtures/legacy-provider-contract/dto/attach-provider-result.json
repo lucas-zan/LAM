@@ -1,0 +1,12 @@
+{
+  "profileId": "fixture-profile",
+  "providerId": "legacy-responses-service",
+  "configPath": "/fixture/codex-home/config.toml",
+  "backupPath": "/fixture/codex-home/config.toml.backup.20260710-120000",
+  "operations": [
+    "backup config.toml /fixture/codex-home"
+  ],
+  "warnings": [
+    "Fixture warning"
+  ]
+}

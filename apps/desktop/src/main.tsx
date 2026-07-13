@@ -1,13 +1,13 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { App } from "./App";
-import { TrayQuotaApp } from "./tray-quota-app";
-import "./styles.css";
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { App } from './App';
+import { TrayQuotaApp } from './tray-quota-app';
+import './styles.css';
 
 function isTrayPopoverWindow(): boolean {
   try {
-    return getCurrentWebviewWindow().label === "quota-popover";
+    return getCurrentWebviewWindow().label === 'quota-popover';
   } catch {
     return false;
   }
@@ -16,15 +16,13 @@ function isTrayPopoverWindow(): boolean {
 const isTrayPopover = isTrayPopoverWindow();
 
 if (isTrayPopover) {
-  document.documentElement.dataset.trayPopover = "1";
-  document.documentElement.style.background = "transparent";
-  document.documentElement.style.height = "auto";
-  document.body.style.background = "transparent";
-  document.body.style.height = "auto";
+  document.documentElement.dataset.trayPopover = '1';
+  document.documentElement.style.background = 'transparent';
+  document.documentElement.style.height = 'auto';
+  document.body.style.background = 'transparent';
+  document.body.style.height = 'auto';
 }
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    {isTrayPopover ? <TrayQuotaApp /> : <App />}
-  </React.StrictMode>,
+ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+  <React.StrictMode>{isTrayPopover ? <TrayQuotaApp /> : <App />}</React.StrictMode>,
 );

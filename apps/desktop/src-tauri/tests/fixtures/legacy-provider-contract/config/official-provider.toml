@@ -1,0 +1,18 @@
+# User-owned Codex configuration
+model = "example-chat-model"
+model_provider = "company.proxy"
+model_reasoning_effort = "high"
+
+[model_providers."company.proxy"]
+name = "示例兼容服务"
+base_url = "https://company.example.test/v1"
+env_key = "EXAMPLE_COMPANY_API_KEY"
+wire_api = "responses"
+# preserve this trailing comment
+
+[mcp_servers.fixture_tool]
+command = "/fixture/bin/example-tool"
+args = ["--read-only"]
+
+[unknown_settings]
+keep_me = true

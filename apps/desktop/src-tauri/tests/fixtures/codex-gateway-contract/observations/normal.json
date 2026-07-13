@@ -1,0 +1,21 @@
+{
+  "functionTool": {
+    "helperInvocations": 2,
+    "requestCount": 2,
+    "resultCode": 0
+  },
+  "resume": {
+    "firstResultCode": 0,
+    "helperInvocations": 4,
+    "previousResponseId": null,
+    "requestCount": 2,
+    "secondResultCode": 0,
+    "stateMode": "full-input"
+  },
+  "textStream": {
+    "helperInvocations": 2,
+    "requestCount": 1,
+    "resultCode": 0,
+    "stream": true
+  }
+}

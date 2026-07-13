@@ -6,9 +6,9 @@ export const TRAY_POPOVER_WIDTH = 328;
 export const TRAY_POPOVER_MIN_HEIGHT = 248;
 export const TRAY_POPOVER_MAX_HEIGHT = 900;
 export function measureTrayPopoverHeight(panel: HTMLElement): number {
-  const head = panel.querySelector<HTMLElement>(".trayPopoverFixedHead");
-  const list = panel.querySelector<HTMLElement>(".trayAccountList");
-  const foot = panel.querySelector<HTMLElement>(".trayPopoverFoot");
+  const head = panel.querySelector<HTMLElement>('.trayPopoverFixedHead');
+  const list = panel.querySelector<HTMLElement>('.trayAccountList');
+  const foot = panel.querySelector<HTMLElement>('.trayPopoverFoot');
 
   const headHeight = head?.getBoundingClientRect().height ?? 0;
   const footHeight = foot?.getBoundingClientRect().height ?? 0;

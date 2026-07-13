@@ -298,7 +298,13 @@ beforeEach(() => {
     scopes: [
       { id: 'total', label: 'Total', kind: 'total', isDefault: true },
       { id: 'workspace:main', label: 'main', kind: 'workspace', isDefault: false },
-      { id: 'workspace:codex-c', label: 'codex-c', kind: 'workspace', accountId: 'codex-c', isDefault: false },
+      {
+        id: 'workspace:codex-c',
+        label: 'codex-c',
+        kind: 'workspace',
+        accountId: 'codex-c',
+        isDefault: false,
+      },
     ],
     activeScopeId: 'total',
   });
@@ -332,7 +338,13 @@ beforeEach(() => {
     scopes: [
       { id: 'total', label: 'Total', kind: 'total', isDefault: true },
       { id: 'workspace:main', label: 'main', kind: 'workspace', isDefault: false },
-      { id: 'workspace:codex-c', label: 'codex-c', kind: 'workspace', accountId: 'codex-c', isDefault: false },
+      {
+        id: 'workspace:codex-c',
+        label: 'codex-c',
+        kind: 'workspace',
+        accountId: 'codex-c',
+        isDefault: false,
+      },
     ],
     activeScopeId: 'total',
     dashboard: usageSummary,
@@ -357,7 +369,11 @@ beforeEach(() => {
   });
   vi.mocked(api.resetUsageIndex).mockResolvedValue();
   vi.mocked(api.compactUsageDb).mockResolvedValue();
-  vi.mocked(api.getCallRawContents).mockResolvedValue({ request: '', assistant: '', toolOutput: '' });
+  vi.mocked(api.getCallRawContents).mockResolvedValue({
+    request: '',
+    assistant: '',
+    toolOutput: '',
+  });
   vi.mocked(api.takePendingRoute).mockResolvedValue(null);
   vi.mocked(api.getProfileQuota).mockResolvedValue({
     profileId: 'main',
@@ -452,10 +468,12 @@ describe('App handoff modal', () => {
     vi.mocked(api.getAntigravityQuota).mockReturnValue(pending.promise);
     vi.mocked(api.listSessions).mockResolvedValue([]);
     const intervals: Array<{ handler: TimerHandler; timeout?: number }> = [];
-    const setIntervalSpy = vi.spyOn(window, 'setInterval').mockImplementation((handler, timeout) => {
-      intervals.push({ handler, timeout });
-      return intervals.length as unknown as ReturnType<typeof window.setInterval>;
-    });
+    const setIntervalSpy = vi
+      .spyOn(window, 'setInterval')
+      .mockImplementation((handler, timeout) => {
+        intervals.push({ handler, timeout });
+        return intervals.length as unknown as ReturnType<typeof window.setInterval>;
+      });
 
     render(<App />);
 
@@ -496,7 +514,11 @@ describe('App handoff modal', () => {
     await screen.findByText('main');
     expect(api.getUsageScopes).not.toHaveBeenCalled();
 
-    fireEvent.click(within(screen.getByRole('navigation', { name: /primary/i })).getByRole('button', { name: /usage/i }));
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: /primary/i })).getByRole('button', {
+        name: /usage/i,
+      }),
+    );
 
     await waitFor(() => expect(api.getUsageScopes).toHaveBeenCalledTimes(1));
     expect(api.getUsageOverview).toHaveBeenCalledTimes(1);
@@ -558,9 +580,13 @@ describe('App handoff modal', () => {
     fireEvent.click(await screen.findByRole('button', { name: /new account/i }));
     fireEvent.click(screen.getByRole('button', { name: /pat/i }));
     await screen.findByText(/upload auth\.json/i);
-    const authFile = new File([JSON.stringify({ tokens: { account_id: 'account-test-6789' } })], 'auth.json', {
-      type: 'application/json',
-    });
+    const authFile = new File(
+      [JSON.stringify({ tokens: { account_id: 'account-test-6789' } })],
+      'auth.json',
+      {
+        type: 'application/json',
+      },
+    );
     Object.defineProperty(authFile, 'text', {
       value: () => Promise.resolve(JSON.stringify({ tokens: { account_id: 'account-test-6789' } })),
     });
@@ -672,7 +698,7 @@ describe('App handoff modal', () => {
   it('exports CPA auth from the PAT mode account action', async () => {
     vi.mocked(api.getAuthMode).mockResolvedValue('pat');
     vi.mocked(api.listSessions).mockResolvedValue([]);
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     useQuotaStore.setState({
       quotas: [
@@ -761,14 +787,18 @@ describe('App handoff modal', () => {
 
     render(<App />);
     await waitFor(() => expect(screen.getByLabelText(/pat mode/i)).toHaveProperty('checked', true));
-    const accountCard = (await screen.findByRole('heading', { name: 'codex-c' })).closest('article');
+    const accountCard = (await screen.findByRole('heading', { name: 'codex-c' })).closest(
+      'article',
+    );
     expect(accountCard).not.toBeNull();
 
     expect(within(accountCard!).queryByLabelText('Manual reset expiry')).toBeNull();
     expect(within(accountCard!).getByLabelText('Expires: 2026-07-01 08:00')).toBeTruthy();
     expect(within(accountCard!).getByLabelText('Expires: 2026-07-12 08:00')).toBeTruthy();
     expect(within(accountCard!).queryByRole('button', { name: 'Handoff' })).toBeNull();
-    expect(within(accountCard!).getAllByRole('button', { name: /reset codex-c quota/i })).toHaveLength(1);
+    expect(
+      within(accountCard!).getAllByRole('button', { name: /reset codex-c quota/i }),
+    ).toHaveLength(1);
 
     fireEvent.click(within(accountCard!).getByRole('button', { name: /reset codex-c quota/i }));
 
@@ -782,7 +812,9 @@ describe('App handoff modal', () => {
     render(<App />);
     const accountCard = (await screen.findByText('codex-c')).closest('article');
     expect(accountCard).not.toBeNull();
-    expect(within(accountCard!).queryByRole('button', { name: /switch to this account/i })).toBeNull();
+    expect(
+      within(accountCard!).queryByRole('button', { name: /switch to this account/i }),
+    ).toBeNull();
 
     fireEvent.click(within(accountCard!).getByRole('button', { name: /more options/i }));
     fireEvent.click(screen.getByRole('button', { name: /^login$/i }));
@@ -852,7 +884,9 @@ describe('App handoff modal', () => {
     fireEvent.click(within(accountCard!).getByRole('button', { name: /^update$/i }));
     const textarea = await screen.findByLabelText(/session json/i);
     fireEvent.change(textarea, {
-      target: { value: '{"accessToken":"at-new","idToken":"id-new","user":{"email":"u@example.com"}}' },
+      target: {
+        value: '{"accessToken":"at-new","idToken":"id-new","user":{"email":"u@example.com"}}',
+      },
     });
     const updateButtons = screen.getAllByRole('button', { name: /^update$/i });
     fireEvent.click(updateButtons[updateButtons.length - 1]);
@@ -979,7 +1013,9 @@ describe('App handoff modal', () => {
     render(<App />);
     await waitFor(() => expect(screen.getByLabelText(/pat mode/i)).toHaveProperty('checked', true));
     const nav = screen.getByRole('navigation', { name: /primary/i });
-    const labels = within(nav).getAllByRole('button').map((button) => button.textContent);
+    const labels = within(nav)
+      .getAllByRole('button')
+      .map((button) => button.textContent);
     expect(labels.slice(0, 2)).toEqual(['Overview', 'Usage']);
     expect(screen.queryByRole('button', { name: /^stats$/i })).toBeNull();
 
@@ -1087,7 +1123,9 @@ describe('App handoff modal', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }));
     await waitFor(() =>
-      expect(api.getUsageOverview).toHaveBeenCalledWith(expect.objectContaining({ includeArchived: true })),
+      expect(api.getUsageOverview).toHaveBeenCalledWith(
+        expect.objectContaining({ includeArchived: true }),
+      ),
     );
   });
 
@@ -1099,25 +1137,19 @@ describe('App handoff modal', () => {
     const nav = await screen.findByRole('navigation', { name: /primary/i });
     fireEvent.click(within(nav).getByRole('button', { name: /usage/i }));
     const loadLimit = await screen.findByLabelText(/load limit/i);
-    expect(Array.from((loadLimit as HTMLSelectElement).options).map((option) => option.textContent)).toEqual([
-      '5,000 calls',
-      '10,000 calls',
-      '20,000 calls',
-      'All calls',
-    ]);
+    expect(
+      Array.from((loadLimit as HTMLSelectElement).options).map((option) => option.textContent),
+    ).toEqual(['5,000 calls', '10,000 calls', '20,000 calls', 'All calls']);
 
     const preset = await screen.findByLabelText(/time preset/i);
-    expect(Array.from((preset as HTMLSelectElement).options).map((option) => option.textContent)).toEqual([
-      'All time',
-      'Today',
-      'This week',
-      'Last 7 days',
-      'This month',
-      'Custom range',
-    ]);
+    expect(
+      Array.from((preset as HTMLSelectElement).options).map((option) => option.textContent),
+    ).toEqual(['All time', 'Today', 'This week', 'Last 7 days', 'This month', 'Custom range']);
 
     const sort = await screen.findByLabelText(/^sort$/i);
-    expect(Array.from((sort as HTMLSelectElement).options).map((option) => option.textContent)).toEqual([
+    expect(
+      Array.from((sort as HTMLSelectElement).options).map((option) => option.textContent),
+    ).toEqual([
       'Time',
       'Duration',
       'Gap',
@@ -1233,7 +1265,9 @@ describe('App handoff modal', () => {
 
     render(<App />);
 
-    const availabilitySelect = (await screen.findByLabelText(/mode availability/i)) as HTMLSelectElement;
+    const availabilitySelect = (await screen.findByLabelText(
+      /mode availability/i,
+    )) as HTMLSelectElement;
     fireEvent.change(availabilitySelect, { target: { value: 'profile' } });
 
     expect(await screen.findByText('Profile Mode')).toBeTruthy();
@@ -1252,7 +1286,9 @@ describe('App handoff modal', () => {
 
     render(<App />);
 
-    const availabilitySelect = (await screen.findByLabelText(/mode availability/i)) as HTMLSelectElement;
+    const availabilitySelect = (await screen.findByLabelText(
+      /mode availability/i,
+    )) as HTMLSelectElement;
     fireEvent.change(availabilitySelect, { target: { value: 'pat' } });
 
     expect(await screen.findByText('PAT Mode')).toBeTruthy();
@@ -1271,7 +1307,9 @@ describe('App handoff modal', () => {
 
     render(<App />);
 
-    const availabilitySelect = (await screen.findByLabelText(/mode availability/i)) as HTMLSelectElement;
+    const availabilitySelect = (await screen.findByLabelText(
+      /mode availability/i,
+    )) as HTMLSelectElement;
     expect(availabilitySelect.value).toBe('both');
     expect(screen.getByRole('tab', { name: /^profile$/i })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /^pat$/i })).toBeTruthy();
@@ -1284,9 +1322,15 @@ describe('App handoff modal', () => {
     render(<App />);
     await screen.findByText('main');
 
-    fireEvent.click(within(screen.getByRole('navigation', { name: /primary/i })).getByRole('button', { name: /usage/i }));
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: /primary/i })).getByRole('button', {
+        name: /usage/i,
+      }),
+    );
 
     await waitFor(() => expect(api.getUsageOverview).toHaveBeenCalled());
-    expect((useUsageStore.getState() as unknown as { _intervalId?: number | null })._intervalId).toBeUndefined();
+    expect(
+      (useUsageStore.getState() as unknown as { _intervalId?: number | null })._intervalId,
+    ).toBeUndefined();
   });
 });

@@ -1,9 +1,9 @@
-import { create } from "zustand";
-import * as api from "../lib/api";
-import type { AttachProviderRequest, CreateProviderRequest, ProviderProfile } from "../lib/types";
-import { useAppStore } from "./app";
-import { useAccountStore } from "./accounts";
-import { formatError } from "../lib/format";
+import { create } from 'zustand';
+import * as api from '../lib/api';
+import type { AttachProviderRequest, CreateProviderRequest, ProviderProfile } from '../lib/types';
+import { useAppStore } from './app';
+import { useAccountStore } from './accounts';
+import { formatError } from '../lib/format';
 
 interface ProviderState {
   providers: ProviderProfile[];
@@ -46,11 +46,11 @@ export const useProviderStore = create<ProviderState>()((set) => ({
     await api.createProvider({
       ...req,
       envKey,
-      secret: envKey ? { kind: "env", envKey } : { kind: "none" },
+      secret: envKey ? { kind: 'env', envKey } : { kind: 'none' },
     });
     set({ providers: await api.listProviders() });
     useAppStore.getState().closeModal();
-    useAppStore.getState().setStatus("Provider created");
+    useAppStore.getState().setStatus('Provider created');
   },
 
   attachToProfile: async (req) => {

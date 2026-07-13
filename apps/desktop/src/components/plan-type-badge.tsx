@@ -1,19 +1,19 @@
-import type { ReactNode } from "react";
+import type { ReactNode } from 'react';
 
 type PlanTypeBadgeProps = {
   planType?: string | null;
   className?: string;
 };
 
-export function PlanTypeBadge({ planType, className = "" }: PlanTypeBadgeProps) {
+export function PlanTypeBadge({ planType, className = '' }: PlanTypeBadgeProps) {
   if (!planType) return null;
   const type = planType.trim().toLowerCase();
 
   let icon: ReactNode = null;
-  let customClass = "planTypeBadge";
+  let customClass = 'planTypeBadge';
 
-  if (type === "free") {
-    customClass += " planTypeBadge--free";
+  if (type === 'free') {
+    customClass += ' planTypeBadge--free';
     icon = (
       <svg
         className="badgeIcon"
@@ -30,8 +30,8 @@ export function PlanTypeBadge({ planType, className = "" }: PlanTypeBadgeProps) 
         <circle cx="12" cy="12" r="10" strokeDasharray="3 3" />
       </svg>
     );
-  } else if (type === "plus") {
-    customClass += " planTypeBadge--plus";
+  } else if (type === 'plus') {
+    customClass += ' planTypeBadge--plus';
     icon = (
       <svg
         className="badgeIcon"
@@ -49,8 +49,8 @@ export function PlanTypeBadge({ planType, className = "" }: PlanTypeBadgeProps) 
         <line x1="5" y1="12" x2="19" y2="12" />
       </svg>
     );
-  } else if (type === "pro") {
-    customClass += " planTypeBadge--pro";
+  } else if (type === 'pro') {
+    customClass += ' planTypeBadge--pro';
     icon = (
       <svg
         className="badgeIcon"
@@ -67,8 +67,8 @@ export function PlanTypeBadge({ planType, className = "" }: PlanTypeBadgeProps) 
         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
       </svg>
     );
-  } else if (type === "team") {
-    customClass += " planTypeBadge--team";
+  } else if (type === 'team') {
+    customClass += ' planTypeBadge--team';
     icon = (
       <svg
         className="badgeIcon"
@@ -88,8 +88,8 @@ export function PlanTypeBadge({ planType, className = "" }: PlanTypeBadgeProps) 
         <path d="M16 3.13a4 4 0 0 1 0 7.75" />
       </svg>
     );
-  } else if (type === "business") {
-    customClass += " planTypeBadge--business";
+  } else if (type === 'business') {
+    customClass += ' planTypeBadge--business';
     icon = (
       <svg
         className="badgeIcon"
@@ -108,7 +108,7 @@ export function PlanTypeBadge({ planType, className = "" }: PlanTypeBadgeProps) 
       </svg>
     );
   } else {
-    customClass += " planTypeBadge--default";
+    customClass += ' planTypeBadge--default';
   }
 
   const merged = `${customClass} ${className}`.trim();

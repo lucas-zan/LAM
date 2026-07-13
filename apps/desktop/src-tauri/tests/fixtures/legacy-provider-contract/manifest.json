@@ -1,0 +1,214 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "provider-store.legacy-openai",
+      "path": "provider-store/legacy-wire-openai.json",
+      "kind": "providerStore",
+      "origin": "LAM 0.2 unversioned Provider array",
+      "schema": "legacy-array-v0",
+      "expectedMigration": "Map wireApi openai to protocol responses with a migration warning; preserve metadata and do not write during read.",
+      "writeBackAllowed": false,
+      "bytes": 286,
+      "fnv1a64": "4c31d8d12bad4807"
+    },
+    {
+      "id": "provider-store.legacy-responses",
+      "path": "provider-store/legacy-wire-responses.json",
+      "kind": "providerStore",
+      "origin": "LAM 0.2 unversioned Provider array",
+      "schema": "legacy-array-v0",
+      "expectedMigration": "Map wireApi responses to protocol responses; preserve metadata and do not write during read.",
+      "writeBackAllowed": false,
+      "bytes": 313,
+      "fnv1a64": "8517c22ecfd04d3a"
+    },
+    {
+      "id": "provider-store.empty",
+      "path": "provider-store/empty.json",
+      "kind": "providerStore",
+      "origin": "LAM 0.2 empty Provider array",
+      "schema": "legacy-array-v0",
+      "expectedMigration": "Read as an empty Provider set without creating or rewriting the store.",
+      "writeBackAllowed": false,
+      "bytes": 3,
+      "fnv1a64": "dcd1cd1a2138b85d"
+    },
+    {
+      "id": "provider-store.missing",
+      "path": null,
+      "kind": "providerStore",
+      "origin": "LAM installation before any Provider is created",
+      "schema": "missing",
+      "expectedMigration": "Read as an empty Provider set without creating the store.",
+      "writeBackAllowed": false,
+      "bytes": null,
+      "fnv1a64": null
+    },
+    {
+      "id": "provider-store.malformed",
+      "path": "provider-store/malformed.json",
+      "kind": "providerStore",
+      "origin": "Corrupt legacy Provider store",
+      "schema": "invalid-json",
+      "expectedMigration": "Reject with PROVIDER_STORE_INVALID and leave bytes unchanged.",
+      "writeBackAllowed": false,
+      "bytes": 44,
+      "fnv1a64": "9717d1dd25ccb947"
+    },
+    {
+      "id": "provider-store.future-version",
+      "path": "provider-store/future-version.json",
+      "kind": "providerStore",
+      "origin": "Synthetic unsupported future Provider envelope",
+      "schema": "provider-envelope-v99",
+      "expectedMigration": "Reject an unsupported future schema version and never downgrade or write back.",
+      "writeBackAllowed": false,
+      "bytes": 62,
+      "fnv1a64": "631dae6248f27124"
+    },
+    {
+      "id": "config.top-level-only",
+      "path": "config/top-level-only.toml",
+      "kind": "codexConfig",
+      "origin": "Existing minimal Codex profile",
+      "schema": "codex-toml-current",
+      "expectedMigration": "Preserve all keys and comments; later attach may update only LAM-managed keys.",
+      "writeBackAllowed": false,
+      "bytes": 144,
+      "fnv1a64": "6966c762ac07cd53"
+    },
+    {
+      "id": "config.official-provider",
+      "path": "config/official-provider.toml",
+      "kind": "codexConfig",
+      "origin": "Official Provider table with user-owned extensions",
+      "schema": "codex-toml-current",
+      "expectedMigration": "Parse quoted dotted Provider ID and preserve comments, MCP table, unknown table, and Unicode.",
+      "writeBackAllowed": false,
+      "bytes": 451,
+      "fnv1a64": "58d0ef195e341923"
+    },
+    {
+      "id": "config.legacy-flat",
+      "path": "config/legacy-flat.toml",
+      "kind": "codexConfig",
+      "origin": "Deprecated LAM flat Provider projection",
+      "schema": "lam-flat-provider-v0",
+      "expectedMigration": "Recognize flat Provider keys as migration input and never write the legacy wire API value back to Codex.",
+      "writeBackAllowed": false,
+      "bytes": 223,
+      "fnv1a64": "e996a78ede3fbed5"
+    },
+    {
+      "id": "config.auth-conflict-placeholder",
+      "path": "config/auth-conflict-placeholder.toml",
+      "kind": "codexConfig",
+      "origin": "Synthetic conflicting auth and secret-bearing input",
+      "schema": "codex-toml-conflict",
+      "expectedMigration": "Detect the auth conflict and preserve user-owned placeholder fields without projecting them into Provider metadata.",
+      "writeBackAllowed": false,
+      "bytes": 431,
+      "fnv1a64": "2c605d478f157fac"
+    },
+    {
+      "id": "config.crlf-unicode",
+      "path": "config/crlf-unicode.json",
+      "kind": "embeddedCodexConfig",
+      "origin": "Synthetic CRLF and Unicode Codex config",
+      "schema": "codex-toml-current-escaped",
+      "expectedMigration": "Preserve CRLF line endings, quoted dotted Provider ID, and Unicode display name.",
+      "writeBackAllowed": false,
+      "bytes": 294,
+      "fnv1a64": "e22f1f9d5d9b4367"
+    },
+    {
+      "id": "account.cache.current",
+      "path": "account/accounts-cache.json",
+      "kind": "accountCache",
+      "origin": "LAM 0.2 accounts cache",
+      "schema": "accounts-cache-v0",
+      "expectedMigration": "Continue reading the current camelCase account cache without Provider field loss or write-back.",
+      "writeBackAllowed": false,
+      "bytes": 776,
+      "fnv1a64": "c26aa0e1ca03553e"
+    },
+    {
+      "id": "account.metadata.current",
+      "path": "account/managed-account-metadata.json",
+      "kind": "accountMetadata",
+      "origin": "LAM 0.2 managed profile marker",
+      "schema": "managed-account-marker-v0",
+      "expectedMigration": "Preserve account ownership and relay metadata independently from Provider bindings.",
+      "writeBackAllowed": false,
+      "bytes": 320,
+      "fnv1a64": "885fb0b914e7c039"
+    },
+    {
+      "id": "dto.provider-profile-view",
+      "path": "dto/provider-profile-view.json",
+      "kind": "tauriDto",
+      "origin": "LAM 0.2 list and create Provider response",
+      "schema": "provider-profile-camel-case-v0",
+      "expectedMigration": "Keep this response shape during the compatibility window and never add a secret value.",
+      "writeBackAllowed": false,
+      "bytes": 289,
+      "fnv1a64": "210a7e4f657ba71e"
+    },
+    {
+      "id": "dto.create-provider-request",
+      "path": "dto/create-provider-request.json",
+      "kind": "tauriDto",
+      "origin": "LAM 0.2 create Provider command input",
+      "schema": "create-provider-request-camel-case-v0",
+      "expectedMigration": "Accept during the compatibility window and translate wireApi and envKey at the API boundary.",
+      "writeBackAllowed": false,
+      "bytes": 319,
+      "fnv1a64": "ff6294be2378a913"
+    },
+    {
+      "id": "dto.create-provider-request-backend",
+      "path": "dto/create-provider-request-backend.json",
+      "kind": "tauriDto",
+      "origin": "LAM 0.2 Rust SecretInput deserialization shape",
+      "schema": "create-provider-request-mixed-case-v0",
+      "expectedMigration": "Accept the frontend envKey shape at the API boundary and remove this casing drift with an explicit compatibility test.",
+      "writeBackAllowed": false,
+      "bytes": 320,
+      "fnv1a64": "f15539a247499cfe"
+    },
+    {
+      "id": "dto.attach-provider-request",
+      "path": "dto/attach-provider-request.json",
+      "kind": "tauriDto",
+      "origin": "LAM 0.2 attach Provider command input",
+      "schema": "attach-provider-request-camel-case-v0",
+      "expectedMigration": "Replace with plan and execute DTOs while keeping the legacy command contract explicitly versioned.",
+      "writeBackAllowed": false,
+      "bytes": 118,
+      "fnv1a64": "071618f35634f633"
+    },
+    {
+      "id": "dto.attach-provider-result",
+      "path": "dto/attach-provider-result.json",
+      "kind": "tauriDto",
+      "origin": "LAM 0.2 attach Provider command result",
+      "schema": "attach-provider-result-camel-case-v0",
+      "expectedMigration": "Replace with a plan result while retaining explicit compatibility tests for casing and paths.",
+      "writeBackAllowed": false,
+      "bytes": 317,
+      "fnv1a64": "de9f51b5d45a8d24"
+    },
+    {
+      "id": "dto.operation-plan",
+      "path": "dto/operation-plan.json",
+      "kind": "tauriDto",
+      "origin": "LAM 0.2 Provider attach plan result",
+      "schema": "operation-plan-camel-case-v0",
+      "expectedMigration": "Map into the typed attach plan view without losing warnings or blocked fields.",
+      "writeBackAllowed": false,
+      "bytes": 165,
+      "fnv1a64": "013e6414b94a82e9"
+    }
+  ]
+}

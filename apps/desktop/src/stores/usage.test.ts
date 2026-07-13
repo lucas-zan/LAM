@@ -375,9 +375,7 @@ describe('useUsageStore', () => {
     });
     useUsageStore.setState({ summary: { ...dashboard } });
 
-    await useUsageStore
-      .getState()
-      .refreshUsageSections(['insights', 'overview', 'activity']);
+    await useUsageStore.getState().refreshUsageSections(['insights', 'overview', 'activity']);
 
     expect(api.tryRefreshUsageIndex).toHaveBeenCalledTimes(1);
     expect(api.refreshUsageIndex).not.toHaveBeenCalled();
@@ -405,6 +403,26 @@ describe('useUsageStore', () => {
     expect(api.getUsageCalls).not.toHaveBeenCalled();
     expect(api.getUsageThreads).not.toHaveBeenCalled();
     expect(useUsageStore.getState().summary?.insights?.totalThreads).toBe(80);
+  });
+
+  it('keeps a newer section request loading when a stale request settles', async () => {
+    const stale = deferred<Awaited<ReturnType<typeof api.getUsageCalls>>>();
+    const current = deferred<Awaited<ReturnType<typeof api.getUsageCalls>>>();
+    vi.mocked(api.getUsageCalls)
+      .mockReturnValueOnce(stale.promise)
+      .mockReturnValueOnce(current.promise);
+
+    const first = useUsageStore.getState().loadUsageSection('calls');
+    const second = useUsageStore.getState().loadUsageSection('calls');
+    const emptyPage = { rows: [], total: 0, limit: 50, offset: 0, nextOffset: null };
+
+    stale.resolve(emptyPage);
+    await first;
+    expect(useUsageStore.getState().sectionLoading.calls).toBe(true);
+
+    current.resolve(emptyPage);
+    await second;
+    expect(useUsageStore.getState().sectionLoading.calls).toBe(false);
   });
 
   it('selects the active usage scope without loading data', () => {

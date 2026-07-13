@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "gate": "remote-provider-gateway-phase0",
+  "approvedAt": "2026-07-10",
+  "target": {
+    "codexVersion": "0.144.1",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "osVersion": "15.6",
+    "captureDate": "2026-07-10"
+  },
+  "platform": {
+    "policy": "exact-tested-macos-only",
+    "unsupportedBehavior": "read-only-zero-remote-provider-mutation"
+  },
+  "routes": {
+    "required": ["GET /v1/models", "POST /v1/responses"],
+    "unsupported": [
+      "GET /v1/responses/{id}",
+      "POST /v1/responses/{id}",
+      "POST /v1/responses/{id}/cancel"
+    ]
+  },
+  "retry": {
+    "owner": "codex-direct-or-none-for-gateway-application-layer",
+    "codexRequestMaxRetries": 0,
+    "codexStreamMaxRetries": 0,
+    "gatewayApplicationRetries": 0,
+    "maxConnectionAttempts": 2,
+    "connectionRetryCondition": "proven-not-delivered-and-no-response-byte"
+  },
+  "store": {
+    "strategy": "versioned-file-cross-process-lock-atomic-rename",
+    "commitPoint": "binding-cas-after-config-commit",
+    "recovery": "rollback-before-commit-roll-forward-after-commit"
+  },
+  "credentials": {
+    "storageTransportSplit": true,
+    "gatewayBearerRequired": true,
+    "gatewayTokenStorage": "macos-keychain-only",
+    "authCommand": "absolute-direct-argv-explicit-hmac-approval"
+  },
+  "state": {
+    "mode": "full-input",
+    "responseStore": false,
+    "previousResponseId": "reject"
+  },
+  "sidecar": {
+    "identity": "signed-component-plus-same-uid-unix-peer-plus-nonce-hmac-plus-http-instance"
+  },
+  "security": {
+    "threatIds": [
+      "port_spoofing",
+      "token_exposure",
+      "auth_command_execution",
+      "ssrf_dns",
+      "sensitive_headers",
+      "resource_exhaustion",
+      "path_symlink",
+      "binding_rotation",
+      "content_leakage",
+      "version_mismatch",
+      "unsupported_platform"
+    ]
+  }
+}

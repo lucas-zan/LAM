@@ -1,5 +1,8 @@
 # Todo List: v0.2.0 Remote API Provider
 
+> 已由 [`todo-remote-provider-gateway.md`](./todo-remote-provider-gateway.md) 取代。
+> 本文仅保留为早期 text-only experimental adapter 方案的历史参考，不再作为开发或验收依据。
+
 状态规则：
 
 - `待执行`

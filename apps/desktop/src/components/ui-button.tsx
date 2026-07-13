@@ -1,15 +1,15 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
 type UIButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "default" | "primary" | "ghost" | "icon" | "danger";
-  size?: "sm" | "md";
+  variant?: 'default' | 'primary' | 'ghost' | 'icon' | 'danger';
+  size?: 'sm' | 'md';
   children: ReactNode;
 };
 
 export function UIButton({
-  variant = "default",
-  size = "md",
-  className = "",
+  variant = 'default',
+  size = 'md',
+  className = '',
   children,
   ...props
 }: UIButtonProps) {

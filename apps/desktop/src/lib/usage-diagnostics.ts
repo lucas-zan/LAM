@@ -11,10 +11,14 @@ export function summarizeUsageDiagnostics(diagnostics: UsageDiagnostics): string
     parts.push(`unknown models: ${diagnostics.unknownModels.join(', ')}`);
   }
   if (diagnostics.lowCacheThreads.length) {
-    parts.push(`low cache: ${diagnostics.lowCacheThreads.map((thread) => thread.threadLabel).join(', ')}`);
+    parts.push(
+      `low cache: ${diagnostics.lowCacheThreads.map((thread) => thread.threadLabel).join(', ')}`,
+    );
   }
   if (diagnostics.highContextCalls.length) {
-    parts.push(`high context: ${diagnostics.highContextCalls.map((call) => call.recordId).join(', ')}`);
+    parts.push(
+      `high context: ${diagnostics.highContextCalls.map((call) => call.recordId).join(', ')}`,
+    );
   }
   if (diagnostics.lastRefreshError) parts.push(`last error: ${diagnostics.lastRefreshError}`);
   return parts.join(' · ') || 'No aggregate diagnostics.';

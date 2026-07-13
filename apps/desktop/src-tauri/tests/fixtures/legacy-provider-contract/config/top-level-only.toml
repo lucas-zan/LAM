@@ -1,0 +1,4 @@
+# Existing minimal Codex profile
+model = "example-response-model"
+model_provider = "legacy-responses-service"
+model_reasoning_effort = "medium"

@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { planTypeLabel, quotaDisplayWindows, accountHasAvailableQuota, resetCreditDisplay } from './quota';
+import {
+  planTypeLabel,
+  quotaDisplayWindows,
+  accountHasAvailableQuota,
+  resetCreditDisplay,
+} from './quota';
 import type { UsageQuotaSnapshot } from './types';
 
 const baseQuota: UsageQuotaSnapshot = {

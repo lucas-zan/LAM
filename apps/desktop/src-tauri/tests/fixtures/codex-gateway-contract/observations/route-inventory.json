@@ -1,0 +1,10 @@
+{
+  "notObserved": [
+    "GET /v1/responses/{response_id}",
+    "POST /v1/responses/{response_id}/cancel"
+  ],
+  "observed": [
+    "GET /v1/models",
+    "POST /v1/responses"
+  ]
+}

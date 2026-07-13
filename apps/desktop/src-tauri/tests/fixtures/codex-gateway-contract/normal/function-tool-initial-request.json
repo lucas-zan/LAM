@@ -1,0 +1,270 @@
+{
+  "body": {
+    "client_metadata": {
+      "session_id": "<uuid>",
+      "thread_id": "<uuid>",
+      "turn_id": "<uuid>",
+      "x-codex-installation-id": "<uuid>",
+      "x-codex-turn-metadata": "{\"installation_id\":\"<uuid>\",\"session_id\":\"<uuid>\",\"thread_id\":\"<uuid>\",\"turn_id\":\"<uuid>\",\"window_id\":\"<uuid>:0\",\"request_kind\":\"turn\",\"thread_source\":\"user\",\"sandbox\":\"seatbelt\",\"turn_started_at_unix_ms\":\"<timestamp>\"}",
+      "x-codex-window-id": "<uuid>:0"
+    },
+    "include": [],
+    "input": [
+      {
+        "content": [
+          {
+            "text": "<codex-generated-developer-context>",
+            "type": "input_text"
+          },
+          {
+            "text": "<codex-generated-developer-context>",
+            "type": "input_text"
+          }
+        ],
+        "role": "developer",
+        "type": "message"
+      },
+      {
+        "content": [
+          {
+            "text": "<codex-generated-environment-context>",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      },
+      {
+        "content": [
+          {
+            "text": "LAM_CAPTURE_FUNCTION_TOOL",
+            "type": "input_text"
+          }
+        ],
+        "role": "user",
+        "type": "message"
+      }
+    ],
+    "instructions": "<codex-built-in-instructions>",
+    "model": "fixture-model",
+    "parallel_tool_calls": false,
+    "prompt_cache_key": "<uuid>",
+    "reasoning": null,
+    "store": false,
+    "stream": true,
+    "tool_choice": "auto",
+    "tools": [
+      {
+        "description": "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+        "name": "exec_command",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "cmd": {
+              "description": "Shell command to execute.",
+              "type": "string"
+            },
+            "justification": {
+              "description": "User-facing approval question for `require_escalated`; omit otherwise.",
+              "type": "string"
+            },
+            "login": {
+              "description": "True runs the shell with -l/-i semantics; false disables them. Defaults to true.",
+              "type": "boolean"
+            },
+            "max_output_tokens": {
+              "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.",
+              "type": "number"
+            },
+            "prefix_rule": {
+              "description": "Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "sandbox_permissions": {
+              "description": "Per-command sandbox override. Defaults to `use_default`; use `require_escalated` for unsandboxed execution.",
+              "enum": [
+                "use_default",
+                "require_escalated"
+              ],
+              "type": "string"
+            },
+            "shell": {
+              "description": "Shell binary to launch. Defaults to the user's default shell.",
+              "type": "string"
+            },
+            "tty": {
+              "description": "True allocates a PTY for the command; false or omitted uses plain pipes.",
+              "type": "boolean"
+            },
+            "workdir": {
+              "description": "Working directory for the command. Defaults to the turn cwd.",
+              "type": "string"
+            },
+            "yield_time_ms": {
+              "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms.",
+              "type": "number"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        "strict": false,
+        "type": "function"
+      },
+      {
+        "description": "<tool-description-redacted>",
+        "name": "write_stdin",
+        "parameters": {
+          "redacted": "<tool-schema-redacted>"
+        },
+        "strict": false,
+        "type": "function"
+      },
+      {
+        "description": "<tool-description-redacted>",
+        "name": "update_plan",
+        "parameters": {
+          "redacted": "<tool-schema-redacted>"
+        },
+        "strict": false,
+        "type": "function"
+      },
+      {
+        "description": "<tool-description-redacted>",
+        "name": "request_user_input",
+        "parameters": {
+          "redacted": "<tool-schema-redacted>"
+        },
+        "strict": false,
+        "type": "function"
+      },
+      {
+        "description": "<tool-description-redacted>",
+        "name": "view_image",
+        "parameters": {
+          "redacted": "<tool-schema-redacted>"
+        },
+        "strict": false,
+        "type": "function"
+      },
+      {
+        "description": "<tool-description-redacted>",
+        "name": "multi_agent_v1",
+        "tools": {
+          "redacted": "<tool-field-redacted>"
+        },
+        "type": "namespace"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "<redacted>",
+    "content-length": "44204",
+    "content-type": "application/json",
+    "host": "127.0.0.1:<port>",
+    "originator": "codex_exec",
+    "session-id": "<uuid>",
+    "thread-id": "<uuid>",
+    "user-agent": "codex_exec/0.144.1 (Mac OS 15.6.0; arm64) unknown (codex_exec; 0.144.1)",
+    "x-client-request-id": "<uuid>",
+    "x-codex-beta-features": "remote_compaction_v2",
+    "x-codex-turn-metadata": "{\"installation_id\":\"<uuid>\",\"session_id\":\"<uuid>\",\"thread_id\":\"<uuid>\",\"turn_id\":\"<uuid>\",\"window_id\":\"<uuid>:0\",\"request_kind\":\"turn\",\"thread_source\":\"user\",\"sandbox\":\"seatbelt\",\"turn_started_at_unix_ms\":\"<timestamp>\"}",
+    "x-codex-window-id": "<uuid>:0"
+  },
+  "method": "POST",
+  "normalization": {
+    "redactedFields": [
+      "$.body.input[0].content[0].text",
+      "$.body.input[0].content[1].text",
+      "$.body.input[1].content[0].text",
+      "$.body.instructions",
+      "$.body.tools[1].description",
+      "$.body.tools[1].parameters",
+      "$.body.tools[2].description",
+      "$.body.tools[2].parameters",
+      "$.body.tools[3].description",
+      "$.body.tools[3].parameters",
+      "$.body.tools[4].description",
+      "$.body.tools[4].parameters",
+      "$.body.tools[5].description",
+      "$.body.tools[5].tools"
+    ],
+    "toolCount": 6,
+    "toolKeys": [
+      {
+        "keys": [
+          "description",
+          "name",
+          "parameters",
+          "strict",
+          "type"
+        ],
+        "name": "exec_command"
+      },
+      {
+        "keys": [
+          "description",
+          "name",
+          "parameters",
+          "strict",
+          "type"
+        ],
+        "name": "write_stdin"
+      },
+      {
+        "keys": [
+          "description",
+          "name",
+          "parameters",
+          "strict",
+          "type"
+        ],
+        "name": "update_plan"
+      },
+      {
+        "keys": [
+          "description",
+          "name",
+          "parameters",
+          "strict",
+          "type"
+        ],
+        "name": "request_user_input"
+      },
+      {
+        "keys": [
+          "description",
+          "name",
+          "parameters",
+          "strict",
+          "type"
+        ],
+        "name": "view_image"
+      },
+      {
+        "keys": [
+          "description",
+          "name",
+          "tools",
+          "type"
+        ],
+        "name": "multi_agent_v1"
+      }
+    ],
+    "toolNames": [
+      "exec_command",
+      "write_stdin",
+      "update_plan",
+      "request_user_input",
+      "view_image",
+      "multi_agent_v1"
+    ]
+  },
+  "path": "/v1/responses"
+}

@@ -2216,6 +2216,7 @@ dependencies = [
  "axum",
  "chrono",
  "image",
+ "libc",
  "objc2",
  "objc2-app-kit",
  "objc2-quartz-core",
@@ -2234,6 +2235,7 @@ dependencies = [
  "toml_edit 0.22.27",
  "tower",
  "tower-http",
+ "url",
  "uuid",
  "wiremock",
 ]

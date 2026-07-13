@@ -1,0 +1,24 @@
+{
+  "empty": {
+    "authorizationHeader": "<invalid>",
+    "helperInvocations": 10,
+    "httpRequests": 3,
+    "outcome": "success",
+    "reportsEmptyToken": true,
+    "stdinBytes": 0
+  },
+  "refresh401": {
+    "authorizationHeader": "<redacted>",
+    "helperInvocations": 3,
+    "httpRequests": 2,
+    "outcome": "success",
+    "stdinBytes": 0
+  },
+  "trim": {
+    "authorizationHeader": "<redacted>",
+    "helperInvocations": 2,
+    "httpRequests": 3,
+    "outcome": "success",
+    "stdinBytes": 0
+  }
+}

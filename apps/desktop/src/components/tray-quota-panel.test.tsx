@@ -161,10 +161,12 @@ describe('TrayQuotaPanel', () => {
     const pending = deferred<{ ok: boolean; models: never[] }>();
     vi.mocked(api.getAntigravityQuota).mockReturnValue(pending.promise);
     const intervals: Array<{ handler: TimerHandler; timeout?: number }> = [];
-    const setIntervalSpy = vi.spyOn(window, 'setInterval').mockImplementation((handler, timeout) => {
-      intervals.push({ handler, timeout });
-      return intervals.length as unknown as ReturnType<typeof window.setInterval>;
-    });
+    const setIntervalSpy = vi
+      .spyOn(window, 'setInterval')
+      .mockImplementation((handler, timeout) => {
+        intervals.push({ handler, timeout });
+        return intervals.length as unknown as ReturnType<typeof window.setInterval>;
+      });
 
     render(<TrayQuotaPanel />);
 

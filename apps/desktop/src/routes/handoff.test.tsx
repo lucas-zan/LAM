@@ -157,7 +157,7 @@ describe('handoff navigation and entry points', () => {
         expect(button).toHaveProperty('disabled', true);
       }
     }
-    
+
     const moreBtns = screen.getAllByRole('button', { name: /more options/i });
     expect(moreBtns).toHaveLength(accounts.length);
     for (const btn of moreBtns) {

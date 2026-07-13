@@ -1,0 +1,11 @@
+{
+  "managedBy": "LAM",
+  "accountName": "fixture-profile",
+  "kind": "profile",
+  "runtimeProfileId": null,
+  "sourceProfileId": null,
+  "providerPolicy": "inherit_runtime",
+  "codexHome": "/fixture/.codex-fixture-profile",
+  "wrapperPath": "/fixture/bin/codex-fixture-profile",
+  "createdAt": "2026-07-10T12:00:00Z"
+}

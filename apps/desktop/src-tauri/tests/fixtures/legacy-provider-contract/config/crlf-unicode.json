@@ -1,0 +1,5 @@
+{
+  "encoding": "utf-8",
+  "lineEnding": "crlf",
+  "contents": "model = \"example-chat-model\"\r\nmodel_provider = \"company.proxy\"\r\n\r\n[model_providers.\"company.proxy\"]\r\nname = \"示例兼容服务\"\r\nbase_url = \"https://company.example.test/v1\"\r\nwire_api = \"responses\"\r\n"
+}

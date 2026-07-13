@@ -8,7 +8,15 @@ import { useUsageStore } from './stores/usage';
 import { useProviderStore } from './stores/providers';
 import * as api from './lib/api';
 import * as Shell from './components/shell';
-import { IconClock, IconLogo, IconRefresh, IconPlus, IconSync, IconTrash, IconInfo } from './components/icons';
+import {
+  IconClock,
+  IconLogo,
+  IconRefresh,
+  IconPlus,
+  IconSync,
+  IconTrash,
+  IconInfo,
+} from './components/icons';
 import { SyncModal } from './components/sync-modal';
 import { ThemeToggle } from './components/theme-toggle';
 import { UIButton } from './components/ui-button';
@@ -50,6 +58,10 @@ function clampAuthMode(mode: AuthMode, availability: ModeAvailability): AuthMode
   return mode;
 }
 
+function defaultCreateMode(availability: ModeAvailability): AuthMode {
+  return availability === 'pat' ? 'pat' : 'oauth';
+}
+
 const emptyAccountReq: CreateAccountRequest = {
   name: 'luna',
   copyConfigFrom: null,
@@ -76,7 +88,9 @@ function chatgptPlanTypeFromIdToken(idToken: unknown) {
   if (!payload) return '';
   try {
     const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const json = JSON.parse(atob(base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')));
+    const json = JSON.parse(
+      atob(base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')),
+    );
     return String(json['https://api.openai.com/auth']?.chatgpt_plan_type ?? '').trim();
   } catch {
     return '';
@@ -199,7 +213,6 @@ export function App() {
   const selectedHandoffSession = handoffSessions.find((s) => s.id === handoffSessionId);
   const [updatePatAccount, setUpdatePatAccount] = useState<CodexAccount | null>(null);
   const [updatePatSessionJson, setUpdatePatSessionJson] = useState('');
-  const [newPatToken, setNewPatToken] = useState('');
   const [newPatSessionOpen, setNewPatSessionOpen] = useState(false);
   const [newPatSessionJson, setNewPatSessionJson] = useState('');
   const [profileSessionImportOpen, setProfileSessionImportOpen] = useState(false);
@@ -210,11 +223,17 @@ export function App() {
   const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
   const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
-  const [createMode, setCreateMode] = useState<AuthMode>('oauth');
   const [authMode, setAuthMode] = useState<AuthMode>('oauth');
   const [modeAvailability, setModeAvailability] = useState<ModeAvailability>(readModeAvailability);
-  const [usageTab, setUsageTab] = useState<'insights' | 'calls' | 'threads' | 'diagnostics'>('insights');
-  const [usageWindow, setUsageWindow] = useState<UsageWindow>({ preset: 'all', from: null, to: null });
+  const [createMode, setCreateMode] = useState<AuthMode>(() => defaultCreateMode(modeAvailability));
+  const [usageTab, setUsageTab] = useState<'insights' | 'calls' | 'threads' | 'diagnostics'>(
+    'insights',
+  );
+  const [usageWindow, setUsageWindow] = useState<UsageWindow>({
+    preset: 'all',
+    from: null,
+    to: null,
+  });
   const [includeArchivedUsage, setIncludeArchivedUsage] = useState(false);
   const antigravityRefreshInFlightRef = useRef(false);
   const loadedUsageSummaryKeyRef = useRef<string | null>(null);
@@ -222,14 +241,17 @@ export function App() {
 
   // Load auth mode and settings on mount
   useEffect(() => {
-    api.getAuthMode().then(mode => {
+    api.getAuthMode().then((mode) => {
       const savedAvailability = readModeAvailability();
       const backendMode = mode === 'pat' ? 'pat' : 'oauth';
       const nextMode = clampAuthMode(backendMode, savedAvailability);
       setModeAvailability(savedAvailability);
+      if (savedAvailability !== 'both') {
+        setCreateMode(defaultCreateMode(savedAvailability));
+      }
       setAuthMode(nextMode);
       if (nextMode !== backendMode) {
-        api.setAuthMode(nextMode).catch(err => {
+        api.setAuthMode(nextMode).catch((err) => {
           useAppStore.getState().setError('Failed to save auth mode');
           console.error('Failed to save auth mode:', err);
         });
@@ -239,32 +261,36 @@ export function App() {
   }, []);
 
   // Save auth mode when changed
-  const handleSetAuthMode = useCallback((mode: AuthMode) => {
-    const nextMode = clampAuthMode(mode, modeAvailability);
-    setAuthMode(nextMode);
-    api.setAuthMode(nextMode).catch(err => {
-      useAppStore.getState().setError('Failed to save auth mode');
-      console.error('Failed to save auth mode:', err);
-    });
-  }, [modeAvailability]);
-
-  const handleSetModeAvailability = useCallback((availability: ModeAvailability) => {
-    localStorage.setItem(MODE_AVAILABILITY_KEY, availability);
-    setModeAvailability(availability);
-    const nextMode = clampAuthMode(authMode, availability);
-    if (nextMode !== authMode) {
+  const handleSetAuthMode = useCallback(
+    (mode: AuthMode) => {
+      const nextMode = clampAuthMode(mode, modeAvailability);
       setAuthMode(nextMode);
-    }
-    api.setAuthMode(nextMode).catch(err => {
-      useAppStore.getState().setError('Failed to save auth mode');
-      console.error('Failed to save auth mode:', err);
-    });
-  }, [authMode]);
+      api.setAuthMode(nextMode).catch((err) => {
+        useAppStore.getState().setError('Failed to save auth mode');
+        console.error('Failed to save auth mode:', err);
+      });
+    },
+    [modeAvailability],
+  );
 
-  useEffect(() => {
-    if (modeAvailability === 'profile') setCreateMode('oauth');
-    if (modeAvailability === 'pat') setCreateMode('pat');
-  }, [modeAvailability]);
+  const handleSetModeAvailability = useCallback(
+    (availability: ModeAvailability) => {
+      localStorage.setItem(MODE_AVAILABILITY_KEY, availability);
+      setModeAvailability(availability);
+      const nextMode = clampAuthMode(authMode, availability);
+      if (nextMode !== authMode) {
+        setAuthMode(nextMode);
+      }
+      if (availability !== 'both') {
+        setCreateMode(defaultCreateMode(availability));
+      }
+      api.setAuthMode(nextMode).catch((err) => {
+        useAppStore.getState().setError('Failed to save auth mode');
+        console.error('Failed to save auth mode:', err);
+      });
+    },
+    [authMode],
+  );
 
   const resolvedTheme = useMemo(() => {
     if (themeMode === 'system')
@@ -328,22 +354,26 @@ export function App() {
     void loadUsageSummary(usageRequest);
   }, [loadUsageSummary, route, usageRequest]);
 
-  const setUsageScope = useCallback((scopeId: string) => {
-    const nextRequest = {
-      ...usageRequest,
-      scopeId,
-    };
-    loadedUsageSummaryKeyRef.current = usageSummaryRequestKey(nextRequest);
-    selectUsageScope(scopeId);
-    void loadUsageSummary(nextRequest);
-  }, [loadUsageSummary, selectUsageScope, usageRequest]);
+  const setUsageScope = useCallback(
+    (scopeId: string) => {
+      const nextRequest = {
+        ...usageRequest,
+        scopeId,
+      };
+      loadedUsageSummaryKeyRef.current = usageSummaryRequestKey(nextRequest);
+      selectUsageScope(scopeId);
+      void loadUsageSummary(nextRequest);
+    },
+    [loadUsageSummary, selectUsageScope, usageRequest],
+  );
 
   useEffect(() => {
     if (!api.inTauri()) return;
     let unlisten: (() => void) | undefined;
-    const openPendingRoute = () => void api.takePendingRoute().then((route) => {
-      if (route === 'usage') setRoute('usage');
-    });
+    const openPendingRoute = () =>
+      void api.takePendingRoute().then((route) => {
+        if (route === 'usage') setRoute('usage');
+      });
     openPendingRoute();
     window.addEventListener('focus', openPendingRoute);
     void listen<string>('lam:navigate', (event) => {
@@ -371,7 +401,9 @@ export function App() {
       await loadUsageSummary(usageRequest);
       useAppStore.getState().setStatus('Reset Codex usage statistics');
     } catch (err) {
-      useAppStore.getState().setError(err instanceof Error ? err.message : 'Failed to reset usage statistics');
+      useAppStore
+        .getState()
+        .setError(err instanceof Error ? err.message : 'Failed to reset usage statistics');
     }
   }, [loadUsageSummary, usageRequest]);
 
@@ -477,7 +509,6 @@ export function App() {
   }
 
   function openAccountModal() {
-    setNewPatToken('');
     setNewPatSessionOpen(false);
     setNewPatSessionJson('');
     setProfileSessionImportOpen(false);
@@ -780,7 +811,10 @@ export function App() {
                   Profile
                   <div className="authModeTooltip">
                     <strong>Profile Mode (OAuth)</strong>
-                    <p>Workspace-scoped account profiles. Allows different workspaces or directories to use separate logins.</p>
+                    <p>
+                      Workspace-scoped account profiles. Allows different workspaces or directories
+                      to use separate logins.
+                    </p>
                   </div>
                 </div>
                 <div
@@ -793,7 +827,10 @@ export function App() {
                   PAT
                   <div className="authModeTooltip">
                     <strong>PAT Mode (Tokens)</strong>
-                    <p>Personal Access Tokens mapped across workspaces. Suitable for simple user credential switching.</p>
+                    <p>
+                      Personal Access Tokens mapped across workspaces. Suitable for simple user
+                      credential switching.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -1071,9 +1108,11 @@ export function App() {
                         .setStatus(`Imported session profile '${result.profileId}'`);
                       closeModal();
                     } catch (err) {
-                      useAppStore.getState().setError(
-                        err instanceof Error ? err.message : 'Failed to import session profile'
-                      );
+                      useAppStore
+                        .getState()
+                        .setError(
+                          err instanceof Error ? err.message : 'Failed to import session profile',
+                        );
                     }
                   }}
                 >
@@ -1088,10 +1127,13 @@ export function App() {
                       />
                     </label>
                   </div>
-                  
+
                   <div className="credentialsWarning">
                     <IconInfo size={16} />
-                    <span>Sensitive credentials - Do not share or expose session JSON files. Only paste trusted session data.</span>
+                    <span>
+                      Sensitive credentials - Do not share or expose session JSON files. Only paste
+                      trusted session data.
+                    </span>
                   </div>
 
                   <label>
@@ -1126,11 +1168,7 @@ export function App() {
                     </span>
                   </label>
                   <div className="modalFoot">
-                    <UIButton
-                      type="button"
-                      variant="ghost"
-                      onClick={closeModal}
-                    >
+                    <UIButton type="button" variant="ghost" onClick={closeModal}>
                       Cancel
                     </UIButton>
                     <div className="modalFootPrimary">
@@ -1231,7 +1269,6 @@ export function App() {
                   className={!newPatSessionOpen ? 'active' : ''}
                   onClick={() => {
                     setNewPatSessionOpen(false);
-                    setNewPatToken('');
                   }}
                 >
                   Upload auth.json
@@ -1245,44 +1282,51 @@ export function App() {
                 </button>
               </div>
 
-              <form onSubmit={async (e) => {
-                e.preventDefault();
-                const formData = new FormData(e.currentTarget);
-                const accountName = (formData.get('accountName') as string || '').trim();
-                const personalAccessToken =
-                  (formData.get('personalAccessToken') as string || '').trim();
-                const expirationInput = (formData.get('tokenExpiration') as string || '').trim();
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const formData = new FormData(e.currentTarget);
+                  const accountName = ((formData.get('accountName') as string) || '').trim();
+                  const personalAccessToken = (
+                    (formData.get('personalAccessToken') as string) || ''
+                  ).trim();
+                  const expirationInput = (
+                    (formData.get('tokenExpiration') as string) || ''
+                  ).trim();
 
-                if (!accountName) {
-                  useAppStore.getState().setError('Please provide an account name');
-                  return;
-                }
+                  if (!accountName) {
+                    useAppStore.getState().setError('Please provide an account name');
+                    return;
+                  }
 
-                try {
-                  const file = formData.get('authFile') as File | null;
-                  const authJson = newPatSessionOpen
-                    ? JSON.parse(newPatSessionJson)
-                    : JSON.parse(await file!.text());
+                  try {
+                    const file = formData.get('authFile') as File | null;
+                    const authJson = newPatSessionOpen
+                      ? JSON.parse(newPatSessionJson)
+                      : JSON.parse(await file!.text());
 
-                  const result = await api.addPatAccount({
-                    accountId: accountName,
-                    authJson,
-                    personalAccessToken: personalAccessToken || null,
-                    tokenExpiration: expirationInput
-                      ? new Date(expirationInput).toISOString()
-                      : null,
-                  });
+                    const result = await api.addPatAccount({
+                      accountId: accountName,
+                      authJson,
+                      personalAccessToken: personalAccessToken || null,
+                      tokenExpiration: expirationInput
+                        ? new Date(expirationInput).toISOString()
+                        : null,
+                    });
 
-                  await refresh();
-                  refreshAccountQuota(result.accountId);
-                  useAppStore.getState().setStatus(`Uploaded auth.json for '${result.accountId}'`);
-                  closeModal();
-                } catch (err) {
-                  useAppStore.getState().setError(
-                    err instanceof Error ? err.message : 'Failed to upload auth.json'
-                  );
-                }
-              }}>
+                    await refresh();
+                    refreshAccountQuota(result.accountId);
+                    useAppStore
+                      .getState()
+                      .setStatus(`Uploaded auth.json for '${result.accountId}'`);
+                    closeModal();
+                  } catch (err) {
+                    useAppStore
+                      .getState()
+                      .setError(err instanceof Error ? err.message : 'Failed to upload auth.json');
+                  }
+                }}
+              >
                 <div className="uploadPatForm">
                   <label>
                     Account name *
@@ -1301,14 +1345,15 @@ export function App() {
                           type="password"
                           placeholder="Enter token"
                           autoComplete="off"
-                          onChange={(e) => setNewPatToken((e.target as HTMLInputElement).value)}
-                          onInput={(e) => setNewPatToken((e.target as HTMLInputElement).value)}
                           required
                         />
                       </label>
                       <div className="credentialsWarning">
                         <IconInfo size={16} />
-                        <span>Sensitive credentials - Do not share or expose session JSON files. Only paste trusted session data.</span>
+                        <span>
+                          Sensitive credentials - Do not share or expose session JSON files. Only
+                          paste trusted session data.
+                        </span>
                       </div>
                       <label>
                         Paste Session JSON *
@@ -1817,7 +1862,6 @@ export function App() {
           </div>
         </Shell.Modal>
       ) : null}
-
     </main>
   );
 }

@@ -1,0 +1,6 @@
+# Deprecated LAM flat Provider projection
+model = "example-chat-model"
+model_provider = "legacy-chat-service"
+provider_base_url = "https://chat.example.test/v1"
+provider_wire_api = "openai"
+env_key = "EXAMPLE_CHAT_API_KEY"

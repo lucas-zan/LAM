@@ -1,0 +1,250 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "codexVersion": "0.144.1",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "osVersion": "15.6",
+    "captureDate": "2026-07-10"
+  },
+  "supportPolicy": {
+    "kind": "exact-tested",
+    "versions": [
+      "0.144.1"
+    ]
+  },
+  "officialSources": [
+    "https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers",
+    "https://developers.openai.com/api/docs/guides/streaming-responses"
+  ],
+  "stateMode": "full-input",
+  "requiredRouteSet": [
+    "GET /v1/models",
+    "POST /v1/responses"
+  ],
+  "observedRouteSet": [
+    "GET /v1/models",
+    "POST /v1/responses"
+  ],
+  "volatileFields": [
+    "$.body.client_metadata.session_id",
+    "$.body.client_metadata.thread_id",
+    "$.body.client_metadata.turn_id",
+    "$.body.client_metadata.x-codex-installation-id",
+    "$.body.client_metadata.x-codex-turn-metadata",
+    "$.body.client_metadata.x-codex-window-id",
+    "$.body.prompt_cache_key",
+    "$.body.input generated context text",
+    "$.body.instructions",
+    "$.body.tools non-representative schemas",
+    "response and item IDs",
+    "temporary root and loopback port",
+    "timestamps and command timing"
+  ],
+  "scenarios": [
+    {
+      "id": "text-stream",
+      "status": "captured",
+      "runs": 2,
+      "deterministic": true,
+      "evidence": "Codex sent stream=true to POST /v1/responses and accepted the normalized semantic SSE lifecycle through response.completed.",
+      "artifacts": [
+        "normal/text-stream-request.json",
+        "normal/text-stream-events.json",
+        "observations/determinism.json"
+      ]
+    },
+    {
+      "id": "text-non-stream",
+      "status": "unsupported",
+      "runs": 2,
+      "deterministic": true,
+      "evidence": "Every text, tool, and resume request emitted by codex exec 0.144.1 used stream=true; no non-stream CLI path was observed.",
+      "artifacts": []
+    },
+    {
+      "id": "function-tool",
+      "status": "captured",
+      "runs": 2,
+      "deterministic": true,
+      "evidence": "The follow-up request replayed full input including function_call and function_call_output with previous_response_id=null.",
+      "artifacts": [
+        "normal/function-tool-initial-request.json",
+        "normal/function-tool-followup-request.json",
+        "normal/function-tool-events.json",
+        "observations/normal.json"
+      ]
+    },
+    {
+      "id": "resume",
+      "status": "captured",
+      "runs": 2,
+      "deterministic": true,
+      "evidence": "A persisted temporary session resumed by replaying full first-turn user and assistant items plus the new user item; previous_response_id remained null.",
+      "artifacts": [
+        "normal/resume-initial-request.json",
+        "normal/resume-request.json",
+        "normal/resume-events.json",
+        "observations/normal.json"
+      ]
+    },
+    {
+      "id": "route-inventory",
+      "status": "captured",
+      "runs": 2,
+      "deterministic": true,
+      "evidence": "Normal and failure cases observed only GET /v1/models and POST /v1/responses; retrieve and cancel routes were not called.",
+      "artifacts": [
+        "observations/route-inventory.json"
+      ]
+    },
+    {
+      "id": "auth-helper-trim",
+      "status": "captured",
+      "runs": 2,
+      "deterministic": true,
+      "evidence": "The helper received zero stdin bytes; surrounding whitespace was trimmed and requests carried the expected bearer value before redaction.",
+      "artifacts": [
+        "observations/auth-helper.json"
+      ]
+    },
+    {
+      "id": "auth-helper-empty",
+      "status": "captured",
+      "runs": 2,
+      "deterministic": true,
+      "evidence": "Codex reported an empty-token error but still sent three unauthenticated requests and completed because the capture server accepted them.",
+      "artifacts": [
+        "observations/auth-helper.json"
+      ]
+    },
+    {
+      "id": "auth-refresh-401",
+      "status": "captured",
+      "runs": 2,
+      "deterministic": true,
+      "evidence": "A first 401 caused one helper refresh and one replay; the second Responses request completed successfully.",
+      "artifacts": [
+        "observations/auth-helper.json",
+        "observations/failure-determinism.json"
+      ]
+    },
+    {
+      "id": "retry-429",
+      "status": "captured",
+      "runs": 2,
+      "deterministic": true,
+      "evidence": "A 429 with Retry-After 0 produced one Responses attempt and a terminal Codex error.",
+      "artifacts": [
+        "observations/retries.json"
+      ]
+    },
+    {
+      "id": "retry-500",
+      "status": "captured",
+      "runs": 2,
+      "deterministic": true,
+      "evidence": "Default request and stream retry layers produced 30 Responses attempts before a terminal Codex error.",
+      "artifacts": [
+        "observations/retries.json"
+      ]
+    },
+    {
+      "id": "malformed-sse",
+      "status": "captured",
+      "runs": 2,
+      "deterministic": true,
+      "evidence": "A malformed SSE payload produced six Responses attempts before a terminal Codex error.",
+      "artifacts": [
+        "observations/retries.json"
+      ]
+    },
+    {
+      "id": "disconnect",
+      "status": "captured",
+      "runs": 2,
+      "deterministic": true,
+      "evidence": "Killing the isolated Codex process group after response.created closed the client connection observed by the server.",
+      "artifacts": [
+        "observations/disconnect.json"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "normal/function-tool-events.json",
+      "bytes": 9208,
+      "fnv1a64": "58da33c4bd93d4b9"
+    },
+    {
+      "path": "normal/function-tool-followup-request.json",
+      "bytes": 8270,
+      "fnv1a64": "79abf9b8c2faa372"
+    },
+    {
+      "path": "normal/function-tool-initial-request.json",
+      "bytes": 7824,
+      "fnv1a64": "3408651be7b75c7b"
+    },
+    {
+      "path": "normal/resume-events.json",
+      "bytes": 9949,
+      "fnv1a64": "22180ba70af0cfc7"
+    },
+    {
+      "path": "normal/resume-initial-request.json",
+      "bytes": 9344,
+      "fnv1a64": "93c1d2221eafc80e"
+    },
+    {
+      "path": "normal/resume-request.json",
+      "bytes": 9760,
+      "fnv1a64": "0b977db0f23ee682"
+    },
+    {
+      "path": "normal/text-stream-events.json",
+      "bytes": 4576,
+      "fnv1a64": "5bd98c6db7d651d5"
+    },
+    {
+      "path": "normal/text-stream-request.json",
+      "bytes": 7822,
+      "fnv1a64": "91a5ed435eaac5da"
+    },
+    {
+      "path": "observations/auth-helper.json",
+      "bytes": 506,
+      "fnv1a64": "640badbfff64ccfd"
+    },
+    {
+      "path": "observations/determinism.json",
+      "bytes": 53,
+      "fnv1a64": "7c00dde456a604b5"
+    },
+    {
+      "path": "observations/disconnect.json",
+      "bytes": 94,
+      "fnv1a64": "f9573f8993f0b07a"
+    },
+    {
+      "path": "observations/failure-determinism.json",
+      "bytes": 54,
+      "fnv1a64": "4c53d89660c4ea98"
+    },
+    {
+      "path": "observations/normal.json",
+      "bytes": 398,
+      "fnv1a64": "744701d26a312f29"
+    },
+    {
+      "path": "observations/retries.json",
+      "bytes": 261,
+      "fnv1a64": "5de8325fb6f71d1c"
+    },
+    {
+      "path": "observations/route-inventory.json",
+      "bytes": 180,
+      "fnv1a64": "fda603615a0d29fd"
+    }
+  ]
+}

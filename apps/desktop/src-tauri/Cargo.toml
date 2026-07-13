@@ -35,6 +35,8 @@ tokio-stream = "0.1"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 rand = "0.8"
+libc = "0.2"
+url = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

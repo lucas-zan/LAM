@@ -280,7 +280,9 @@ p {
   width: 220px;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
   z-index: 1000;
   text-align: left;
 }
@@ -404,7 +406,11 @@ p {
   font-size: 13px;
 }
 .uiBtn--primary {
-  background: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 85%, #000) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--accent) 0%,
+    color-mix(in srgb, var(--accent) 85%, #000) 100%
+  );
   color: #fff;
   border: none;
   box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 20%, transparent);
@@ -412,7 +418,11 @@ p {
 .uiBtn--primary:hover {
   filter: brightness(1.1);
   box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 30%, transparent);
-  background: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 85%, #000) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--accent) 0%,
+    color-mix(in srgb, var(--accent) 85%, #000) 100%
+  );
 }
 .uiBtn--primary:active {
   filter: brightness(0.95);
@@ -647,38 +657,62 @@ p {
 
 /* Custom branded colors for Antigravity Model Tiles */
 .antigravityModelTile--gemini {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--purple) 6%, var(--surface)) 0%, color-mix(in srgb, var(--accent) 4%, var(--surface)) 100%);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--purple) 6%, var(--surface)) 0%,
+    color-mix(in srgb, var(--accent) 4%, var(--surface)) 100%
+  );
   border-color: color-mix(in srgb, var(--purple) 18%, var(--line));
 }
 .antigravityModelTile--gemini strong {
   color: color-mix(in srgb, var(--purple) 85%, var(--text));
 }
 .antigravityModelTile--gemini:hover {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--purple) 10%, var(--surface)) 0%, color-mix(in srgb, var(--accent) 6%, var(--surface)) 100%);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--purple) 10%, var(--surface)) 0%,
+    color-mix(in srgb, var(--accent) 6%, var(--surface)) 100%
+  );
   border-color: color-mix(in srgb, var(--purple) 30%, var(--line));
 }
 
 .antigravityModelTile--claude {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--amber) 6%, var(--surface)) 0%, color-mix(in srgb, var(--amber) 2%, var(--surface)) 100%);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--amber) 6%, var(--surface)) 0%,
+    color-mix(in srgb, var(--amber) 2%, var(--surface)) 100%
+  );
   border-color: color-mix(in srgb, var(--amber) 18%, var(--line));
 }
 .antigravityModelTile--claude strong {
   color: color-mix(in srgb, var(--amber) 85%, var(--text));
 }
 .antigravityModelTile--claude:hover {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--amber) 10%, var(--surface)) 0%, color-mix(in srgb, var(--amber) 4%, var(--surface)) 100%);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--amber) 10%, var(--surface)) 0%,
+    color-mix(in srgb, var(--amber) 4%, var(--surface)) 100%
+  );
   border-color: color-mix(in srgb, var(--amber) 30%, var(--line));
 }
 
 .antigravityModelTile--gpt {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--green) 6%, var(--surface)) 0%, color-mix(in srgb, var(--green) 2%, var(--surface)) 100%);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--green) 6%, var(--surface)) 0%,
+    color-mix(in srgb, var(--green) 2%, var(--surface)) 100%
+  );
   border-color: color-mix(in srgb, var(--green) 18%, var(--line));
 }
 .antigravityModelTile--gpt strong {
   color: color-mix(in srgb, var(--green) 85%, var(--text));
 }
 .antigravityModelTile--gpt:hover {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--green) 10%, var(--surface)) 0%, color-mix(in srgb, var(--green) 4%, var(--surface)) 100%);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--green) 10%, var(--surface)) 0%,
+    color-mix(in srgb, var(--green) 4%, var(--surface)) 100%
+  );
   border-color: color-mix(in srgb, var(--green) 30%, var(--line));
 }
 .activeSessionBanner {
@@ -4770,7 +4804,9 @@ pre {
   font-size: 13px;
   outline: 0;
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .settingsFieldLabel select:hover {

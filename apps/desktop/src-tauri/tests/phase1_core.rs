@@ -1870,7 +1870,6 @@ fn provider_creation_rejects_reserved_ids() {
     assert_eq!(err.message, "openai");
 }
 
-
 #[test]
 fn attach_provider_writes_reference_and_backs_up_config_without_secret() {
     let home = temp_home("attach-provider");

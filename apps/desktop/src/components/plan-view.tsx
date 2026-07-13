@@ -1,17 +1,17 @@
-import type { ReactNode } from "react";
-import type { OperationPlan, SyncPlan } from "../lib/types";
+import type { ReactNode } from 'react';
+import type { OperationPlan, SyncPlan } from '../lib/types';
 
 function basename(path: string | null | undefined) {
-  if (!path) return "—";
+  if (!path) return '—';
   const parts = path.split(/[/\\]/);
   return parts[parts.length - 1] || path;
 }
 
 function SyncPlanGrouped({ plan }: { plan: SyncPlan }) {
-  const backup = plan.operations.filter((op) => op.kind === "backup_dir");
-  const copy = plan.operations.filter((op) => op.kind === "copy_file");
-  const skip = plan.operations.filter((op) => op.kind === "skip_file");
-  const sidecar = plan.operations.filter((op) => op.kind === "copy_history_sidecar");
+  const backup = plan.operations.filter((op) => op.kind === 'backup_dir');
+  const copy = plan.operations.filter((op) => op.kind === 'copy_file');
+  const skip = plan.operations.filter((op) => op.kind === 'skip_file');
+  const sidecar = plan.operations.filter((op) => op.kind === 'copy_history_sidecar');
   const maxRows = 12;
 
   return (
@@ -45,7 +45,9 @@ function SyncPlanGrouped({ plan }: { plan: SyncPlan }) {
         <PlanSection title="Will backup" tone="safe">
           <ul className="planList mono">
             {backup.map((op, i) => (
-              <li key={i}>{basename(op.from?.toString())} → {basename(op.to?.toString())}</li>
+              <li key={i}>
+                {basename(op.from?.toString())} → {basename(op.to?.toString())}
+              </li>
             ))}
           </ul>
         </PlanSection>
@@ -57,7 +59,9 @@ function SyncPlanGrouped({ plan }: { plan: SyncPlan }) {
             {copy.slice(0, maxRows).map((op, i) => (
               <li key={i}>{op.rel ?? basename(op.from?.toString())}</li>
             ))}
-            {copy.length > maxRows ? <li className="planMore">…and {copy.length - maxRows} more session files</li> : null}
+            {copy.length > maxRows ? (
+              <li className="planMore">…and {copy.length - maxRows} more session files</li>
+            ) : null}
           </ul>
         </PlanSection>
       ) : null}
@@ -68,7 +72,9 @@ function SyncPlanGrouped({ plan }: { plan: SyncPlan }) {
             {skip.slice(0, maxRows).map((op, i) => (
               <li key={i}>{op.rel ?? basename(op.from?.toString())}</li>
             ))}
-            {skip.length > maxRows ? <li className="planMore">…and {skip.length - maxRows} more</li> : null}
+            {skip.length > maxRows ? (
+              <li className="planMore">…and {skip.length - maxRows} more</li>
+            ) : null}
           </ul>
         </PlanSection>
       ) : null}
@@ -117,11 +123,11 @@ function PlanSection({
 }: {
   title: string;
   count?: number;
-  tone?: "safe" | "warn" | "danger";
+  tone?: 'safe' | 'warn' | 'danger';
   children: ReactNode;
 }) {
   return (
-    <section className={`planSection ${tone ? `planSection--${tone}` : ""}`}>
+    <section className={`planSection ${tone ? `planSection--${tone}` : ''}`}>
       <div className="planSectionHead">
         <h4>{title}</h4>
         {count !== undefined ? <span className="planCount">{count}</span> : null}
@@ -135,12 +141,14 @@ export function PlanView({ plan }: { plan: OperationPlan | SyncPlan | null }) {
   if (!plan) {
     return (
       <div className="planEmpty">
-        <p>Run <strong>Dry Run</strong> to preview operations before writing any files.</p>
+        <p>
+          Run <strong>Dry Run</strong> to preview operations before writing any files.
+        </p>
       </div>
     );
   }
 
-  if ("blockedFiles" in plan) {
+  if ('blockedFiles' in plan) {
     return <SyncPlanGrouped plan={plan} />;
   }
 

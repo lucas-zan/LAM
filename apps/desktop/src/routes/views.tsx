@@ -141,8 +141,12 @@ export function AntigravityModels({
               <div className="accountQuota">
                 {[...group.buckets]
                   .sort((a, b) => {
-                    const aIs5h = a.displayName.toLowerCase().includes('five') || a.displayName.toLowerCase().includes('5h');
-                    const bIs5h = b.displayName.toLowerCase().includes('five') || b.displayName.toLowerCase().includes('5h');
+                    const aIs5h =
+                      a.displayName.toLowerCase().includes('five') ||
+                      a.displayName.toLowerCase().includes('5h');
+                    const bIs5h =
+                      b.displayName.toLowerCase().includes('five') ||
+                      b.displayName.toLowerCase().includes('5h');
                     if (aIs5h && !bIs5h) return -1;
                     if (!aIs5h && bIs5h) return 1;
                     return 0;
@@ -164,7 +168,10 @@ export function AntigravityModels({
                   </div>
                   <div className="antigravityModelGrid" aria-label={`${group.displayName} models`}>
                     {models.map((model) => (
-                      <div className={`antigravityModelTile ${getModelTileClass(model.label)}`} key={model.label}>
+                      <div
+                        className={`antigravityModelTile ${getModelTileClass(model.label)}`}
+                        key={model.label}
+                      >
                         <strong>{model.label}</strong>
                         <span>Shares group limits</span>
                       </div>
@@ -365,11 +372,11 @@ export function Overview({
         <Accounts
           accounts={accounts}
           quotas={quotas}
-            select={select}
-            openSync={openSync}
-            rename={rename}
-            deleteAccount={deleteAccount}
-            login={login}
+          select={select}
+          openSync={openSync}
+          rename={rename}
+          deleteAccount={deleteAccount}
+          login={login}
           switchAccount={switchAccount}
           exportCpa={exportCpa}
           openHandoff={openHandoff}
@@ -555,11 +562,9 @@ export function Accounts({
           const modelLabel = account.model ?? 'unknown';
           const hasProvider = account.providerId && account.providerId !== 'unknown';
           const providerPart = hasProvider ? `Provider: ${account.providerId}` : '';
-          const metaText = [
-            `${account.sessionCount} sessions`,
-            providerPart,
-            modelLabel,
-          ].filter(Boolean).join(' · ');
+          const metaText = [`${account.sessionCount} sessions`, providerPart, modelLabel]
+            .filter(Boolean)
+            .join(' · ');
           const isActiveAccount =
             authMode === 'pat'
               ? account.isActiveAuth === true
@@ -770,10 +775,7 @@ export function Accounts({
               <p className="cardPath mono" title={account.codexHome}>
                 {shortenPath(account.codexHome)}
               </p>
-              <p
-                className="cardMeta"
-                title={metaText}
-              >
+              <p className="cardMeta" title={metaText}>
                 {metaText}
               </p>
               <AccountNotePanel account={account} onSave={onSaveAccountNote} />
@@ -811,7 +813,7 @@ export function Accounts({
                         <IconPlay size={13} />
                         Relay Latest
                       </UIButton>
-                       <UIButton
+                      <UIButton
                         size="sm"
                         variant="default"
                         className="accountActionBtn accountActionBtn--secondary"
@@ -845,7 +847,7 @@ export function Accounts({
                 ) : (
                   // PAT mode
                   <>
-                    {(isActiveAccount || account.id === 'main') ? (
+                    {isActiveAccount ? (
                       <UIButton
                         size="sm"
                         variant="primary"
@@ -892,7 +894,11 @@ export function Accounts({
                       size="sm"
                       variant="default"
                       className="accountActionBtn accountActionBtn--secondary"
-                      title={account.hasPersonalAccessToken ? 'Update session auth JSON' : 'Login to this account'}
+                      title={
+                        account.hasPersonalAccessToken
+                          ? 'Update session auth JSON'
+                          : 'Login to this account'
+                      }
                       onClick={(e) => {
                         e.stopPropagation();
                         login(account);
@@ -1006,12 +1012,8 @@ function AccountNotePanel({
       <div className="accountNoteSummaryContent">
         {hasNotes ? (
           <>
-            {account.renewalDate && (
-              <strong>Renews {account.renewalDate}</strong>
-            )}
-            {account.note && (
-              <span>{account.note}</span>
-            )}
+            {account.renewalDate && <strong>Renews {account.renewalDate}</strong>}
+            {account.note && <span>{account.note}</span>}
           </>
         ) : (
           <span className="accountNotePlaceholder">+ Add renewal date or note</span>
@@ -1347,7 +1349,9 @@ export function Settings({
   resetUsageStatistics: () => void;
 }) {
   const [rateCard, setRateCard] = useState<UsageRateCardEntry[]>([]);
-  const [activeTab, setActiveTab] = useState<'general' | 'advanced' | 'rate-card' | 'system'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'advanced' | 'rate-card' | 'system'>(
+    'general',
+  );
   const [rateCardSearch, setRateCardSearch] = useState('');
   const [copiedHomeRoot, setCopiedHomeRoot] = useState(false);
 
@@ -1377,8 +1381,9 @@ export function Settings({
   const filteredRateCard = useMemo(() => {
     if (!rateCardSearch.trim()) return rateCard;
     const q = rateCardSearch.toLowerCase();
-    return rateCard.filter((entry) =>
-      entry.model.toLowerCase().includes(q) || entry.pricingModel.toLowerCase().includes(q)
+    return rateCard.filter(
+      (entry) =>
+        entry.model.toLowerCase().includes(q) || entry.pricingModel.toLowerCase().includes(q),
     );
   }, [rateCard, rateCardSearch]);
 
@@ -1429,7 +1434,9 @@ export function Settings({
           <div className="settingsSidebarFooter">
             <div className="settingsSidebarFooterRow">
               <span className="settingsSidebarFooterLabel">Status</span>
-              <span className={`settingsSidebarFooterValue ${health?.ok ? 'status--ok' : 'status--error'}`}>
+              <span
+                className={`settingsSidebarFooterValue ${health?.ok ? 'status--ok' : 'status--error'}`}
+              >
                 <span className="statusDot" />
                 {health?.ok ? 'Connected' : 'Disconnected'}
               </span>
@@ -1472,8 +1479,12 @@ export function Settings({
               <div className="settingsGroupCard">
                 <div className="settingsRowLayout">
                   <div className="settingsRowInfo">
-                    <label htmlFor="modeAvailabilitySelect" className="settingsRowTitle">Mode availability</label>
-                    <p className="settingsRowDesc">Controls which account mode information and titlebar controls are shown.</p>
+                    <label htmlFor="modeAvailabilitySelect" className="settingsRowTitle">
+                      Mode availability
+                    </label>
+                    <p className="settingsRowDesc">
+                      Controls which account mode information and titlebar controls are shown.
+                    </p>
                   </div>
                   <div className="settingsRowControl">
                     <select
@@ -1492,8 +1503,12 @@ export function Settings({
 
                 <div className="settingsRowLayout">
                   <div className="settingsRowInfo">
-                    <label htmlFor="terminalTargetSelect" className="settingsRowTitle">Handoff terminal</label>
-                    <p className="settingsRowDesc">Terminal app used by profile relay, resume, and login commands.</p>
+                    <label htmlFor="terminalTargetSelect" className="settingsRowTitle">
+                      Handoff terminal
+                    </label>
+                    <p className="settingsRowDesc">
+                      Terminal app used by profile relay, resume, and login commands.
+                    </p>
                   </div>
                   <div className="settingsRowControl">
                     <select
@@ -1503,7 +1518,14 @@ export function Settings({
                     >
                       {(installedTerminalTargets.length
                         ? installedTerminalTargets
-                        : [{ id: 'terminal', displayName: 'Terminal.app', kind: 'terminal', installed: true }]
+                        : [
+                            {
+                              id: 'terminal',
+                              displayName: 'Terminal.app',
+                              kind: 'terminal',
+                              installed: true,
+                            },
+                          ]
                       ).map((target) => (
                         <option key={target.id} value={target.id}>
                           {target.displayName}
@@ -1513,8 +1535,6 @@ export function Settings({
                   </div>
                 </div>
               </div>
-
-
             </div>
           )}
 
@@ -1530,14 +1550,21 @@ export function Settings({
               <div className="settingsGroupCard">
                 <div className="settingsRowLayout">
                   <div className="settingsRowInfo">
-                    <label htmlFor="divergedStrategySelect" className="settingsRowTitle">Diverged session strategy</label>
-                    <p className="settingsRowDesc">Strategy used when both local and remote accounts continued the same session differently.</p>
+                    <label htmlFor="divergedStrategySelect" className="settingsRowTitle">
+                      Diverged session strategy
+                    </label>
+                    <p className="settingsRowDesc">
+                      Strategy used when both local and remote accounts continued the same session
+                      differently.
+                    </p>
                   </div>
                   <div className="settingsRowControl">
                     <select
                       id="divergedStrategySelect"
                       value={divergedStrategy}
-                      onChange={(event) => setDivergedStrategy(event.target.value as DivergedSessionStrategy)}
+                      onChange={(event) =>
+                        setDivergedStrategy(event.target.value as DivergedSessionStrategy)
+                      }
                     >
                       <option value="summarize_fork_with_target_account">
                         Summarize fork with target account
@@ -1567,7 +1594,9 @@ export function Settings({
                 <div className="settingsRowLayout">
                   <div className="settingsRowInfo">
                     <span className="settingsRowTitle">Reset usage statistics history</span>
-                    <p className="settingsRowDesc">Clear all local estimates and cached events from SQLite databases.</p>
+                    <p className="settingsRowDesc">
+                      Clear all local estimates and cached events from SQLite databases.
+                    </p>
                   </div>
                   <div className="settingsRowControl">
                     <UIButton variant="danger" size="sm" onClick={resetUsageStatistics}>
@@ -1611,7 +1640,9 @@ export function Settings({
                   <tbody>
                     {filteredRateCard.map((entry) => (
                       <tr key={`${entry.model}-${entry.contextWindow}`}>
-                        <td><strong>{entry.model}</strong></td>
+                        <td>
+                          <strong>{entry.model}</strong>
+                        </td>
                         <td>{entry.contextWindow}</td>
                         <td>{formatCost(entry.inputPerMillion)}</td>
                         <td>{formatCost(entry.cachedInputPerMillion)}</td>
@@ -1624,7 +1655,10 @@ export function Settings({
                     ))}
                     {filteredRateCard.length === 0 ? (
                       <tr>
-                        <td colSpan={6} style={{ textAlign: 'center', padding: '36px 0', color: 'var(--muted)' }}>
+                        <td
+                          colSpan={6}
+                          style={{ textAlign: 'center', padding: '36px 0', color: 'var(--muted)' }}
+                        >
                           No matching rate card entries found.
                         </td>
                       </tr>
@@ -1647,8 +1681,13 @@ export function Settings({
               <div className="settingsGroupCard">
                 <div className="settingsRowLayout">
                   <div className="settingsRowInfo">
-                    <label htmlFor="hideDockIconSelect" className="settingsRowTitle">Dock icon behavior</label>
-                    <p className="settingsRowDesc">Hide Dock icon on macOS while maintaining the status bar menu tray (Accessory mode).</p>
+                    <label htmlFor="hideDockIconSelect" className="settingsRowTitle">
+                      Dock icon behavior
+                    </label>
+                    <p className="settingsRowDesc">
+                      Hide Dock icon on macOS while maintaining the status bar menu tray (Accessory
+                      mode).
+                    </p>
                   </div>
                   <div className="settingsRowControl">
                     <select

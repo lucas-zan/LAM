@@ -1,0 +1,12 @@
+[
+  {
+    "id": "legacy-responses-service",
+    "name": "Example Responses Service",
+    "baseUrl": "https://responses.example.test/v1",
+    "wireApi": "responses",
+    "defaultModel": "example-response-model",
+    "envKey": "EXAMPLE_RESPONSES_API_KEY",
+    "secretStorage": "env",
+    "health": "untested"
+  }
+]

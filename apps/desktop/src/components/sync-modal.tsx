@@ -1,23 +1,27 @@
-import type { CodexAccount, OperationPlan, SyncPlan, SyncRequest, SyncResult } from "../lib/types";
-import { PlanView } from "./plan-view";
-import { UIButton } from "./ui-button";
+import type { CodexAccount, OperationPlan, SyncPlan, SyncRequest, SyncResult } from '../lib/types';
+import { PlanView } from './plan-view';
+import { UIButton } from './ui-button';
 
 function accountLine(account: CodexAccount | undefined) {
-  if (!account) return "—";
-  const provider = account.providerId ?? "unknown";
-  const kind = account.isRelay ? "relay" : "profile";
+  if (!account) return '—';
+  const provider = account.providerId ?? 'unknown';
+  const kind = account.isRelay ? 'relay' : 'profile';
   return `${account.codexHome} · ${provider} · ${kind}`;
 }
 
-function mismatchNotice(from: CodexAccount | undefined, to: CodexAccount | undefined, planWarnings: string[]) {
-  const fromPlan = planWarnings.find((w) => w.toLowerCase().includes("provider mismatch"));
+function mismatchNotice(
+  from: CodexAccount | undefined,
+  to: CodexAccount | undefined,
+  planWarnings: string[],
+) {
+  const fromPlan = planWarnings.find((w) => w.toLowerCase().includes('provider mismatch'));
   if (fromPlan) return fromPlan;
   if (!from || !to) return null;
   if (from.providerId && to.providerId && from.providerId !== to.providerId) {
     return `Provider mismatch: source uses ${from.providerId}, target uses ${to.providerId}. Resume can continue transcript context, but runtime behavior may differ.`;
   }
   if (!from.providerId || !to.providerId) {
-    return "Provider mismatch check is incomplete because one side has unknown provider.";
+    return 'Provider mismatch check is incomplete because one side has unknown provider.';
   }
   return null;
 }
@@ -35,7 +39,7 @@ export function SyncModal(props: {
   const { accounts, syncReq, setSyncReq, plan, syncResult, onDryRun, onExecute, onClose } = props;
   const from = accounts.find((a) => a.id === syncReq.fromProfileId);
   const to = accounts.find((a) => a.id === syncReq.toProfileId);
-  const warnings = plan && "warnings" in plan ? plan.warnings : [];
+  const warnings = plan && 'warnings' in plan ? plan.warnings : [];
   const mismatch = mismatchNotice(from, to, warnings);
   const canExecute = Boolean(plan);
 
@@ -66,7 +70,11 @@ export function SyncModal(props: {
       </div>
 
       <label className="syncOption">
-        <input type="checkbox" checked={syncReq.syncSessions} onChange={(e) => patchReq({ syncSessions: e.target.checked })} />
+        <input
+          type="checkbox"
+          checked={syncReq.syncSessions}
+          onChange={(e) => patchReq({ syncSessions: e.target.checked })}
+        />
         <span>
           <strong>Sync sessions/ for resume </strong>
           <span>Mirrors session transcripts only. Required for codex resume.</span>
@@ -93,14 +101,18 @@ export function SyncModal(props: {
         />
         <span>
           <strong>Sidecar backup history only </strong>
-          <span>Optional history.from-&lt;source&gt;.jsonl. Target history.jsonl is never merged.</span>
+          <span>
+            Optional history.from-&lt;source&gt;.jsonl. Target history.jsonl is never merged.
+          </span>
         </span>
       </label>
 
       {mismatch ? <div className="notice warn">{mismatch}</div> : null}
 
       {!to?.isRelay && to ? (
-        <div className="notice warn">Target is a primary profile; a relay workspace is recommended for session relay.</div>
+        <div className="notice warn">
+          Target is a primary profile; a relay workspace is recommended for session relay.
+        </div>
       ) : null}
 
       <div className="previewBox">
@@ -122,8 +134,8 @@ export function SyncModal(props: {
 
       {syncResult ? (
         <div className="result">
-          Copied <strong>{syncResult.copied}</strong>, skipped <strong>{syncResult.skipped}</strong>.
-          <div className="mono manifestLine">Manifest: {syncResult.manifestPath}</div>
+          Copied <strong>{syncResult.copied}</strong>, skipped <strong>{syncResult.skipped}</strong>
+          .<div className="mono manifestLine">Manifest: {syncResult.manifestPath}</div>
         </div>
       ) : (
         <p className="syncHint">Dry-run first. Execute stays disabled until a plan is generated.</p>
@@ -165,7 +177,7 @@ function RouteBox(props: {
         {props.accounts.map((account) => (
           <option key={account.id} value={account.id}>
             {account.displayName}
-            {account.isRelay ? " (relay)" : ""}
+            {account.isRelay ? ' (relay)' : ''}
           </option>
         ))}
       </select>

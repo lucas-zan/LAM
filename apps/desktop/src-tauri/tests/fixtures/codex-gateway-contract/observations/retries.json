@@ -1,0 +1,15 @@
+{
+  "malformedSse": {
+    "outcome": "codex-error",
+    "requestAttempts": 6
+  },
+  "status429": {
+    "outcome": "codex-error",
+    "requestAttempts": 1,
+    "retryAfter": "0"
+  },
+  "status500": {
+    "outcome": "codex-error",
+    "requestAttempts": 30
+  }
+}

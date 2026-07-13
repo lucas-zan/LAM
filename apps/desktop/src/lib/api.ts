@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from '@tauri-apps/api/core';
 import type {
   CodexAccount,
   CodexSession,
@@ -50,126 +50,132 @@ import type {
   UsageSummary,
   UsageSummaryRequest,
   UsageThreadSummary,
-} from "./types";
+} from './types';
 
-export const inTauri = () => "__TAURI_INTERNALS__" in window;
+export const inTauri = () => '__TAURI_INTERNALS__' in window;
 
 export async function healthCheck(): Promise<HealthCheck> {
   if (!inTauri()) {
-    return { ok: false, version: "browser-preview", homeRoot: "not connected" };
+    return { ok: false, version: 'browser-preview', homeRoot: 'not connected' };
   }
-  return invoke<HealthCheck>("health_check");
+  return invoke<HealthCheck>('health_check');
 }
 
 export async function listAccounts(): Promise<CodexAccount[]> {
   if (!inTauri()) return [];
-  return invoke<CodexAccount[]>("list_accounts");
+  return invoke<CodexAccount[]>('list_accounts');
 }
 
 export async function listCachedAccounts(): Promise<CodexAccount[]> {
   if (!inTauri()) return [];
-  return invoke<CodexAccount[]>("list_cached_accounts");
+  return invoke<CodexAccount[]>('list_cached_accounts');
 }
 
 export async function listSessions(accountId: string): Promise<CodexSession[]> {
   if (!inTauri()) return [];
-  return invoke<CodexSession[]>("list_sessions", { accountId });
+  return invoke<CodexSession[]>('list_sessions', { accountId });
 }
 
 export async function planCreateAccount(req: CreateAccountRequest): Promise<OperationPlan> {
-  return invoke<OperationPlan>("plan_create_account", { req });
+  return invoke<OperationPlan>('plan_create_account', { req });
 }
 
 export async function executeCreateAccount(req: CreateAccountRequest): Promise<CreateResult> {
-  return invoke<CreateResult>("execute_create_account", { req });
+  return invoke<CreateResult>('execute_create_account', { req });
 }
 
 export async function planRenameAccount(req: RenameAccountRequest): Promise<OperationPlan> {
-  return invoke<OperationPlan>("plan_rename_account", { req });
+  return invoke<OperationPlan>('plan_rename_account', { req });
 }
 
-export async function executeRenameAccount(req: RenameAccountRequest): Promise<RenameAccountResult> {
-  return invoke<RenameAccountResult>("execute_rename_account", { req });
+export async function executeRenameAccount(
+  req: RenameAccountRequest,
+): Promise<RenameAccountResult> {
+  return invoke<RenameAccountResult>('execute_rename_account', { req });
 }
 
 export async function deleteAccount(req: DeleteAccountRequest): Promise<DeleteAccountResult> {
-  return invoke<DeleteAccountResult>("delete_account", { req });
+  return invoke<DeleteAccountResult>('delete_account', { req });
 }
 
 export async function updateAccountNote(req: AccountNoteUpdate): Promise<CodexAccount> {
-  return invoke<CodexAccount>("update_account_note", { req });
+  return invoke<CodexAccount>('update_account_note', { req });
 }
 
 export async function planCreateRelay(req: CreateRelayRequest): Promise<OperationPlan> {
-  return invoke<OperationPlan>("plan_create_relay", { req });
+  return invoke<OperationPlan>('plan_create_relay', { req });
 }
 
 export async function executeCreateRelay(req: CreateRelayRequest): Promise<CreateResult> {
-  return invoke<CreateResult>("execute_create_relay", { req });
+  return invoke<CreateResult>('execute_create_relay', { req });
 }
 
 export async function buildSyncPlan(req: SyncRequest): Promise<SyncPlan> {
-  return invoke<SyncPlan>("build_sync_plan", { req });
+  return invoke<SyncPlan>('build_sync_plan', { req });
 }
 
 export async function executeSync(req: SyncRequest): Promise<SyncResult> {
-  return invoke<SyncResult>("execute_sync", { req });
+  return invoke<SyncResult>('execute_sync', { req });
 }
 
 export async function buildResumeCommand(req: ResumeCommandRequest): Promise<ResumeCommand> {
-  return invoke<ResumeCommand>("build_resume_command", { req });
+  return invoke<ResumeCommand>('build_resume_command', { req });
 }
 
 export async function openTerminalWithResume(req: ResumeCommandRequest): Promise<void> {
-  return invoke<void>("open_terminal_with_resume", { req });
+  return invoke<void>('open_terminal_with_resume', { req });
 }
 
 export async function openTerminalWithCommand(command: string): Promise<void> {
-  return invoke<void>("open_terminal_with_command", { command });
+  return invoke<void>('open_terminal_with_command', { command });
 }
 
 export async function relayResumeSession(req: RelayResumeRequest): Promise<RelayResumeResult> {
-  return invoke<RelayResumeResult>("relay_resume_session", { req });
+  return invoke<RelayResumeResult>('relay_resume_session', { req });
 }
 
 export async function buildLoginCommand(profileId: string): Promise<ResumeCommand> {
-  return invoke<ResumeCommand>("build_login_command", { profileId });
+  return invoke<ResumeCommand>('build_login_command', { profileId });
 }
 
 export async function openTerminalForLogin(profileId: string): Promise<void> {
-  return invoke<void>("open_terminal_for_login", { profileId });
+  return invoke<void>('open_terminal_for_login', { profileId });
 }
 
 export async function listTerminalTargets(): Promise<TerminalTarget[]> {
-  if (!inTauri()) return [{ id: 'terminal', displayName: 'Terminal.app', kind: 'terminal', installed: true }];
-  return invoke<TerminalTarget[]>("list_terminal_targets");
+  if (!inTauri())
+    return [{ id: 'terminal', displayName: 'Terminal.app', kind: 'terminal', installed: true }];
+  return invoke<TerminalTarget[]>('list_terminal_targets');
 }
 
 export async function getSelectedTerminalTarget(): Promise<string> {
   if (!inTauri()) return 'terminal';
-  return invoke<string>("get_selected_terminal_target");
+  return invoke<string>('get_selected_terminal_target');
 }
 
 export async function setSelectedTerminalTarget(targetId: string): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("set_selected_terminal_target", { targetId });
+  return invoke<void>('set_selected_terminal_target', { targetId });
 }
 
-export async function getProfileQuota(profileId: string, forceRefresh = false): Promise<UsageQuotaSnapshot> {
-  return invoke<UsageQuotaSnapshot>("get_profile_quota", { profileId, forceRefresh });
+export async function getProfileQuota(
+  profileId: string,
+  forceRefresh = false,
+): Promise<UsageQuotaSnapshot> {
+  return invoke<UsageQuotaSnapshot>('get_profile_quota', { profileId, forceRefresh });
 }
 
 export async function refreshAllQuotas(profileIds?: string[]): Promise<QuotaRefreshResult> {
-  return invoke<QuotaRefreshResult>("refresh_all_quotas", { profileIds });
+  return invoke<QuotaRefreshResult>('refresh_all_quotas', { profileIds });
 }
 
 export async function resetProfileQuota(profileId: string): Promise<ResetQuotaResult> {
-  return invoke<ResetQuotaResult>("reset_profile_quota", { profileId });
+  return invoke<ResetQuotaResult>('reset_profile_quota', { profileId });
 }
 
 export async function listCachedQuotas(profileIds?: string[]): Promise<UsageQuotaSnapshot[]> {
   if (!inTauri()) return [];
-  return invoke<UsageQuotaSnapshot[]>("list_cached_quotas", { profileIds });
+  return invoke<UsageQuotaSnapshot[]>('list_cached_quotas', { profileIds });
 }
 
 const emptyUsageSummary = (): UsageSummary => ({
@@ -247,32 +253,36 @@ export async function refreshUsageIndex(includeArchived = false): Promise<UsageR
       parserDiagnostics: {},
     };
   }
-  return invoke<UsageRefreshResult>("refresh_usage_index", { includeArchived });
+  return invoke<UsageRefreshResult>('refresh_usage_index', { includeArchived });
 }
 
-export async function tryRefreshUsageIndex(includeArchived = false): Promise<UsageRefreshResult | null> {
+export async function tryRefreshUsageIndex(
+  includeArchived = false,
+): Promise<UsageRefreshResult | null> {
   if (!inTauri()) return null;
-  return invoke<UsageRefreshResult | null>("try_refresh_usage_index", { includeArchived });
+  return invoke<UsageRefreshResult | null>('try_refresh_usage_index', { includeArchived });
 }
 
 export async function refreshAccountUsageSnapshot(): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("refresh_account_usage_snapshot");
+  return invoke<void>('refresh_account_usage_snapshot');
 }
 
 export async function getUsageSummary(req: UsageSummaryRequest): Promise<UsageSummary> {
   if (!inTauri()) return emptyUsageSummary();
-  return invoke<UsageSummary>("get_usage_summary", { req });
+  return invoke<UsageSummary>('get_usage_summary', { req });
 }
 
 export async function getUsageDashboard(req: UsageDashboardRequest): Promise<UsageDashboard> {
   if (!inTauri()) return emptyUsageDashboard();
-  return invoke<UsageDashboard>("get_usage_dashboard", { req });
+  return invoke<UsageDashboard>('get_usage_dashboard', { req });
 }
 
-export async function getUsageDashboardResponse(req: UsageDashboardRequest): Promise<UsageDashboardResponse> {
+export async function getUsageDashboardResponse(
+  req: UsageDashboardRequest,
+): Promise<UsageDashboardResponse> {
   if (!inTauri()) return emptyUsageDashboardResponse();
-  return invoke<UsageDashboardResponse>("get_usage_dashboard_response", { req });
+  return invoke<UsageDashboardResponse>('get_usage_dashboard_response', { req });
 }
 
 export async function getUsageScopes(req: UsageDashboardRequest): Promise<UsageScopesResponse> {
@@ -280,17 +290,17 @@ export async function getUsageScopes(req: UsageDashboardRequest): Promise<UsageS
     const response = emptyUsageDashboardResponse();
     return { scopes: response.scopes, activeScopeId: response.activeScopeId };
   }
-  return invoke<UsageScopesResponse>("get_usage_scopes", { req });
+  return invoke<UsageScopesResponse>('get_usage_scopes', { req });
 }
 
 export async function getUsageOverview(req: UsageDashboardRequest): Promise<UsageDashboard> {
   if (!inTauri()) return emptyUsageDashboard();
-  return invoke<UsageDashboard>("get_usage_overview", { req });
+  return invoke<UsageDashboard>('get_usage_overview', { req });
 }
 
 export async function getUsageActivity(req: UsageDashboardRequest): Promise<UsageActivityBucket[]> {
   if (!inTauri()) return [];
-  return invoke<UsageActivityBucket[]>("get_usage_activity", { req });
+  return invoke<UsageActivityBucket[]>('get_usage_activity', { req });
 }
 
 export async function getUsageInsights(req: UsageDashboardRequest): Promise<UsageInsights> {
@@ -304,51 +314,51 @@ export async function getUsageInsights(req: UsageDashboardRequest): Promise<Usag
       totalThreads: 0,
     };
   }
-  return invoke<UsageInsights>("get_usage_insights", { req });
+  return invoke<UsageInsights>('get_usage_insights', { req });
 }
 
 export async function getUsageCalls(
   req: UsageDashboardRequest,
 ): Promise<UsagePagedResponse<UsageCallRow>> {
   if (!inTauri()) return { rows: [], total: 0, limit: req.limit ?? 0, offset: req.offset ?? 0 };
-  return invoke<UsagePagedResponse<UsageCallRow>>("get_usage_calls", { req });
+  return invoke<UsagePagedResponse<UsageCallRow>>('get_usage_calls', { req });
 }
 
 export async function getUsageThreads(
   req: UsageDashboardRequest,
 ): Promise<UsagePagedResponse<UsageThreadSummary>> {
   if (!inTauri()) return { rows: [], total: 0, limit: req.limit ?? 0, offset: req.offset ?? 0 };
-  return invoke<UsagePagedResponse<UsageThreadSummary>>("get_usage_threads", { req });
+  return invoke<UsagePagedResponse<UsageThreadSummary>>('get_usage_threads', { req });
 }
 
 export async function getUsageRateCard(): Promise<UsageRateCardEntry[]> {
   if (!inTauri()) return [];
-  return invoke<UsageRateCardEntry[]>("get_usage_rate_card");
+  return invoke<UsageRateCardEntry[]>('get_usage_rate_card');
 }
 
 export async function getUsageDiagnostics(req: UsageDashboardRequest): Promise<UsageDiagnostics> {
   if (!inTauri()) return emptyUsageSummary().diagnostics;
-  return invoke<UsageDiagnostics>("get_usage_diagnostics", { req });
+  return invoke<UsageDiagnostics>('get_usage_diagnostics', { req });
 }
 
 export async function resetUsageIndex(): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("reset_usage_index");
+  return invoke<void>('reset_usage_index');
 }
 
 export async function compactUsageDb(): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("compact_usage_db");
+  return invoke<void>('compact_usage_db');
 }
 
 export async function syncTrayQuota(): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("sync_tray_quota");
+  return invoke<void>('sync_tray_quota');
 }
 
 export async function showUsageStats(): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("show_usage_stats");
+  return invoke<void>('show_usage_stats');
 }
 
 export interface CallRawContents {
@@ -357,127 +367,132 @@ export interface CallRawContents {
   toolOutput: string;
 }
 
-export async function getCallRawContents(sourceFile: string, lineNumber: number): Promise<CallRawContents> {
-  if (!inTauri()) return { request: "", assistant: "", toolOutput: "" };
-  return invoke<CallRawContents>("get_call_raw_contents", { sourceFile, lineNumber });
+export async function getCallRawContents(
+  sourceFile: string,
+  lineNumber: number,
+): Promise<CallRawContents> {
+  if (!inTauri()) return { request: '', assistant: '', toolOutput: '' };
+  return invoke<CallRawContents>('get_call_raw_contents', { sourceFile, lineNumber });
 }
 
 export async function takePendingRoute(): Promise<string | null> {
   if (!inTauri()) return null;
-  return invoke<string | null>("take_pending_route");
+  return invoke<string | null>('take_pending_route');
 }
 
 export async function setQuotaPopoverOpacity(percent: number): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("set_quota_popover_opacity", { percent });
+  return invoke<void>('set_quota_popover_opacity', { percent });
 }
 
 export async function hideQuotaPopover(): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("hide_quota_popover");
+  return invoke<void>('hide_quota_popover');
 }
 
 export async function listProviders(): Promise<ProviderProfile[]> {
   if (!inTauri()) return [];
-  return invoke<ProviderProfile[]>("list_providers");
+  return invoke<ProviderProfile[]>('list_providers');
 }
 
 export async function createProvider(req: CreateProviderRequest): Promise<ProviderProfile> {
-  return invoke<ProviderProfile>("create_provider", { req });
+  return invoke<ProviderProfile>('create_provider', { req });
 }
 
 export async function updateProvider(req: UpdateProviderRequest): Promise<ProviderProfile> {
-  return invoke<ProviderProfile>("update_provider", { req });
+  return invoke<ProviderProfile>('update_provider', { req });
 }
 
 export async function deleteProvider(providerId: string): Promise<boolean> {
-  return invoke<boolean>("delete_provider", { providerId });
+  return invoke<boolean>('delete_provider', { providerId });
 }
 
 export async function testProvider(providerId: string): Promise<ProviderProfile> {
-  return invoke<ProviderProfile>("test_provider", { providerId });
+  return invoke<ProviderProfile>('test_provider', { providerId });
 }
 
-export async function planAttachProviderToProfile(req: AttachProviderRequest): Promise<OperationPlan> {
-  return invoke<OperationPlan>("plan_attach_provider_to_profile", { req });
+export async function planAttachProviderToProfile(
+  req: AttachProviderRequest,
+): Promise<OperationPlan> {
+  return invoke<OperationPlan>('plan_attach_provider_to_profile', { req });
 }
 
-export async function attachProviderToProfile(req: AttachProviderRequest): Promise<AttachProviderResult> {
-  return invoke<AttachProviderResult>("attach_provider_to_profile", { req });
+export async function attachProviderToProfile(
+  req: AttachProviderRequest,
+): Promise<AttachProviderResult> {
+  return invoke<AttachProviderResult>('attach_provider_to_profile', { req });
 }
 
 export async function getAntigravityQuota(): Promise<AntigravityQuotaResponse> {
   if (!inTauri()) {
-    return { ok: false, models: [], error: "Not in Tauri environment" };
+    return { ok: false, models: [], error: 'Not in Tauri environment' };
   }
-  return invoke<AntigravityQuotaResponse>("get_antigravity_quota");
+  return invoke<AntigravityQuotaResponse>('get_antigravity_quota');
 }
 
 export async function uploadPatCredentials(
   profileId: string,
-  uploaded: UploadedCredentials
+  uploaded: UploadedCredentials,
 ): Promise<void> {
-  return invoke<void>("upload_pat_credentials", { profileId, uploaded });
+  return invoke<void>('upload_pat_credentials', { profileId, uploaded });
 }
 
 export async function getPatMetadata(profileId: string): Promise<AuthMetadata | null> {
-  return invoke<AuthMetadata | null>("get_pat_metadata", { profileId });
+  return invoke<AuthMetadata | null>('get_pat_metadata', { profileId });
 }
 
 export async function checkProfileTokenExpiration(
-  profileId: string
+  profileId: string,
 ): Promise<TokenExpirationStatus> {
-  return invoke<TokenExpirationStatus>("check_profile_token_expiration", { profileId });
+  return invoke<TokenExpirationStatus>('check_profile_token_expiration', { profileId });
 }
 
-export async function addPatAccount(
-  req: AddPatAccountRequest
-): Promise<AddPatAccountResult> {
-  return invoke<AddPatAccountResult>("add_pat_account", { req });
+export async function addPatAccount(req: AddPatAccountRequest): Promise<AddPatAccountResult> {
+  return invoke<AddPatAccountResult>('add_pat_account', { req });
 }
 
 export async function addSessionProfileAccount(
-  req: AddSessionProfileAccountRequest
+  req: AddSessionProfileAccountRequest,
 ): Promise<CreateResult> {
-  return invoke<CreateResult>("add_session_profile_account", { req });
+  return invoke<CreateResult>('add_session_profile_account', { req });
 }
 
 export async function switchToPatAccount(accountId: string): Promise<void> {
-  return invoke<void>("switch_to_pat_account", { accountId });
+  return invoke<void>('switch_to_pat_account', { accountId });
 }
 
 export async function exportCpaCredentials(profileId: string): Promise<CpaExport> {
-  return invoke<CpaExport>("export_cpa_credentials", { profileId });
+  return invoke<CpaExport>('export_cpa_credentials', { profileId });
 }
 
 export async function updatePatSessionAuth(
   profileId: string,
-  authJson: Record<string, unknown>
+  authJson: Record<string, unknown>,
 ): Promise<void> {
-  return invoke<void>("update_pat_session_auth", { profileId, authJson });
+  return invoke<void>('update_pat_session_auth', { profileId, authJson });
 }
 
 export async function getAuthMode(): Promise<string> {
-  if (!inTauri()) return "oauth";
-  return invoke<string>("get_auth_mode");
+  if (!inTauri()) return 'oauth';
+  return invoke<string>('get_auth_mode');
 }
 
 export async function setAuthMode(mode: string): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("set_auth_mode", { mode });
+  return invoke<void>('set_auth_mode', { mode });
 }
 
 export async function getHideDockIcon(): Promise<boolean> {
   if (!inTauri()) return false;
-  return invoke<boolean>("get_hide_dock_icon");
+  return invoke<boolean>('get_hide_dock_icon');
 }
 
 export async function setHideDockIcon(hide: boolean): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("set_hide_dock_icon", { hide });
+  return invoke<void>('set_hide_dock_icon', { hide });
 }
 
 export async function restartCodex(): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("restart_codex");
+  return invoke<void>('restart_codex');
 }

@@ -340,11 +340,7 @@ describe('UsagePage', () => {
 
     const table = screen.getByRole('table');
     expect(within(table).getAllByRole('row')).toHaveLength(52);
-    expect(
-      screen.getByText(
-        'Showing 1-50 of 80 matching calls.',
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText('Showing 1-50 of 80 matching calls.')).toBeTruthy();
   });
 
   it('caps expensive threads table rendering and shows a clear note', () => {
@@ -352,11 +348,7 @@ describe('UsagePage', () => {
 
     const table = screen.getByRole('table');
     expect(within(table).getAllByRole('row')).toHaveLength(102);
-    expect(
-      screen.getByText(
-        'Showing 1-100 of 140 threads.',
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText('Showing 1-100 of 140 threads.')).toBeTruthy();
   });
 
   it('keeps all-time activity visible through today when recent days have no buckets', () => {
@@ -425,6 +417,30 @@ describe('UsagePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Weekly' }));
     expect(screen.getByTestId('usage-activity-2026-05-17').getAttribute('data-tooltip')).toBe(
       '287.9M tokens on week of May 17, 2026',
+    );
+  });
+
+  it('resets calls pagination when the query changes', () => {
+    const loadUsageSection = vi.fn();
+    renderUsage({
+      summary: dashboard(80),
+      usageTab: 'calls',
+      loadUsageSection,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(loadUsageSection).toHaveBeenLastCalledWith(
+      'calls',
+      expect.objectContaining({ offset: 50 }),
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('Thread, cwd, model'), {
+      target: { value: 'needle' },
+    });
+
+    expect(loadUsageSection).toHaveBeenLastCalledWith(
+      'calls',
+      expect.objectContaining({ offset: 0, search: 'needle' }),
     );
   });
 

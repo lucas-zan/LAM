@@ -213,13 +213,14 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     } catch (err) {
       useAppStore.getState().setError(formatError(err));
     } finally {
-      if (get().sectionRequestIds[section] !== requestId) return;
-      set((state) => ({
-        sectionLoading: {
-          ...state.sectionLoading,
-          [section]: false,
-        },
-      }));
+      if (get().sectionRequestIds[section] === requestId) {
+        set((state) => ({
+          sectionLoading: {
+            ...state.sectionLoading,
+            [section]: false,
+          },
+        }));
+      }
     }
   },
 

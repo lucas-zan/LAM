@@ -31,7 +31,8 @@ export function formatTimestamp(value: string | null | undefined, fallback = 'Un
 }
 
 export function formatDuration(value: number | null | undefined, fallback = '-'): string {
-  if (value === null || value === undefined || !Number.isFinite(Number(value)) || Number(value) < 0) return fallback;
+  if (value === null || value === undefined || !Number.isFinite(Number(value)) || Number(value) < 0)
+    return fallback;
   const seconds = Math.round(Number(value));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
@@ -54,15 +55,17 @@ export function compareValues(left: unknown, right: unknown): number {
 }
 
 export function sortLabel(key: string): string {
-  return {
-    attention: 'Needs attention',
-    cache: 'Cache',
-    model: 'Model',
-    cached: 'Cached',
-    uncached: 'Uncached',
-    output: 'Output',
-    thread: 'Thread',
-    time: 'Time',
-    total: 'Tokens',
-  }[key] || 'Sort';
+  return (
+    {
+      attention: 'Needs attention',
+      cache: 'Cache',
+      model: 'Model',
+      cached: 'Cached',
+      uncached: 'Uncached',
+      output: 'Output',
+      thread: 'Thread',
+      time: 'Time',
+      total: 'Tokens',
+    }[key] || 'Sort'
+  );
 }

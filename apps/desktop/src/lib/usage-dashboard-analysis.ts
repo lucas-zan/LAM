@@ -1,5 +1,10 @@
 import type { UsageCallRow, UsageThreadSummary } from './types';
-import { cachedInputTokens, outputTokens, threadLabel, uncachedInputTokens } from './usage-dashboard-data';
+import {
+  cachedInputTokens,
+  outputTokens,
+  threadLabel,
+  uncachedInputTokens,
+} from './usage-dashboard-data';
 import { compareValues, textValue } from './usage-dashboard-format';
 
 function clamp(value: number, min: number, max: number): number {
@@ -8,7 +13,8 @@ function clamp(value: number, min: number, max: number): number {
 
 export function rowAttentionScore(row: UsageCallRow): number {
   const tokenScore = clamp(Number(row.totalTokens || 0) / 2500, 0, 36);
-  const lowCacheScore = Number(row.inputTokens || 0) > 0 ? clamp((0.5 - Number(row.cacheRatio || 0)) * 70, 0, 35) : 0;
+  const lowCacheScore =
+    Number(row.inputTokens || 0) > 0 ? clamp((0.5 - Number(row.cacheRatio || 0)) * 70, 0, 35) : 0;
   return tokenScore + lowCacheScore;
 }
 
@@ -38,7 +44,12 @@ function callSortValue(row: UsageCallRow, key: string) {
   return Number(row.totalTokens || 0);
 }
 
-export function compareCalls(a: UsageCallRow, b: UsageCallRow, sortKey = 'time', sortDirection: 'asc' | 'desc' = 'desc'): number {
+export function compareCalls(
+  a: UsageCallRow,
+  b: UsageCallRow,
+  sortKey = 'time',
+  sortDirection: 'asc' | 'desc' = 'desc',
+): number {
   const comparison = compareValues(callSortValue(a, sortKey), callSortValue(b, sortKey));
   const primary = sortDirection === 'asc' ? comparison : -comparison;
   if (primary !== 0) return primary;
@@ -47,11 +58,19 @@ export function compareCalls(a: UsageCallRow, b: UsageCallRow, sortKey = 'time',
   return String(a.recordId || '').localeCompare(String(b.recordId || ''));
 }
 
-export function sortedThreadCalls(calls: UsageCallRow[], sortKey = 'time', sortDirection: 'asc' | 'desc' = 'desc'): UsageCallRow[] {
+export function sortedThreadCalls(
+  calls: UsageCallRow[],
+  sortKey = 'time',
+  sortDirection: 'asc' | 'desc' = 'desc',
+): UsageCallRow[] {
   return calls.slice().sort((a, b) => compareCalls(a, b, sortKey, sortDirection));
 }
 
-export function sortThreads(groups: UsageThreadSummary[], sortKey = 'total', sortDirection: 'asc' | 'desc' = 'desc'): UsageThreadSummary[] {
+export function sortThreads(
+  groups: UsageThreadSummary[],
+  sortKey = 'total',
+  sortDirection: 'asc' | 'desc' = 'desc',
+): UsageThreadSummary[] {
   return groups.slice().sort((a, b) => {
     const values: Record<string, [unknown, unknown]> = {
       attention: [threadAttentionScore(a), threadAttentionScore(b)],

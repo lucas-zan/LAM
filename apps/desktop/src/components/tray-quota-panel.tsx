@@ -37,7 +37,6 @@ import { scheduleTrayPopoverWindowSize } from '../lib/tray-popover-size';
 import type { ThemeMode } from '../lib/theme';
 import { TRAY_POPOVER_OPACITY_PERCENT } from '../lib/tray-popover-prefs';
 import type {
-  AntigravityQuotaBucket,
   CodexAccount,
   CodexSession,
   DivergedSessionStrategy,
@@ -596,14 +595,17 @@ function TrayAntigravityModelList({ quota, isDark }: TrayAntigravityModelListPro
               borderColor: modelTheme.color + '22',
             } as CSSProperties;
 
-            const primaryBucket = group.buckets.find((b) =>
-              b.displayName.toLowerCase().includes('five') || b.displayName.toLowerCase().includes('5h'),
-            ) || group.buckets[0];
-            const secondaryBucket = group.buckets.find((b) =>
-              b.displayName.toLowerCase().includes('weekly'),
-            ) || group.buckets[1];
+            const primaryBucket =
+              group.buckets.find(
+                (b) =>
+                  b.displayName.toLowerCase().includes('five') ||
+                  b.displayName.toLowerCase().includes('5h'),
+              ) || group.buckets[0];
+            const secondaryBucket =
+              group.buckets.find((b) => b.displayName.toLowerCase().includes('weekly')) ||
+              group.buckets[1];
 
-            const getRemainingPercent = (bucket?: typeof group.buckets[0]) => {
+            const getRemainingPercent = (bucket?: (typeof group.buckets)[0]) => {
               if (!bucket) return null;
               const used = quotaBucketUsedPercent(bucket);
               return used === null ? null : Math.max(0, 100 - used);
@@ -637,13 +639,37 @@ function TrayAntigravityModelList({ quota, isDark }: TrayAntigravityModelListPro
                   </div>
                 </div>
                 <TrayQuotaRowContent
-                  primaryLabel={primaryBucket ? (primaryBucket.displayName === 'Five Hour Limit' ? '5h' : primaryBucket.displayName === 'Weekly Limit' ? 'weekly' : primaryBucket.displayName) : 'N/A'}
-                  primarySubLabel={primaryBucket && primaryBucket.resetTime ? `${formatRelativeTime(primaryBucket.resetTime)}` : 'No reset'}
+                  primaryLabel={
+                    primaryBucket
+                      ? primaryBucket.displayName === 'Five Hour Limit'
+                        ? '5h'
+                        : primaryBucket.displayName === 'Weekly Limit'
+                          ? 'weekly'
+                          : primaryBucket.displayName
+                      : 'N/A'
+                  }
+                  primarySubLabel={
+                    primaryBucket && primaryBucket.resetTime
+                      ? `${formatRelativeTime(primaryBucket.resetTime)}`
+                      : 'No reset'
+                  }
                   primaryRemaining={primaryRemaining}
                   primaryTheme={primaryStateTheme}
-                  secondaryLabel={secondaryBucket ? (secondaryBucket.displayName === 'Five Hour Limit' ? '5h' : secondaryBucket.displayName === 'Weekly Limit' ? 'weekly' : secondaryBucket.displayName) : null}
+                  secondaryLabel={
+                    secondaryBucket
+                      ? secondaryBucket.displayName === 'Five Hour Limit'
+                        ? '5h'
+                        : secondaryBucket.displayName === 'Weekly Limit'
+                          ? 'weekly'
+                          : secondaryBucket.displayName
+                      : null
+                  }
                   secondaryRemaining={secondaryRemaining}
-                  secondarySubLabel={secondaryBucket && secondaryBucket.resetTime ? `${formatRelativeTime(secondaryBucket.resetTime)}` : null}
+                  secondarySubLabel={
+                    secondaryBucket && secondaryBucket.resetTime
+                      ? `${formatRelativeTime(secondaryBucket.resetTime)}`
+                      : null
+                  }
                   secondaryTheme={secondaryStateTheme}
                   hiddenOriginalLabels={{
                     primary: primaryBucket?.displayName,
@@ -713,52 +739,13 @@ function TrayAntigravityModelList({ quota, isDark }: TrayAntigravityModelListPro
               secondaryLabel="limit"
               secondaryRemaining={remainingPercent}
               secondarySubLabel={
-                model.resetTime
-                  ? `${formatRelativeTime(model.resetTime)}`
-                  : 'No reset scheduled'
+                model.resetTime ? `${formatRelativeTime(model.resetTime)}` : 'No reset scheduled'
               }
               secondaryTheme={stateTheme}
             />
           </div>
         );
       })}
-    </div>
-  );
-}
-
-function TrayAntigravityBucket({
-  bucket,
-  isDark,
-}: {
-  bucket: AntigravityQuotaBucket;
-  isDark: boolean;
-}) {
-  const usedPercent = quotaBucketUsedPercent(bucket);
-  const remainingPercent = usedPercent === null ? null : Math.max(0, 100 - usedPercent);
-  const stateTheme = getQuotaStateTheme(remainingPercent, isDark);
-
-  return (
-    <div className="trayAntigravityBucket">
-      <div className="trayAccountRowContentRightLabel">
-        <span>{bucket.displayName}</span>
-        <strong style={{ color: stateTheme.color }}>
-          {remainingPercent === null ? 'N/A' : `${remainingPercent}%`}
-        </strong>
-      </div>
-      <div className="trayQuotaTrack">
-        <i
-          style={{
-            width: `${remainingPercent ?? 0}%`,
-            background: stateTheme.color,
-            boxShadow: `0 0 4px ${stateTheme.glow}`,
-          }}
-        />
-      </div>
-      <span className="trayResetSub">
-        {bucket.resetTime
-          ? `${formatRelativeTime(bucket.resetTime)}`
-          : 'No reset scheduled'}
-      </span>
     </div>
   );
 }
@@ -868,7 +855,9 @@ function TrayAccountList({
               const quotaWindows = quotaDisplayWindows(quota);
               const primaryWindow = quotaWindows[0] ?? null;
               const secondaryWindow = quotaWindows[1] ?? null;
-              const monthlyOnly = primaryWindow?.variant === 'monthly' && !secondaryWindow;
+              const monthlyOnly =
+                (primaryWindow?.variant === 'monthly' || primaryWindow?.variant === 'weekly') &&
+                !secondaryWindow;
               const primaryRemaining = quotaRemainingPercent(primaryWindow?.usedPercent);
               const secondaryRemaining = quotaRemainingPercent(secondaryWindow?.usedPercent);
 

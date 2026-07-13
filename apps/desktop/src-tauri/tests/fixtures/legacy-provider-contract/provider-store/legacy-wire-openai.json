@@ -1,0 +1,12 @@
+[
+  {
+    "id": "legacy-chat-service",
+    "name": "Example Chat Service",
+    "baseUrl": "https://chat.example.test/v1",
+    "wireApi": "openai",
+    "defaultModel": "example-chat-model",
+    "envKey": "EXAMPLE_CHAT_API_KEY",
+    "secretStorage": "env",
+    "health": "untested"
+  }
+]
