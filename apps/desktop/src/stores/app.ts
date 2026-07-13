@@ -27,6 +27,7 @@ interface AppState {
   hideDockIcon: boolean;
   terminalTargets: TerminalTarget[];
   terminalTargetId: string;
+  compactButtons: boolean;
 
   setRoute: (route: Route) => void;
   setThemeMode: (mode: ThemeMode) => void;
@@ -39,6 +40,7 @@ interface AppState {
   closeModal: () => void;
   setHideDockIcon: (hide: boolean) => Promise<void>;
   setTerminalTargetId: (targetId: string) => Promise<void>;
+  setCompactButtons: (compact: boolean) => void;
   loadSettings: () => Promise<void>;
 }
 
@@ -58,6 +60,10 @@ export const useAppStore = create<AppState>()(
     hideDockIcon: false,
     terminalTargets: [],
     terminalTargetId: 'terminal',
+    compactButtons: (() => {
+      const saved = localStorage.getItem('lam-compact-buttons');
+      return saved === null ? true : saved === 'true';
+    })(),
 
     setRoute: (route) => set({ route }),
     setThemeMode: (themeMode) => {
@@ -86,6 +92,10 @@ export const useAppStore = create<AppState>()(
       } catch (err) {
         set({ error: err instanceof Error ? err.message : 'Failed to set handoff terminal' });
       }
+    },
+    setCompactButtons: (compact) => {
+      localStorage.setItem('lam-compact-buttons', String(compact));
+      set({ compactButtons: compact });
     },
     loadSettings: async () => {
       try {

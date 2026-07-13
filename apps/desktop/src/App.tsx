@@ -138,6 +138,8 @@ export function App() {
     terminalTargets,
     terminalTargetId,
     setTerminalTargetId,
+    compactButtons,
+    setCompactButtons,
   } = useAppStore();
   const {
     accounts,
@@ -906,6 +908,7 @@ export function App() {
             onRefreshAntigravity={() => void loadAntigravity(true)}
             onSaveAccountNote={saveAccountNote}
             authMode={authMode}
+            compactButtons={compactButtons}
           />
         ) : null}
         {appReady && route === 'sessions' ? (
@@ -972,6 +975,8 @@ export function App() {
             modeAvailability={modeAvailability}
             setModeAvailability={handleSetModeAvailability}
             resetUsageStatistics={resetUsageStatistics}
+            compactButtons={compactButtons}
+            setCompactButtons={setCompactButtons}
           />
         ) : null}
       </section>

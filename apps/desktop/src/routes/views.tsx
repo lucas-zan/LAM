@@ -276,6 +276,7 @@ export function Overview({
   onRefreshAntigravity,
   onSaveAccountNote,
   authMode,
+  compactButtons,
 }: {
   accounts: CodexAccount[];
   quotas: UsageQuotaSnapshot[];
@@ -299,6 +300,7 @@ export function Overview({
   onRefreshAntigravity: () => void;
   onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
   authMode?: 'oauth' | 'pat';
+  compactButtons?: boolean;
 }) {
   const [activeTab, setActiveTab] = useState<'codex' | 'antigravity'>('codex');
 
@@ -389,6 +391,7 @@ export function Overview({
           onSaveAccountNote={onSaveAccountNote}
           variant="overview"
           authMode={authMode}
+          compactButtons={compactButtons}
         />
       ) : (
         <AntigravityModels
@@ -463,6 +466,7 @@ export function Accounts({
   onSaveAccountNote,
   variant = 'default',
   authMode = 'oauth',
+  compactButtons = true,
 }: {
   accounts: CodexAccount[];
   quotas: UsageQuotaSnapshot[];
@@ -483,6 +487,7 @@ export function Accounts({
   onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
   variant?: 'default' | 'overview';
   authMode?: 'oauth' | 'pat';
+  compactButtons?: boolean;
 }) {
   const [tokenStatuses, setTokenStatuses] = useState<Record<string, TokenExpirationStatus>>({});
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -569,6 +574,12 @@ export function Accounts({
             authMode === 'pat'
               ? account.isActiveAuth === true
               : currentSession?.accountId === account.id;
+          const primaryBtnClass = compactButtons
+            ? 'accountActionBtn accountActionBtn--primary'
+            : 'accountActionBtn';
+          const secondaryBtnClass = compactButtons
+            ? 'accountActionBtn accountActionBtn--secondary'
+            : 'accountActionBtn';
           return (
             <article
               className="card accountCard"
@@ -790,14 +801,16 @@ export function Accounts({
                   />
                 ))}
               </div>
-              <div className="cardActions cardActions--singleRow">
+              <div
+                className={compactButtons ? 'cardActions cardActions--singleRow' : 'cardActions'}
+              >
                 {authMode === 'oauth' ? (
                   account.hasAuth ? (
                     <>
                       <UIButton
                         size="sm"
                         variant="primary"
-                        className="accountActionBtn accountActionBtn--primary"
+                        className={primaryBtnClass}
                         disabled={!currentSession}
                         aria-label="Relay Latest"
                         title={
@@ -816,7 +829,7 @@ export function Accounts({
                       <UIButton
                         size="sm"
                         variant="default"
-                        className="accountActionBtn accountActionBtn--secondary"
+                        className={secondaryBtnClass}
                         disabled={accounts.length < 2}
                         aria-label="Handoff"
                         title={`Choose a session to continue with ${account.displayName}`}
@@ -828,6 +841,43 @@ export function Accounts({
                         <IconPlay size={13} />
                         Handoff
                       </UIButton>
+                      {!compactButtons && (
+                        <>
+                          <UIButton
+                            size="sm"
+                            variant="default"
+                            className="accountActionBtn"
+                            title="Sync sessions"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openSync(account.id);
+                            }}
+                          >
+                            <IconCloud size={13} />
+                            Sync Sessions...
+                          </UIButton>
+                          <UIButton
+                            size="sm"
+                            variant="default"
+                            className="accountActionBtn"
+                            disabled={!canResetQuota}
+                            title={
+                              quota?.resetCreditCount
+                                ? `Reset ${account.displayName} quota`
+                                : 'No reset credits available'
+                            }
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (await confirmResetQuota(account.displayName)) {
+                                void resetAccountQuota(account.id);
+                              }
+                            }}
+                          >
+                            <IconPlay size={13} />
+                            {isResetting ? 'Resetting' : 'Reset Quota'}
+                          </UIButton>
+                        </>
+                      )}
                     </>
                   ) : (
                     <UIButton
@@ -851,7 +901,7 @@ export function Accounts({
                       <UIButton
                         size="sm"
                         variant="primary"
-                        className="accountActionBtn accountActionBtn--primary"
+                        className={primaryBtnClass}
                         disabled={!canResetQuota}
                         aria-label={`Reset ${account.displayName} quota`}
                         title={
@@ -873,7 +923,7 @@ export function Accounts({
                       <UIButton
                         size="sm"
                         variant="primary"
-                        className="accountActionBtn accountActionBtn--primary"
+                        className={primaryBtnClass}
                         disabled={account.id === 'main'}
                         aria-label="Switch to this account"
                         title={
@@ -893,7 +943,7 @@ export function Accounts({
                     <UIButton
                       size="sm"
                       variant="default"
-                      className="accountActionBtn accountActionBtn--secondary"
+                      className={secondaryBtnClass}
                       title={
                         account.hasPersonalAccessToken
                           ? 'Update session auth JSON'
@@ -907,6 +957,64 @@ export function Accounts({
                       <IconKey size={13} />
                       {account.hasPersonalAccessToken ? 'Update' : 'Login'}
                     </UIButton>
+                    {!compactButtons && (
+                      <>
+                        <UIButton
+                          size="sm"
+                          variant="default"
+                          className="accountActionBtn"
+                          title="Export CPA auth JSON"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            exportCpa(account);
+                          }}
+                        >
+                          <IconCloud size={13} />
+                          Export CPA
+                        </UIButton>
+                        {isActiveAccount ? (
+                          <UIButton
+                            size="sm"
+                            variant="default"
+                            className="accountActionBtn"
+                            disabled={account.id === 'main'}
+                            title={
+                              account.id === 'main'
+                                ? 'Main profile cannot be renamed'
+                                : `Rename ${account.displayName}`
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              rename(account);
+                            }}
+                          >
+                            <IconPencil size={13} />
+                            Rename
+                          </UIButton>
+                        ) : (
+                          <UIButton
+                            size="sm"
+                            variant="default"
+                            className="accountActionBtn"
+                            disabled={!canResetQuota}
+                            title={
+                              quota?.resetCreditCount
+                                ? `Reset ${account.displayName} quota`
+                                : 'No reset credits available'
+                            }
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (await confirmResetQuota(account.displayName)) {
+                                void resetAccountQuota(account.id);
+                              }
+                            }}
+                          >
+                            <IconPlay size={13} />
+                            {isResetting ? 'Resetting' : 'Reset Quota'}
+                          </UIButton>
+                        )}
+                      </>
+                    )}
                   </>
                 )}
               </div>
@@ -1333,6 +1441,8 @@ export function Settings({
   modeAvailability,
   setModeAvailability,
   resetUsageStatistics,
+  compactButtons,
+  setCompactButtons,
 }: {
   health: HealthCheck | null;
   themeMode: 'system' | 'light' | 'dark';
@@ -1347,6 +1457,8 @@ export function Settings({
   modeAvailability: 'profile' | 'pat' | 'both';
   setModeAvailability: (availability: 'profile' | 'pat' | 'both') => void;
   resetUsageStatistics: () => void;
+  compactButtons: boolean;
+  setCompactButtons: (compact: boolean) => void;
 }) {
   const [rateCard, setRateCard] = useState<UsageRateCardEntry[]>([]);
   const [activeTab, setActiveTab] = useState<'general' | 'advanced' | 'rate-card' | 'system'>(
@@ -1531,6 +1643,28 @@ export function Settings({
                           {target.displayName}
                         </option>
                       ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="settingsRowLayout">
+                  <div className="settingsRowInfo">
+                    <label htmlFor="compactButtonsSelect" className="settingsRowTitle">
+                      Compact card actions
+                    </label>
+                    <p className="settingsRowDesc">
+                      Use a compact 2-button layout on account cards. Disable to display more
+                      actions directly.
+                    </p>
+                  </div>
+                  <div className="settingsRowControl">
+                    <select
+                      id="compactButtonsSelect"
+                      value={compactButtons ? 'true' : 'false'}
+                      onChange={(event) => setCompactButtons(event.target.value === 'true')}
+                    >
+                      <option value="true">Enabled (Compact)</option>
+                      <option value="false">Disabled (Show all actions)</option>
                     </select>
                   </div>
                 </div>
