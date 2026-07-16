@@ -19,7 +19,8 @@ vi.mock('./lib/api', () => ({
   listCachedAccounts: vi.fn(),
   healthCheck: vi.fn(),
   listAccounts: vi.fn(),
-  listProviders: vi.fn(),
+  listProvidersV2: vi.fn(),
+  listProfileProviderBindingsV2: vi.fn(),
   listSessions: vi.fn(),
   getProfileQuota: vi.fn(),
   resetProfileQuota: vi.fn(),
@@ -300,7 +301,8 @@ beforeEach(() => {
     homeRoot: '/tmp',
   });
   vi.mocked(api.listAccounts).mockResolvedValue(accounts);
-  vi.mocked(api.listProviders).mockResolvedValue([]);
+  vi.mocked(api.listProvidersV2).mockResolvedValue([]);
+  vi.mocked(api.listProfileProviderBindingsV2).mockResolvedValue([]);
   vi.mocked(api.listCachedQuotas).mockResolvedValue([]);
   vi.mocked(api.getUsageSummary).mockResolvedValue(usageSummary);
   vi.mocked(api.getUsageDashboard).mockResolvedValue(usageSummary);
@@ -535,6 +537,58 @@ describe('App handoff modal', () => {
     expect(api.getUsageOverview).toHaveBeenCalledTimes(1);
     expect(api.getUsageActivity).toHaveBeenCalledTimes(1);
     expect(api.refreshUsageIndex).not.toHaveBeenCalled();
+  });
+
+  it('opens the complete External API account flow from Providers', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    render(<App />);
+    await screen.findByText('main');
+
+    fireEvent.click(
+      within(screen.getByRole('navigation', { name: /primary/i })).getByRole('button', {
+        name: /providers/i,
+      }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Add External API' }));
+
+    const externalApiHeading = screen.getByRole('heading', { name: 'Add External API' });
+    expect(externalApiHeading).toBeTruthy();
+    expect(externalApiHeading.closest('section')?.classList.contains('modalWide')).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Profile Account' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'PAT Account' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'API Account' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Review API Account' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Add Provider' })).toBeNull();
+  });
+
+  it('opens the complete External API account flow from the global header', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    render(<App />);
+    await screen.findByText('main');
+
+    expect(screen.queryByRole('button', { name: 'New Provider' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'External API' }));
+
+    expect(screen.getByRole('heading', { name: 'Add External API' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Profile Account' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'PAT Account' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'API Account' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Review API Account' })).toBeTruthy();
+  });
+
+  it('keeps API Account out of the New Account chooser', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    render(<App />);
+    await screen.findByText('main');
+
+    fireEvent.click(screen.getByRole('button', { name: 'New Account' }));
+
+    expect(screen.getByRole('heading', { name: 'Add Account' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Profile Account' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'PAT Account' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'API Account' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review API Account' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Add External API' })).toBeNull();
   });
 
   it('uses auth.json copy switching for every account in PAT mode', async () => {

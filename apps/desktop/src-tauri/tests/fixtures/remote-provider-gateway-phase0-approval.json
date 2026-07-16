@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "gate": "remote-provider-gateway-phase0",
-  "approvedAt": "2026-07-10",
+  "approvedAt": "2026-07-14",
   "target": {
     "codexVersion": "0.144.1",
     "platform": "darwin",
     "architecture": "arm64",
     "osVersion": "15.6",
-    "captureDate": "2026-07-10"
+    "captureDate": "2026-07-14"
   },
   "platform": {
     "policy": "exact-tested-macos-only",

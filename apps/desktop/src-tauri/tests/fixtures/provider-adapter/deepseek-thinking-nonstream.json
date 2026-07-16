@@ -1,0 +1,27 @@
+{
+  "id": "chat-thinking",
+  "object": "chat.completion",
+  "created": 1700000000,
+  "model": "deepseek-fixture-model",
+  "system_fingerprint": "fp_fixture",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "LAM_DEEPSEEK_FINAL",
+        "reasoning_content": "LAM_DEEPSEEK_REASONING_REDACTED_FIXTURE"
+      },
+      "finish_reason": "stop",
+      "logprobs": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 7,
+    "total_tokens": 19,
+    "completion_tokens_details": { "reasoning_tokens": 4 },
+    "prompt_cache_hit_tokens": 2,
+    "prompt_cache_miss_tokens": 10
+  }
+}

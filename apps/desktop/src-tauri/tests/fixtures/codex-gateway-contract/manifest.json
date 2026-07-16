@@ -5,7 +5,7 @@
     "platform": "darwin",
     "architecture": "arm64",
     "osVersion": "15.6",
-    "captureDate": "2026-07-10"
+    "captureDate": "2026-07-14"
   },
   "supportPolicy": {
     "kind": "exact-tested",
@@ -18,6 +18,27 @@
     "https://developers.openai.com/api/docs/guides/streaming-responses"
   ],
   "stateMode": "full-input",
+  "modelCatalog": {
+    "topLevelField": "models",
+    "nonEmpty": true,
+    "openAiDataShapeAccepted": false,
+    "fallbackMetadataAllowed": false,
+    "itemRequiredFields": [
+      "slug",
+      "display_name",
+      "supported_reasoning_levels",
+      "shell_type",
+      "visibility",
+      "supported_in_api",
+      "priority",
+      "base_instructions",
+      "supports_reasoning_summaries",
+      "support_verbosity",
+      "truncation_policy",
+      "supports_parallel_tool_calls",
+      "experimental_supported_tools"
+    ]
+  },
   "requiredRouteSet": [
     "GET /v1/models",
     "POST /v1/responses"
@@ -51,6 +72,7 @@
       "artifacts": [
         "normal/text-stream-request.json",
         "normal/text-stream-events.json",
+        "observations/model-catalog.json",
         "observations/determinism.json"
       ]
     },
@@ -179,12 +201,12 @@
     {
       "path": "normal/function-tool-followup-request.json",
       "bytes": 8270,
-      "fnv1a64": "79abf9b8c2faa372"
+      "fnv1a64": "e7240d98f8df9152"
     },
     {
       "path": "normal/function-tool-initial-request.json",
       "bytes": 7824,
-      "fnv1a64": "3408651be7b75c7b"
+      "fnv1a64": "1cae3d6fc154bf73"
     },
     {
       "path": "normal/resume-events.json",
@@ -194,12 +216,12 @@
     {
       "path": "normal/resume-initial-request.json",
       "bytes": 9344,
-      "fnv1a64": "93c1d2221eafc80e"
+      "fnv1a64": "ae41ed72270ff774"
     },
     {
       "path": "normal/resume-request.json",
       "bytes": 9760,
-      "fnv1a64": "0b977db0f23ee682"
+      "fnv1a64": "005740aacbc1795d"
     },
     {
       "path": "normal/text-stream-events.json",
@@ -209,7 +231,7 @@
     {
       "path": "normal/text-stream-request.json",
       "bytes": 7822,
-      "fnv1a64": "91a5ed435eaac5da"
+      "fnv1a64": "726a7f1ce05bc992"
     },
     {
       "path": "observations/auth-helper.json",
@@ -230,6 +252,11 @@
       "path": "observations/failure-determinism.json",
       "bytes": 54,
       "fnv1a64": "4c53d89660c4ea98"
+    },
+    {
+      "path": "observations/model-catalog.json",
+      "bytes": 777,
+      "fnv1a64": "5ecd249591827e2b"
     },
     {
       "path": "observations/normal.json",

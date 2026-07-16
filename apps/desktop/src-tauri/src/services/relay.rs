@@ -1,9 +1,19 @@
 use super::account::{find_account, CodexAccount};
 use super::error::{AppError, Result};
+use super::gateway::launch_planner::{
+    resolve_profile_route, CodexLaunchPlanner, LaunchEntry, LaunchPlanInput,
+};
+use super::provider_api_v2::{list_binding_views_service_v2, list_provider_views_service_v2};
+use super::provider_capability::EffectiveCapability;
+use super::provider_relay_compatibility::{
+    analyze_relay_compatibility, classify_codex_relay_history, RelayCompatibilityDisposition,
+    RelayCompatibilityReport, RelayTargetCapabilities,
+};
 use super::session::list_sessions;
 use super::types::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -40,6 +50,8 @@ pub struct RelayResumeRequest {
     pub session_id: String,
     pub cwd: Option<String>,
     pub diverged_strategy: Option<String>,
+    #[serde(default)]
+    pub confirm_compatibility_loss: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -56,28 +68,26 @@ pub struct RelayResumeResult {
     pub handoff_path: Option<PathBuf>,
     pub resume: ResumeCommand,
     pub warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compatibility: Option<RelayCompatibilityReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compatibility_fingerprint: Option<String>,
 }
 
 pub fn build_resume_command(home_root: &Path, req: &ResumeCommandRequest) -> Result<ResumeCommand> {
     let account = find_account(home_root, &req.profile_id)?;
-    let command = if let Some(session_id) = &req.session_id {
-        let cd = req
-            .cwd
-            .as_ref()
-            .map(|cwd| format!("cd {} && ", shell_quote(cwd)))
-            .unwrap_or_default();
-        format!(
-            "{}CODEX_HOME={} codex resume {}",
-            cd,
-            shell_quote(account.codex_home.to_string_lossy()),
-            shell_quote(session_id)
-        )
-    } else {
-        format!(
-            "CODEX_HOME={} codex resume --last --all",
-            shell_quote(account.codex_home.to_string_lossy())
-        )
-    };
+    let route_kind = resolve_profile_route(home_root, &req.profile_id)?;
+    let command = CodexLaunchPlanner::new("lam".into())
+        .plan(LaunchPlanInput {
+            profile_id: req.profile_id.clone(),
+            codex_home: account.codex_home.clone(),
+            route_kind,
+            entry: LaunchEntry::Resume {
+                session_id: req.session_id.clone(),
+            },
+            cwd: req.cwd.as_ref().map(PathBuf::from),
+        })?
+        .shell_command;
     Ok(ResumeCommand {
         command,
         side_effects: vec![
@@ -104,12 +114,36 @@ pub fn relay_resume_session(
         .find(|session| session.id == req.session_id)
         .ok_or_else(|| AppError::new("SESSION_NOT_FOUND", "Session not found in source profile"))?;
     let source_path = source_session.path.clone();
+    let source_bytes = fs::read(&source_path)?;
     let source_sessions_root = source_account.codex_home.join("sessions");
     let rel_path = source_path
         .strip_prefix(&source_sessions_root)
         .map_err(|_| AppError::new("PATH_ERROR", "session path outside source profile"))?;
     let target_path = target_account.codex_home.join("sessions").join(rel_path);
     let mut warnings = Vec::new();
+    let (compatibility, compatibility_fingerprint) =
+        analyze_provider_relay(home_root, req, &source_bytes)?;
+    if let Some(report) = &compatibility {
+        match report.disposition {
+            RelayCompatibilityDisposition::Blocked => {
+                return Err(AppError::new(
+                    "RELAY_COMPATIBILITY_BLOCKED",
+                    "Session history is not portable to the target Provider; no target files were written",
+                ));
+            }
+            RelayCompatibilityDisposition::CompatibleWithLoss
+                if !req.confirm_compatibility_loss =>
+            {
+                return Err(AppError::new(
+                    "RELAY_COMPATIBILITY_CONFIRMATION_REQUIRED",
+                    "Relay requires explicit confirmation for representation-only loss",
+                ));
+            }
+            RelayCompatibilityDisposition::CompatibleWithLoss => warnings
+                .push("Confirmed representation-only loss while moving session history.".into()),
+            RelayCompatibilityDisposition::Compatible => {}
+        }
+    }
     if source_account.provider_id != target_account.provider_id
         || source_account.model != target_account.model
     {
@@ -129,7 +163,6 @@ pub fn relay_resume_session(
         fs::copy(&source_path, &target_path)?;
         action = "copied".into();
     } else {
-        let source_bytes = fs::read(&source_path)?;
         let target_bytes = fs::read(&target_path)?;
         if target_bytes == source_bytes || target_bytes.starts_with(&source_bytes) {
             action = "already_current".into();
@@ -206,11 +239,12 @@ pub fn relay_resume_session(
     )?;
     if let Some(handoff) = &handoff_path {
         resume = build_summarize_handoff_resume_command(
+            home_root,
             &target_account,
             &req.session_id,
             req.cwd.clone().or(source_session.cwd.clone()),
             handoff,
-        );
+        )?;
     }
 
     Ok(RelayResumeResult {
@@ -225,7 +259,59 @@ pub fn relay_resume_session(
         handoff_path,
         resume,
         warnings,
+        compatibility,
+        compatibility_fingerprint,
     })
+}
+
+fn analyze_provider_relay(
+    home_root: &Path,
+    req: &RelayResumeRequest,
+    source_bytes: &[u8],
+) -> Result<(Option<RelayCompatibilityReport>, Option<String>)> {
+    let bindings = list_binding_views_service_v2(home_root)?;
+    let source = bindings
+        .iter()
+        .find(|binding| binding.profile_id == req.from_profile_id);
+    let target = bindings
+        .iter()
+        .find(|binding| binding.profile_id == req.to_profile_id);
+    let (Some(source), Some(target)) = (source, target) else {
+        return Ok((None, None));
+    };
+    if source.provider_id == target.provider_id && source.selected_model == target.selected_model {
+        return Ok((None, None));
+    }
+    let target_provider = list_provider_views_service_v2(home_root)?
+        .into_iter()
+        .find(|provider| provider.id == target.provider_id)
+        .ok_or_else(|| AppError::new("PROVIDER_NOT_FOUND", &target.provider_id))?;
+    let report = analyze_relay_compatibility(
+        &classify_codex_relay_history(source_bytes),
+        &RelayTargetCapabilities {
+            function_tools: target_provider.capabilities.function_tools.effective
+                == EffectiveCapability::Supported,
+            representation_metadata: true,
+        },
+    );
+    let fingerprint = hex::encode(Sha256::digest(
+        serde_json::to_vec(&(
+            hex::encode(Sha256::digest(source_bytes)),
+            &source.provider_id,
+            &source.selected_model,
+            &target.provider_id,
+            &target.selected_model,
+            target.revision,
+            &report,
+        ))
+        .map_err(|_| {
+            AppError::new(
+                "RELAY_ANALYSIS_FAILED",
+                "analysis could not be fingerprinted",
+            )
+        })?,
+    ));
+    Ok((Some(report), Some(fingerprint)))
 }
 
 pub fn build_login_command(home_root: &Path, profile_id: &str) -> Result<ResumeCommand> {
@@ -500,25 +586,30 @@ fn command_exists(name: &str) -> bool {
 }
 
 fn build_summarize_handoff_resume_command(
+    home_root: &Path,
     target: &CodexAccount,
     session_id: &str,
     cwd: Option<String>,
     handoff_path: &Path,
-) -> ResumeCommand {
-    let cd = cwd
-        .as_ref()
-        .map(|cwd| format!("cd {} && ", shell_quote(cwd)))
-        .unwrap_or_default();
-    let codex_home = shell_quote(target.codex_home.to_string_lossy());
-    let session = shell_quote(session_id);
-    let prompt = shell_quote(format!(
+) -> Result<ResumeCommand> {
+    let prompt = format!(
         "A diverged branch handoff was written at {}. Read it, summarize the source branch into this target-account session context, preserve the target branch as the active timeline, then state that the handoff has been incorporated.",
         handoff_path.display()
-    ));
-    let command = format!(
-        "{cd}CODEX_HOME={codex_home} codex exec resume {session} {prompt} && CODEX_HOME={codex_home} codex resume {session}"
     );
-    ResumeCommand {
+    let route_kind = resolve_profile_route(home_root, &target.id)?;
+    let command = CodexLaunchPlanner::new("lam".into())
+        .plan(LaunchPlanInput {
+            profile_id: target.id.clone(),
+            codex_home: target.codex_home.clone(),
+            route_kind,
+            entry: LaunchEntry::RelayHandoff {
+                session_id: session_id.into(),
+                prompt,
+            },
+            cwd: cwd.map(PathBuf::from),
+        })?
+        .shell_command;
+    Ok(ResumeCommand {
         command,
         side_effects: vec![
             format!("Uses target CODEX_HOME {}", target.codex_home.display()),
@@ -528,10 +619,11 @@ fn build_summarize_handoff_resume_command(
             ),
             "Reopens codex resume after the summary turn completes.".into(),
         ],
-    }
+    })
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 

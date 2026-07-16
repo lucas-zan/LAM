@@ -1,0 +1,28 @@
+{
+  "catalog": {
+    "models": [
+      {
+        "base_instructions": "You are a coding agent. Follow developer and user instructions and use available tools carefully.",
+        "display_name": "Fixture Model",
+        "experimental_supported_tools": [],
+        "priority": 1,
+        "shell_type": "shell_command",
+        "slug": "fixture-model",
+        "support_verbosity": false,
+        "supported_in_api": true,
+        "supported_reasoning_levels": [],
+        "supports_parallel_tool_calls": false,
+        "supports_reasoning_summaries": false,
+        "truncation_policy": {
+          "limit": 10000,
+          "mode": "tokens"
+        },
+        "visibility": "list"
+      }
+    ]
+  },
+  "fallbackMetadataWarning": false,
+  "routes": [
+    "GET /v1/models"
+  ]
+}

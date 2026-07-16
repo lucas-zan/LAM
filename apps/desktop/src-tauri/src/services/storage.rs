@@ -75,7 +75,12 @@ impl InstallationLock {
         let started = Instant::now();
         loop {
             match try_flock(&file, exclusive) {
-                Ok(true) => return Ok(InstallationLockGuard { file }),
+                Ok(true) => {
+                    return Ok(InstallationLockGuard {
+                        file,
+                        path: self.path.clone(),
+                    })
+                }
                 Ok(false) if started.elapsed() < self.timeout => {
                     thread::sleep(LOCK_POLL_INTERVAL);
                 }
@@ -95,6 +100,7 @@ impl InstallationLock {
 
 pub struct InstallationLockGuard {
     file: File,
+    path: PathBuf,
 }
 
 impl Drop for InstallationLockGuard {
@@ -170,7 +176,23 @@ where
         value: &T,
         fault: Option<AtomicWriteFault>,
     ) -> Result<StoreSnapshot<T>> {
-        let _guard = self.lock.acquire_exclusive()?;
+        let guard = self.lock.acquire_exclusive()?;
+        self.compare_and_swap_locked(&guard, expected_revision, value, fault)
+    }
+
+    pub(crate) fn load_locked(&self, guard: &InstallationLockGuard) -> Result<StoreSnapshot<T>> {
+        self.ensure_guard(guard)?;
+        self.read_unlocked()
+    }
+
+    pub(crate) fn compare_and_swap_locked(
+        &self,
+        guard: &InstallationLockGuard,
+        expected_revision: u64,
+        value: &T,
+        fault: Option<AtomicWriteFault>,
+    ) -> Result<StoreSnapshot<T>> {
+        self.ensure_guard(guard)?;
         let current = self.read_unlocked()?;
         ensure_revision(expected_revision, current.revision)?;
         let next_revision = current
@@ -191,6 +213,17 @@ where
             value: value.clone(),
             exists: true,
         })
+    }
+
+    fn ensure_guard(&self, guard: &InstallationLockGuard) -> Result<()> {
+        if guard.path == self.lock.path {
+            Ok(())
+        } else {
+            Err(AppError::new(
+                "STORE_LOCK_MISMATCH",
+                "store operation used a different installation lock",
+            ))
+        }
     }
 
     fn read_unlocked(&self) -> Result<StoreSnapshot<T>> {

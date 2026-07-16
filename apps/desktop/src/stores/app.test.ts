@@ -32,6 +32,11 @@ describe('useAppStore', () => {
     expect(useAppStore.getState().modal).toBeNull();
   });
 
+  it('opens the dedicated External API modal', () => {
+    useAppStore.getState().openModal('externalApi');
+    expect(useAppStore.getState().modal).toBe('externalApi');
+  });
+
   it('tracks appReady', () => {
     expect(useAppStore.getState().appReady).toBe(false);
     useAppStore.getState().setAppReady();

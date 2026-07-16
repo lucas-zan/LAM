@@ -1,6 +1,6 @@
 # LAM Remote Provider Gateway Full Design
 
-状态：Phase 0 / G1 契约与安全门禁已验证通过；可按本文 Phase 1 Responses Provider 直连纵向切片实施
+状态：Phase 0 / G1、Phase 1 / G2、Phase 2 / G3、Phase 3 / G4 与 Phase 4 / G5 已实现；Codex 0.144.1 严格模型目录、上游模型发现与 Responses Gateway 透传已实现；验证证据见 `docs/todo-strict-codex-provider-models.md`
 目标：通过可独立验收的纵向切片，完整交付外部 API Provider 接入、协议适配、本地统一网关、Codex profile 绑定、自动化测试和验收闭环。
 
 ## 1. 目标
@@ -8,9 +8,9 @@
 LAM 要从“Codex 账号/session 管理工具”扩展为本地 Provider Hub：
 
 - 管理外部模型 Provider、模型列表、密钥引用、健康状态和能力矩阵。
-- 支持原生 `/v1/responses` Provider 直连 Codex。
+- 支持原生 `/v1/responses` Provider 直连，也支持显式通过 Gateway 以获得 LAM 管理的 Codex 模型目录。
 - 支持 `/chat/completions` Provider 通过用户显式启用的本地适配器接入 Codex。
-- 只有启用本地适配器的 Chat Completions Provider 才走代理；Responses Provider 直接使用上游 endpoint。
+- Chat Completions Provider 通过 adapter 走 Gateway；新建 External API Account 也显式走 Gateway，Responses Provider 在 Gateway 内保持原协议透传。
 - API profile 与 ChatGPT auth/session profile 同等参与 session 浏览、sync、relay、resume。
 - 本地网关可作为统一外部接口管理层，后续可开放给其他本机客户端复用。
 
@@ -20,6 +20,8 @@ LAM 要从“Codex 账号/session 管理工具”扩展为本地 Provider Hub：
 
 - Codex 边界只输出 `wire_api = "responses"`；旧 `wireApi = "openai"` 只是迁移输入，不得写回 Codex 配置。
 - Responses Provider 默认直连；Chat Completions Provider 只能通过显式启用的本地 adapter 接入 Codex。
+- `codex.route_via_gateway` 是显式路由契约；新建 External API Account 由后端强制设为 `true`，既有 Responses Provider 缺省为 `false` 以保持向后兼容。
+- 上游 OpenAI `GET /models` 的 `{ data: [{ id }] }` 只用于发现；Codex 0.144.1 使用顶层 `models` 和受控 metadata 字段。两种 DTO 不复用。
 - Provider metadata、secret reference、运行时状态和测试观测结果分开存储，不用一个字段同时表示配置、健康和能力。
 - `ProfileProviderBinding` 是 profile 与 provider/model 关系的唯一权威来源；Codex config 和 Gateway binding 只是它的可重建投影。
 - `config.toml` 采用非破坏性编辑，只更改 LAM 管理的 key，不覆盖用户其他配置。
@@ -66,6 +68,8 @@ Provider 接入围绕清晰契约组织：
 - `ProviderProtocol`：描述上游协议能力。
 - `GatewaySupervisor`：只负责 sidecar 的安装路径、单实例、启停和 readiness。
 - `ProviderGateway`：对外提供 Codex 可消费的 Responses endpoint，并在请求开始时获取不可变 binding snapshot。
+- `OpenAiModelDiscovery`：只负责有界、无重定向的上游 `/models` 请求和 `data[].id` 规范化。
+- `CodexModelCatalog`：只负责把 Provider allowlist 序列化为 exact-tested Codex 0.144.1 目录。
 - `ProtocolAdapter`：在协议之间转换请求、事件、工具调用、错误和 usage。
 - `CodexConfigEditor`：只负责非破坏性编辑、校验和原子写入 `$CODEX_HOME/config.toml`。
 
@@ -179,6 +183,7 @@ CodexProviderOptions
   stream_idle_timeout_ms?: integer       # 1_000..=900_000
   direct_request_max_retries?: integer   # 0..=3，仅 direct
   direct_stream_max_retries?: integer    # 0..=3，仅 direct
+  route_via_gateway: boolean             # Responses 显式选择 Gateway，缺省 false
   query_params: map<string, string>      # 键值长度受限，禁止控制字符
   env_http_headers: map<string, EnvVarName>
 ```
@@ -201,6 +206,7 @@ CredentialSource
 UpstreamAuth
   none
   bearer { credential: CredentialSource }
+  header { name: HttpHeaderName, credential: CredentialSource }
 
 AuthCommand
   executable: absolute_path
@@ -221,9 +227,11 @@ CodexAuth
   none
 ```
 
-`CredentialSource::none` 只能与 `UpstreamAuth::none` 组合。其他 source 在 MVP 只与
-bearer 组合；API-key header 等认证方式需要新增闭集 variant 和单独威胁评审，不能
-借 `env_http_headers` 绕过。Gateway 自身永远不使用 `CodexAuth::none`，只生成引用
+`CredentialSource::none` 只能与 `UpstreamAuth::none` 组合。RPG-103 已将受控 header
+认证加入闭集：header name 必须通过 HTTP token 校验，禁止 `Authorization`、
+`Proxy-Authorization`、`Host`、`Content-Length`、`Connection` 和
+`Transfer-Encoding`，值只能来自 credential source；静态 header/query 仍禁止携带
+credential。Gateway 自身永远不使用 `CodexAuth::none`，只生成引用
 `GatewayCredentialReference` 的 profile-specific auth helper。
 
 `AuthCommand.executable` 必须是已批准的绝对、非 symlink 普通文件；`cwd` 固定为
@@ -296,6 +304,18 @@ ProviderProfile
 - preset 必须存储最终可用的 `base_url + upstream_path` 组合，contract test 覆盖带/不带尾随斜杠的情况。
 
 `used_by_profile_ids` 是 profile store 的派生视图，不持久化到 provider 条目，避免两份索引不一致。Readiness 也根据 metadata、secret availability、profile binding 和 Gateway state 动态计算。健康观测和 adapter 验证结果不嵌入 `ProviderProfile`，分别写入 runtime state store 和 conformance cache。
+
+### 6.1.1 模型发现与目录边界
+
+External API 新建流程显式调用 `discover_provider_models_v2`。它使用 write-only API key 请求 `GET <base_url>/models`，关闭系统代理和重定向，并限制 15 秒总超时、1 MiB 响应体和 2048 个模型。解析器只接受标准 OpenAI 形状：
+
+```json
+{ "object": "list", "data": [{ "id": "vendor-model-id" }] }
+```
+
+缺少 `data`、空/非法/duplicate id、空列表和超限响应都 fail closed。发现结果只是候选集，不自动持久或勾选；用户选中或手工添加的 id 才进入 `ProviderProfile.models` allowlist，默认模型必须属于该集合。Base URL 或 API key 变更会清空旧结果，过期异步响应不得覆盖新请求。
+
+Gateway 不把这个 OpenAI DTO 直接返回 Codex。`GET /v1/models` 从不可变 binding snapshot 内的全部 Provider allowlist 生成 exact-tested Codex 目录；`selected_model` 只是 config 默认值，不会隐藏其他允许模型。
 
 Provider store 使用显式版本封装：
 
@@ -595,9 +615,10 @@ ProfileAttachPlan
 规则：
 
 - Responses Provider：
-  - route plan 选择 direct；attach plan 设置 `codex_base_url = provider.base_url`。
+  - `route_via_gateway = false` 时 route plan 选择 direct，`codex_base_url = provider.base_url`。
+  - `route_via_gateway = true` 时 route plan 选择 gateway，但不选 adapter；Gateway 校验 model/store/history 后保留原 Responses 请求、status、content-type 和 body/SSE 字节。
   - `adapter_required = false`
-  - Codex config 直接写上游。
+  - 新建 External API Account 由后端强制选择 gateway，并将 Codex request/stream retry 设为 0。
 - Chat Completions + adapter：
   - route plan 选择 gateway；attach plan 从显式 context 读取 `local_gateway_url`。
   - `adapter_required = true`
@@ -660,8 +681,15 @@ wire_api = "responses"
 
 [model_providers.<provider_id>.auth]
 command = "<lam-auth-helper>"
-args = ["gateway-token", "--binding", "<binding-id>"]
+args = ["gateway-token", "--state-root", "<provider-hub-root>", "--profile", "<profile-id>", "--binding", "<binding-id>"]
+timeout_ms = 5000
+refresh_interval_ms = 0
 ```
+
+`<lam-auth-helper>` 必须由安装 manifest、SHA-256 与 code-sign identity 校验后解析为绝对
+路径。attach dry-run 预分配 binding id；Gateway credential prepare 必须使用同一 id，
+否则 transaction 在写 config 前返回 `GATEWAY_BINDING_PLAN_MISMATCH`。禁止把 placeholder
+binding 或相对 helper 命令写入 profile。
 
 真实上游保存在 LAM store：
 
@@ -857,7 +885,7 @@ macOS 路径以 bundle id `dev.localagentmanager.desktop` 为 namespace：
 | Provider Hub state root                           | `~/Library/Application Support/dev.localagentmanager.desktop/provider-hub/`                 | directory `0700`, current uid                                  |
 | provider/binding/gateway envelopes, journal, lock | state root 下固定 basename                                                                  | regular file `0600`, current uid, no symlink                   |
 | backup/temp                                       | target 同目录的 `backups/`/random temp                                                      | directory `0700`, file `0600`, same filesystem                 |
-| control socket                                    | `$DARWIN_USER_TEMP_DIR/dev.localagentmanager.desktop/gateway-control-<install-id>.sock`     | parent `0700`, Unix socket `0600`, current uid                 |
+| control socket                                    | `$DARWIN_USER_TEMP_DIR/dev.localagentmanager.desktop/gateway-<sha256(install-id)[0:16]>.sock` | parent `0700`, Unix socket `0600`, current uid；basename 有界，避免 Darwin AF_UNIX 路径超限 |
 | install identity key                              | macOS Keychain service `dev.localagentmanager.desktop.provider-hub`, account `<install-id>` | non-exported-by-UI random 256-bit key                          |
 | provider/gateway credential                       | macOS Keychain service `lam.remote-provider`, versioned account                             | secret value only in Keychain/process memory                   |
 | sidecar/auth helper                               | signed app bundle `Contents/Resources/bin/<component>/<version>/...`                        | regular executable, code-sign Team ID + manifest SHA-256 match |
@@ -949,8 +977,9 @@ hash 的可用性。
 
 | 项目        | 已验证契约                                                               |
 | ----------- | ------------------------------------------------------------------------ |
-| CLI / 平台  | exact-tested `codex-cli 0.144.1`；macOS 15.6；Darwin arm64               |
+| CLI / 平台  | exact-tested `codex-cli 0.144.1`；macOS 15.6；Darwin arm64；2026-07-14 捕获 |
 | HTTP 路由   | `GET /v1/models?client_version=0.144.1`、`POST /v1/responses`            |
+| 模型目录    | 顶层 `models`；非空；13 个必需 metadata 字段；禁止 fallback metadata    |
 | 请求模式    | 所有 text/tool/resume 请求均为 `stream = true`                           |
 | 多轮状态    | tool follow-up 与 resume 都发送完整 input；`previous_response_id = null` |
 | auth helper | stdin 为 0；stdout 会 trim；首个 `401` 触发一次 refresh + replay         |
@@ -984,7 +1013,9 @@ bounded response state routes
 POST /v1/chat/completions
 ```
 
-Codex profile 接入的最小必需入口是 `/v1/models` 与 `/v1/responses`。`/v1/models` 至少返回 Codex 可解析的顶级 `models` 数组；返回空数组时 Codex 可继续使用 fallback metadata，但会向用户报告 metadata warning，因此产品实现应返回 attached binding/model 的受控 metadata，而不是依赖 fallback。
+Codex profile 接入的最小必需入口是 `/v1/models` 与 `/v1/responses`。`/v1/models` 必须返回非空的顶级 `models` 数组；每项必须包含 6.1.1 定义的 13 个 exact-tested metadata 字段。标准 OpenAI `{ data: [...] }` 只用于上游发现，不是 Codex 目录响应。空目录、缺字段或 Codex fallback metadata warning 都是 release blocker。Gateway 从 authenticated immutable binding 对应 Provider 的完整 model allowlist 生成确定性目录；请求中的未知 model 在任何上游 I/O 前拒绝。
+
+对于 `codex.route_via_gateway = true` 的 Responses Provider，Gateway 完成 bearer、model allowlist、response-store/history 与 body 上限校验后，将请求体和上游 status、content-type、body/SSE 字节原样透传；它不选择协议 adapter，也不做应用层重试。Chat Completions Provider 仍通过受控 adapter 转换。
 
 ### 9.4 Provider 选择
 
@@ -997,7 +1028,8 @@ GatewayBinding
   binding_id
   profile_id
   provider_id
-  model
+  selected_model       # config.toml 默认模型
+  provider.models      # 请求时的完整 model allowlist snapshot
   created_at
   revoked_at?
 ```
@@ -1292,6 +1324,15 @@ DeepSeek thinking mode 适配规则：
 - 流式 thinking delta 只累计到有界内部 reasoning buffer，用于同轮 tool-call history；
   不向 Codex 发明 reasoning stream event。超限返回 `ADAPTER_REASONING_LIMIT_EXCEEDED`，
   日志与 conformance evidence 只记录长度/hash，不记录内容。
+
+Codex 0.144.1 的锁定 `function-tool-followup-request` 只回传 `function_call` 与
+`function_call_output`，`reasoning = null`，且 input 中没有 reasoning item。因而在本设计同时坚持
+“完整历史、无 response store、原始 CoT 不进入普通 content/summary”时，Gateway 无法在后续请求中
+恢复 DeepSeek thinking tool turn 所必需的 `reasoning_content`。在新的 Codex 捕获契约证明存在合法、
+会被完整回传的受控 reasoning metadata 之前，`deepseek_chat_completions` 的 thinking + tools 组合必须
+在首次上游调用前返回 `ADAPTER_REASONING_HISTORY_UNREPRESENTABLE`；不得用 model 名猜测模式、建立隐式
+会话缓存或伪造 reasoning。DeepSeek thinking 无 tool，以及显式 disabled thinking 的 tool round-trip
+仍由同一 compatibility profile 与 adapter registry 支持。
 
 DeepSeek compatibility profile 只负责 DeepSeek 特殊字段和历史策略，不负责通用协议转换。通用转换仍在 `responses_to_chat_completions` adapter 中完成。
 
@@ -1889,6 +1930,8 @@ Phase 3（Gateway 可运行闭环）：
 15. 实现 `/healthz`、`GET /v1/models`、`POST /v1/responses`；不实现 Phase 0 未观测到的 cancel/retrieve/state 路由。
 16. 实现 upstream client 的 timeout、取消、有界背压和单重试所有者策略。
 17. 用 mock DeepSeek 完成 create -> attach -> launcher/sidecar start -> Codex Responses request -> Chat Completions -> streaming/tool result 的端到端验收。
+
+以上 Phase 3 项目已由 G4 验证：真实 loopback HTTP Gateway、版本化 Keychain/env 凭据边界、attach/detach 事务、non-stream/SSE/function tool、UI 进程退出后的 sidecar 存活、旧 token 拒绝、恢复/端口迁移/安全/重试矩阵以及最终 `.app`/DMG 完整性均通过。
 
 Phase 4（产品集成与接力）：
 

@@ -79,6 +79,14 @@ export function filterQuotaSnapshotsForProfileIds(
   return quotas.filter((quota) => accountIds.has(quota.profileId));
 }
 
+export function quotaRefreshProfileIds(
+  accounts: CodexAccount[],
+  externalApiProfileIds: string[],
+): string[] {
+  const externalIds = new Set(externalApiProfileIds);
+  return accounts.filter((account) => !externalIds.has(account.id)).map((account) => account.id);
+}
+
 export function countAccountsWithQuotaData(
   accounts: CodexAccount[],
   quotas: UsageQuotaSnapshot[],

@@ -165,7 +165,7 @@
   "headers": {
     "accept": "text/event-stream",
     "authorization": "<redacted>",
-    "content-length": "44202",
+    "content-length": "22985",
     "content-type": "application/json",
     "host": "127.0.0.1:<port>",
     "originator": "codex_exec",

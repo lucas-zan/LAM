@@ -16,6 +16,36 @@ const resumeFirstPrompt = 'LAM_CAPTURE_RESUME_FIRST';
 const resumeSecondPrompt = 'LAM_CAPTURE_RESUME_SECOND';
 const defaultTimeoutMs = 20_000;
 
+export function fixtureCodexCatalog() {
+  return {
+    models: [
+      {
+        slug: fixtureModel,
+        display_name: 'Fixture Model',
+        supported_reasoning_levels: [],
+        shell_type: 'shell_command',
+        visibility: 'list',
+        supported_in_api: true,
+        priority: 1,
+        base_instructions:
+          'You are a coding agent. Follow developer and user instructions and use available tools carefully.',
+        supports_reasoning_summaries: false,
+        support_verbosity: false,
+        truncation_policy: { mode: 'tokens', limit: 10_000 },
+        supports_parallel_tool_calls: false,
+        experimental_supported_tools: [],
+      },
+    ],
+  };
+}
+
+export function assertNoModelMetadataFallback(result) {
+  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  if (/Model metadata .* not found|Defaulting to fallback metadata/i.test(output)) {
+    throw new Error('Codex used fallback model metadata');
+  }
+}
+
 function sortValue(value) {
   if (Array.isArray(value)) return value.map(sortValue);
   if (!value || typeof value !== 'object') return value;
@@ -484,7 +514,7 @@ async function handleRequest(request, response, state) {
   }
   if (request.method === 'GET' && request.url?.replace(/\?.*$/, '').endsWith('/models')) {
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ models: [] }));
+    response.end(JSON.stringify(fixtureCodexCatalog()));
     return;
   }
   response.writeHead(404, { 'content-type': 'application/json' });
@@ -886,6 +916,7 @@ function responseRequests(requests) {
 
 function assertSuccessful(result, label) {
   if (result.code !== 0) throw new Error(`${label} failed: ${result.stderr || result.stdout}`);
+  assertNoModelMetadataFallback(result);
 }
 
 async function writeTextCapture(output) {
@@ -975,6 +1006,11 @@ function normalArtifacts(text, tool, resume) {
     'observations/route-inventory.json': {
       notObserved: ['GET /v1/responses/{response_id}', 'POST /v1/responses/{response_id}/cancel'],
       observed: [...new Set(allRequests.map(routeKey))].sort(),
+    },
+    'observations/model-catalog.json': {
+      catalog: fixtureCodexCatalog(),
+      fallbackMetadataWarning: false,
+      routes: [...new Set(allRequests.map(routeKey).filter((route) => route.includes('/models')))].sort(),
     },
     'observations/normal.json': {
       functionTool: {

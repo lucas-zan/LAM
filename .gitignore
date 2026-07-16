@@ -48,6 +48,8 @@ pnpm-debug.log*
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/WixTools/
 apps/desktop/src-tauri/bundle/
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/generated/provider-gateway-install-manifest.json
 
 # --- Codex / agent home runtime (machine-local, not source) ---
 **/.codex/cache/

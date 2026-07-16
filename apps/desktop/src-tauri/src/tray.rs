@@ -343,6 +343,7 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 

@@ -11,6 +11,15 @@ TAURI_DIR    := apps/desktop/src-tauri
 LAM_HOME     ?=
 LAM_ENV      := $(if $(LAM_HOME),LAM_HOME=$(LAM_HOME),)
 
+# Shared macOS code-signing identity for the Gateway sidecar binaries
+# (lam, lam-provider-gateway, lam-auth-helper). Setting a stable identity here
+# makes `make start`, `make build`, and `make dmg` produce the same designated
+# requirement, so a single Keychain "Always Allow" grant works across all of
+# them. Empty falls back to ad-hoc signing (re-prompts on every rebuild).
+# Override via environment or `make start LAM_CODESIGN_IDENTITY="LAM Dev"`.
+LAM_CODESIGN_IDENTITY ?=
+export LAM_CODESIGN_IDENTITY
+
 .PHONY: help app desktop start stop status accounts check test build dmg install node-check cargo-check tauri-info clean
 
 help:

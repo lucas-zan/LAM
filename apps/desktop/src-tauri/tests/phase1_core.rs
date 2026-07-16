@@ -4,17 +4,20 @@ use localagentmanager_core::{
     execute_create_relay, execute_rename_account, execute_sync, get_profile_quota, list_accounts,
     list_cached_accounts, list_cached_quotas, list_providers, list_sessions, list_terminal_targets,
     plan_attach_provider_to_profile, refresh_all_quotas, relay_resume_session, rename_account_plan,
-    reset_profile_quota, resolve_home_root, selected_terminal_target_id,
+    repair_managed_wrappers, reset_profile_quota, resolve_home_root, selected_terminal_target_id,
     set_selected_terminal_target_id, sync_plan, terminal_applescript, update_account_note,
     AccountNoteUpdate, AttachProviderRequest, CreateAccountRequest, CreateProviderRequest,
-    CreateRelayRequest, RelayResumeRequest, RenameAccountRequest, ResumeCommandRequest,
-    SecretInput, SyncRequest,
+    CreateRelayRequest, InstallationLock, ManagedConfigProjection, ProfileBindingCollection,
+    ProfileProviderBinding, ProjectionOwnership, ProviderHubPaths, RelayResumeRequest,
+    RenameAccountRequest, ResumeCommandRequest, SecretInput, StoreOptions, SyncRequest,
+    VersionedFileStore,
 };
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[test]
 fn packaged_app_launch_has_visible_entrypoint() {
@@ -329,7 +332,47 @@ fn creates_managed_account_with_plan_and_safe_wrapper() {
     assert!(!result.home_path.join("auth.json").exists());
     let wrapper = fs::read_to_string(result.wrapper_path).unwrap();
     assert!(wrapper.contains("export CODEX_HOME=\"$HOME/.codex-luna\""));
-    assert!(wrapper.contains("exec \"$CODEX_BIN\" \"$@\""));
+    assert!(wrapper.contains("/lam' codex --profile 'luna' -- \"$@\""));
+    assert!(!wrapper.contains("exec 'lam' codex"));
+    assert!(!wrapper.contains("exec \"$CODEX_BIN\""));
+}
+
+#[test]
+fn repair_managed_wrappers_replaces_stale_and_missing_files_only() {
+    let home = temp_home("repair-managed-wrappers");
+    for name in ["stale", "missing"] {
+        execute_create_account(
+            &home,
+            &CreateAccountRequest {
+                name: name.into(),
+                copy_config_from: None,
+                overwrite_wrapper: false,
+            },
+        )
+        .unwrap();
+    }
+    write_executable(
+        &home.join("bin/codex-stale"),
+        "#!/bin/sh\nexec lam \"$@\"\n",
+    );
+    fs::remove_file(home.join("bin/codex-missing")).unwrap();
+    seed_codex_home(&home, "external");
+    let external = home.join("bin/codex-external");
+    write_executable(&external, "#!/bin/sh\necho external\n");
+
+    let repaired = repair_managed_wrappers(&home).unwrap();
+
+    assert_eq!(repaired.len(), 2);
+    for name in ["stale", "missing"] {
+        let wrapper = fs::read_to_string(home.join(format!("bin/codex-{name}"))).unwrap();
+        assert!(wrapper.contains(&format!("codex --profile '{name}' -- \"$@\"")));
+        assert!(!wrapper.contains("exec 'lam' codex"));
+    }
+    assert_eq!(
+        fs::read_to_string(&external).unwrap(),
+        "#!/bin/sh\necho external\n"
+    );
+    assert!(repair_managed_wrappers(&home).unwrap().is_empty());
 }
 
 #[test]
@@ -583,6 +626,7 @@ fn relay_resume_copies_missing_session_and_builds_target_resume() {
             session_id: "relay-sid".into(),
             cwd: Some("/tmp/relay".into()),
             diverged_strategy: None,
+            confirm_compatibility_loss: false,
         },
     )
     .unwrap();
@@ -619,6 +663,7 @@ fn relay_resume_extends_target_when_target_is_source_prefix() {
             session_id: "relay-sid".into(),
             cwd: Some("/tmp/relay".into()),
             diverged_strategy: None,
+            confirm_compatibility_loss: false,
         },
     )
     .unwrap();
@@ -651,6 +696,7 @@ fn relay_resume_skips_when_target_already_contains_source() {
             session_id: "relay-sid".into(),
             cwd: Some("/tmp/relay".into()),
             diverged_strategy: None,
+            confirm_compatibility_loss: false,
         },
     )
     .unwrap();
@@ -687,6 +733,7 @@ fn relay_resume_rejects_diverged_session_and_keeps_backup() {
             session_id: "relay-sid".into(),
             cwd: Some("/tmp/relay".into()),
             diverged_strategy: None,
+            confirm_compatibility_loss: false,
         },
     )
     .unwrap_err();
@@ -729,6 +776,7 @@ fn relay_resume_diverged_prefer_source_replaces_target_with_backup() {
             session_id: "relay-sid".into(),
             cwd: Some("/tmp/relay".into()),
             diverged_strategy: Some("prefer_source".into()),
+            confirm_compatibility_loss: false,
         },
     )
     .unwrap();
@@ -760,6 +808,7 @@ fn relay_resume_diverged_prefer_target_keeps_target_and_copies_source_fork() {
             session_id: "relay-sid".into(),
             cwd: Some("/tmp/relay".into()),
             diverged_strategy: Some("prefer_target".into()),
+            confirm_compatibility_loss: false,
         },
     )
     .unwrap();
@@ -791,6 +840,7 @@ fn relay_resume_diverged_summarize_fork_writes_target_handoff_without_overwrite(
             session_id: "relay-sid".into(),
             cwd: Some("/tmp/relay".into()),
             diverged_strategy: Some("summarize_fork_with_target_account".into()),
+            confirm_compatibility_loss: false,
         },
     )
     .unwrap();
@@ -970,6 +1020,81 @@ fn quota_snapshot_uses_unavailable_state_without_fake_realtime_values() {
 
     let refreshed = refresh_all_quotas(&home, None).unwrap();
     assert!(refreshed.snapshots.iter().any(|s| s.profile_id == "a"));
+}
+
+#[test]
+fn refresh_all_quotas_skips_external_api_bindings() {
+    let home = temp_home("quota-external-api");
+    seed_codex_home(&home, "external");
+    seed_external_api_binding(&home, "external");
+
+    let refreshed = refresh_all_quotas(&home, Some(vec!["external".into()])).unwrap();
+
+    assert!(refreshed.snapshots.is_empty());
+    assert!(refreshed.warnings.is_empty());
+}
+
+#[test]
+fn direct_quota_refresh_skips_external_api_collector() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("quota-external-api-direct");
+    seed_codex_home(&home, "external");
+    seed_external_api_binding(&home, "external");
+    let marker = home.join("collector-invoked");
+    let bin = home.join("fake-codex.sh");
+    write_executable(
+        &bin,
+        &format!("#!/bin/sh\n/usr/bin/touch '{}'\nexit 1\n", marker.display()),
+    );
+    std::env::set_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA", "1");
+    std::env::set_var("LAM_CODEX_BIN", &bin);
+
+    let snapshot = get_profile_quota(&home, "external", true).unwrap();
+
+    std::env::remove_var("LAM_ENABLE_CODEX_APP_SERVER_QUOTA");
+    std::env::remove_var("LAM_CODEX_BIN");
+    assert!(!marker.exists());
+    assert_eq!(snapshot.source, "external_api_quota_unsupported");
+    assert!(snapshot.alerts.is_empty());
+}
+
+fn seed_external_api_binding(home: &Path, profile_id: &str) {
+    let root = ProviderHubPaths::for_home(&home)
+        .ensure_canonical_root()
+        .unwrap();
+    let store = VersionedFileStore::new(
+        root.join("bindings.json"),
+        InstallationLock::new(root.join("provider-hub.lock"), Duration::from_secs(1)),
+        1,
+        StoreOptions::default(),
+    );
+    let projection = ManagedConfigProjection {
+        config_path: home
+            .join(format!(".codex-{profile_id}/config.toml"))
+            .to_string_lossy()
+            .into_owned(),
+        ownership: ProjectionOwnership::Managed,
+        before_hash: "before".into(),
+        applied_hash: "applied".into(),
+        previous_values: BTreeMap::new(),
+        managed_values: BTreeMap::new(),
+        provider_table_created_by_lam: true,
+    };
+    store
+        .compare_and_swap(
+            0,
+            &ProfileBindingCollection {
+                bindings: vec![ProfileProviderBinding::new_for_test(
+                    profile_id,
+                    "account-external",
+                    "model-a",
+                    projection,
+                    1,
+                    "fingerprint",
+                )],
+            },
+        )
+        .unwrap();
 }
 
 #[test]

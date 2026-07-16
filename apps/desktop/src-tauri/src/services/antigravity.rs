@@ -233,10 +233,8 @@ fn collect_arg_ports(cmd: &str, arg: &str, ports: &mut Vec<u16>) {
     for i in 0..parts.len() {
         let value = if parts[i] == arg && i + 1 < parts.len() {
             Some(parts[i + 1])
-        } else if let Some(rest) = parts[i].strip_prefix(&format!("{arg}=")) {
-            Some(rest)
         } else {
-            None
+            parts[i].strip_prefix(&format!("{arg}="))
         };
 
         let Some(value) = value else {

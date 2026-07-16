@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { routes } from './types';
 import { Overview, Sessions } from './views';
@@ -140,6 +140,21 @@ describe('handoff navigation and entry points', () => {
 
     expect(screen.getAllByRole('button', { name: /handoff/i })).toHaveLength(accounts.length);
     expect(screen.getAllByRole('button', { name: /relay latest/i })).toHaveLength(accounts.length);
+  });
+
+  it('labels an active External API account and removes only its quota refresh control', () => {
+    render(<Overview {...overviewProps()} apiAccountIds={['a']} />);
+
+    const externalCard = screen.getByRole('heading', { name: 'codex-a' }).closest('article');
+    const normalCard = screen.getByRole('heading', { name: 'codex-b' }).closest('article');
+    expect(externalCard).toBeTruthy();
+    expect(normalCard).toBeTruthy();
+    expect(within(externalCard!).getByText('External API')).toBeTruthy();
+    expect(within(externalCard!).getByText('Active')).toBeTruthy();
+    expect(
+      within(externalCard!).queryByRole('button', { name: 'Refresh codex-a quota' }),
+    ).toBeNull();
+    expect(within(normalCard!).getByRole('button', { name: 'Refresh codex-b quota' })).toBeTruthy();
   });
 
   it('does not show Switch actions in Profile mode', () => {

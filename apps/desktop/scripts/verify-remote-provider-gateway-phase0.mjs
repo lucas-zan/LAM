@@ -78,13 +78,37 @@ async function listFiles(root, relative = '') {
   return files.sort();
 }
 
+export async function writeManifestArtifacts(fixtureRoot, captureDate) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(captureDate ?? '')) {
+    fail('--capture-date must use YYYY-MM-DD');
+  }
+  const manifestPath = path.join(fixtureRoot, 'manifest.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  manifest.target.captureDate = captureDate;
+  const actual = (await listFiles(fixtureRoot)).filter((file) => file !== 'manifest.json');
+  const referenced = new Set(manifest.scenarios.flatMap((scenario) => scenario.artifacts));
+  assertEqual([...referenced].sort(), actual, 'scenario artifact references');
+  manifest.artifacts = [];
+  for (const relative of actual) {
+    const bytes = await readFile(path.join(fixtureRoot, relative));
+    assertSafeFixture(bytes.toString('utf8'), relative);
+    manifest.artifacts.push({
+      path: relative,
+      bytes: bytes.byteLength,
+      fnv1a64: fnv1a64(bytes),
+    });
+  }
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  return manifest;
+}
+
 function validateManifestContract(manifest) {
   if (manifest.schemaVersion !== 1) fail('unsupported contract manifest schema');
   assertEqual(
     manifest.target,
     {
       architecture: 'arm64',
-      captureDate: '2026-07-10',
+      captureDate: '2026-07-14',
       codexVersion: '0.144.1',
       osVersion: '15.6',
       platform: 'darwin',
@@ -107,6 +131,31 @@ function validateManifestContract(manifest) {
     'official sources',
   );
   if (manifest.stateMode !== 'full-input') fail('state mode mismatch');
+  assertEqual(
+    manifest.modelCatalog,
+    {
+      fallbackMetadataAllowed: false,
+      itemRequiredFields: [
+        'slug',
+        'display_name',
+        'supported_reasoning_levels',
+        'shell_type',
+        'visibility',
+        'supported_in_api',
+        'priority',
+        'base_instructions',
+        'supports_reasoning_summaries',
+        'support_verbosity',
+        'truncation_policy',
+        'supports_parallel_tool_calls',
+        'experimental_supported_tools',
+      ],
+      nonEmpty: true,
+      openAiDataShapeAccepted: false,
+      topLevelField: 'models',
+    },
+    'Codex model catalog',
+  );
   if (!Array.isArray(manifest.volatileFields) || manifest.volatileFields.length === 0) {
     fail('volatile field policy is missing');
   }
@@ -192,6 +241,7 @@ function renderCoverageReport(manifest, approval) {
 
 - Required and observed: ${manifest.requiredRouteSet.map((route) => `\`${route}\``).join(', ')}
 - Explicitly unsupported: ${approval.routes.unsupported.map((route) => `\`${route}\``).join(', ')}
+- Model catalog: non-empty top-level \`${manifest.modelCatalog.topLevelField}\`; OpenAI \`data[]\` is not the Codex catalog shape; fallback metadata is forbidden.
 
 ## Captured behavior
 
@@ -274,6 +324,10 @@ async function main() {
   const reportPath =
     optionValue('--report') ??
     path.join(repoRoot, 'docs/remote-provider-gateway-contract-coverage.md');
+
+  if (process.argv.includes('--write-manifest')) {
+    await writeManifestArtifacts(fixtureRoot, optionValue('--capture-date'));
+  }
 
   if (process.argv.includes('--write-report')) {
     const manifest = JSON.parse(await readFile(path.join(fixtureRoot, 'manifest.json'), 'utf8'));

@@ -4,7 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { verifyPhaseZero } from './verify-remote-provider-gateway-phase0.mjs';
+import {
+  verifyPhaseZero,
+  writeManifestArtifacts,
+} from './verify-remote-provider-gateway-phase0.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(desktopRoot, '../..');
@@ -46,6 +49,18 @@ test('rejects a corrupted manifest checksum', async () => {
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
     await assert.rejects(verifyPhaseZero(paths), /checksum mismatch/);
+  });
+});
+
+test('refreshes deterministic checksums after a controlled capture', async () => {
+  await withFixtureCopy(async (paths) => {
+    const artifact = path.join(paths.fixtureRoot, 'observations/normal.json');
+    await writeFile(artifact, '\n', { flag: 'a' });
+    await assert.rejects(verifyPhaseZero(paths), /byte count mismatch/);
+
+    const manifest = await writeManifestArtifacts(paths.fixtureRoot, '2026-07-14');
+    assert.equal(manifest.target.captureDate, '2026-07-14');
+    await verifyPhaseZero(paths);
   });
 });
 

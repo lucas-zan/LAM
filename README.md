@@ -1,6 +1,8 @@
 # LocalAgentManager (Lam)
 
-**A local-first AI coding agent workspace manager.** Phase 1 is **Codex-first**: manage multiple `CODEX_HOME` profiles, relay workspaces, safe `sessions/` sync, and auditable `codex resume` commands. The architecture reserves extension to more agents (Claude Code, OpenCode, etc.) while shipping **Codex-first** today.
+**A local-first AI coding agent workspace manager.** LAM is **Codex-first** and supports ChatGPT/PAT accounts plus external Responses or Gateway-adapted Chat Completions API accounts.
+
+The product invariant is **one Account = one Profile = one `CODEX_HOME`**. Use **Add Account → API Account** to name an account, enter its endpoint/models/API key, review the dry-run plan, and create it atomically. LAM creates an exclusive internal Provider connection by default; Provider reuse is an explicit advanced option. Switching models rebinds the same Account and never creates another `CODEX_HOME`.
 
 **中文说明：** [`README.zh-CN.md`](README.zh-CN.md)
 
@@ -37,7 +39,7 @@ Authoritative design: [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md). Task track
 
 ## Cross-account session handoff — what exists today
 
-This is the core problem behind “switch account → session not inherited → token waste.” **Lam does not yet offer a single automatic “switch account and keep chatting” button inside Codex.** Phase 1 provides a **manual, safe pipeline** that matches how Codex actually stores state.
+This is the core problem behind “switch account → session not inherited → token waste.” LAM provides a guided handoff that analyzes Provider compatibility before writing the target session, copies only allowed session data, and resumes with the target Account runtime.
 
 ### Why Codex does not inherit across accounts
 
@@ -50,7 +52,7 @@ Each profile is an isolated home directory:
 
 `codex resume <session-id>` always resolves sessions **under the current `CODEX_HOME`**. Changing wrapper/account without copying the right `sessions/` tree means Codex starts from scratch for that home.
 
-### What Lam implements (Phase 1)
+### What LAM implements
 
 | Step | Feature in app | What it does |
 |------|----------------|--------------|
@@ -70,10 +72,8 @@ Account A (quota low)  --[Safe Sync sessions/]-->  Relay home (B’s auth)
                                             with CODEX_HOME=relay
 ```
 
-### What is **not** implemented yet
+### Deliberate limits
 
-- **No one-click “continue this session on account B”** — you still run relay + sync + resume yourself.
-- **Sessions UI is per-account** — dropdown filters one `CODEX_HOME` at a time; there is no unified cross-account session board with built-in handoff (see `docs/CORRECTION-PLAN.md` A1/A2).
 - **No in-app Codex process** — Lam does not embed the CLI; it prepares commands and opens **Terminal.app**.
 - **No automatic sync on account switch** — switching the Sessions filter only changes which directory is listed; it does not move files.
 - **`history.jsonl` merge** — intentionally out of scope for Phase 1.
@@ -91,14 +91,18 @@ Planned improvements: guided relay wizard, cross-profile session browsing, clear
 - Safe sync (`sessions/` only, target backup, manifest).
 - Resume command builder (shell-escaped) + Terminal launch.
 - **`relay_resume_session`:** copy/merge a single session into a target profile (with diverged strategies) and return a resume command.
-- Provider metadata CRUD; secrets via env/Keychain refs only (no API keys in UI).
+- Account-first external API lifecycle: atomic create, same-home model switch, delete, and startup recovery.
+- Provider metadata CRUD; API keys are write-only inputs stored in macOS Keychain and never returned in DTOs, config, plans, journals, relay reports, or metrics.
+- Direct Responses and a local bearer-protected `/v1/models` + `/v1/responses` Gateway for verified Chat Completions adapters.
+- Provider-aware relay analyzer: unsupported/stateful history fails closed before target writes; representation-only loss requires confirmation.
 - Attach provider to profile; **provider mismatch** warnings on sessions.
 - Account/quota **disk cache** for faster startup (`accounts-cache.json`, cached quota snapshots).
 - **Personal Access Token (PAT) tracking:** Track PAT expiration, display auth status (Lam UI only, doesn't modify Codex files).
 
 **Desktop UI (`apps/desktop`)**
 
-- Routes: **Overview** (accounts + quota), **Sessions**, **Relay**, **Providers**, **Sync**, **Settings**.
+- Routes: **Overview** (accounts + quota), **Sessions**, **Relay**, **Providers** (advanced connection management), **Sync**, **Settings**.
+- **Add Account → API Account** is the normal external API entry point; model switching is available on that Account.
 - Quota via Codex app-server (5h / weekly); shows **N/A** when unavailable (no fake percentages).
 - **Menu bar tray (macOS):** **left-click** opens a compact **quota popover** (5h / weekly meters, per-account **Relay** or **Resume** when a latest session exists). **Right-click** for Refresh / Open app. Click outside the panel or **Close** dismisses it (main window stays hidden unless you choose **Open**). Background refresh every 5 minutes (startup also loads cached accounts/quota first, then refreshes per account in parallel).
 - Sync modal: dry-run required before execute.
@@ -125,14 +129,16 @@ See [`docs/PHASE1-ACCEPTANCE.md`](docs/PHASE1-ACCEPTANCE.md), [`docs/CORRECTION-
 
 ## Roadmap
 
-### Shipped (Phase 1 core + 1.2 quota + 1.5 provider basics)
+### Shipped
 
 | Area | Delivered |
 |------|-----------|
 | **Accounts & relay** | Scan `~/.codex*`; create managed accounts; **relay workspaces**; safe `sessions/` sync (dry-run → execute). |
 | **Quota** | Codex app-server **5h / weekly** in Overview; **menu bar tray popover**; disk cache; **per-account parallel refresh**; N/A when unavailable. |
 | **Handoff** | `codex resume` commands; **`relay_resume_session`** (copy/merge session → target profile) from Overview **Relay/Continue** and tray **Relay/Resume**; diverged-session strategies in Settings. |
-| **Provider** | Provider Center CRUD, env/Keychain secret refs, attach to profile, mismatch warnings. |
+| **External API accounts** | Account-first Direct Responses / Gateway setup, Keychain credentials, atomic lifecycle, same-home model switch, startup recovery. |
+| **Provider** | Advanced connection CRUD/reuse, health/readiness/capability provenance, attach plans, mismatch warnings. |
+| **Relay safety** | Provider-aware compatibility report and fingerprint; blocked history produces zero target writes. |
 | **Desktop** | Tauri v2 app; tray-first launch (main window via **Open**); click-outside to dismiss popover. |
 
 ### Next (Phase 1 wrap-up — macOS only)
@@ -214,6 +220,8 @@ LAM_HOME="$(pwd)/../../.fake-home" cargo test
 cd apps/desktop
 npm run build
 npm run test:ui
+npm run test:gateway-phase0
+npm run test:gateway-g5
 ```
 
 **Scanner only:**

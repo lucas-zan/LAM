@@ -27,6 +27,7 @@ struct ContractManifest {
     support_policy: SupportPolicy,
     official_sources: Vec<String>,
     state_mode: String,
+    model_catalog: ModelCatalogContract,
     required_route_set: Vec<String>,
     observed_route_set: Vec<String>,
     volatile_fields: Vec<String>,
@@ -49,6 +50,16 @@ struct ContractTarget {
 struct SupportPolicy {
     kind: String,
     versions: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelCatalogContract {
+    top_level_field: String,
+    non_empty: bool,
+    open_ai_data_shape_accepted: bool,
+    fallback_metadata_allowed: bool,
+    item_required_fields: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,7 +123,7 @@ fn manifest_pins_the_complete_exact_tested_contract() {
     assert_eq!(manifest.target.platform, "darwin");
     assert_eq!(manifest.target.architecture, "arm64");
     assert_eq!(manifest.target.os_version, "15.6");
-    assert_eq!(manifest.target.capture_date, "2026-07-10");
+    assert_eq!(manifest.target.capture_date, "2026-07-14");
     assert_eq!(manifest.support_policy.kind, "exact-tested");
     assert_eq!(manifest.support_policy.versions, ["0.144.1"]);
     assert!(manifest
@@ -127,6 +138,28 @@ fn manifest_pins_the_complete_exact_tested_contract() {
         manifest.state_mode.as_str(),
         "full-input" | "previous-response-id" | "state-route" | "unsupported"
     ));
+    assert_eq!(manifest.model_catalog.top_level_field, "models");
+    assert!(manifest.model_catalog.non_empty);
+    assert!(!manifest.model_catalog.open_ai_data_shape_accepted);
+    assert!(!manifest.model_catalog.fallback_metadata_allowed);
+    assert_eq!(
+        manifest.model_catalog.item_required_fields,
+        [
+            "slug",
+            "display_name",
+            "supported_reasoning_levels",
+            "shell_type",
+            "visibility",
+            "supported_in_api",
+            "priority",
+            "base_instructions",
+            "supports_reasoning_summaries",
+            "support_verbosity",
+            "truncation_policy",
+            "supports_parallel_tool_calls",
+            "experimental_supported_tools",
+        ]
+    );
     assert!(!manifest.required_route_set.is_empty());
     assert!(!manifest.observed_route_set.is_empty());
     assert!(!manifest.volatile_fields.is_empty());

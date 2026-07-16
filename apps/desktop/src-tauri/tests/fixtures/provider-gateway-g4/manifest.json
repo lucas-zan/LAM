@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "gate": "G4",
+  "provider": "synthetic-deepseek-chat-completions",
+  "scenarios": [
+    "attach_runtime_detach",
+    "ui_close_sidecar_survival",
+    "restart_recovery",
+    "rebind_rotate_drift",
+    "foreign_port_migration_rollback",
+    "security_retry_fault_matrix"
+  ],
+  "evidence": {
+    "runtime": "provider_phase3_g4::deepseek_attach_real_gateway_codex_requests_and_detach",
+    "recovery": "provider_attach_transaction",
+    "sidecar": "provider_gateway_sidecar",
+    "security": [
+      "provider_gateway_server",
+      "provider_gateway_upstream",
+      "provider_gateway_binding",
+      "provider_versioned_store"
+    ],
+    "packaging": "package:gateway:verify"
+  }
+}

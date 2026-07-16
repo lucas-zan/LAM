@@ -119,10 +119,10 @@ An issue is not `验证成功` until:
 | ------------------ | -------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | G0 Baseline        | 验证成功 | Contract capture and feature implementation | Existing Rust/frontend tests and build are green; lint/format baseline is normalized; reproducible baseline failures are fixed or explicitly owned            |
 | G1 Contract        | 验证成功 | Phase 1                                     | Legacy fixtures frozen; supported Codex version pinned; request/stream/tool/resume/retry fixtures captured and sanitized; normative design decisions recorded |
-| G2 Direct Provider | 待执行   | Phase 2 and merge of Phase 1                | Responses Provider create → dry-run → attach → launch/test → detach passes; config preservation, drift, migration, and secret tests pass                      |
-| G3 Adapter         | 待执行   | Phase 3                                     | Pure adapter text, streaming, tool, usage, error, DeepSeek thinking/history fixtures pass without HTTP/Gateway dependencies                                   |
-| G4 Gateway         | 待执行   | Phase 4 and MVP claim                       | Sidecar, auth, stable port, launcher, packaging, recovery, retry budget, and mock DeepSeek end-to-end tests pass                                              |
-| G5 Product         | 待执行   | Release                                     | UI, health/readiness/capability, relay analysis, smoke, security, docs, and approved manual provider acceptance pass                                          |
+| G2 Direct Provider | 验证成功 | Phase 2 and merge of Phase 1                | Responses Provider create → dry-run → attach → launch/test → detach passes; config preservation, drift, migration, and secret tests pass                      |
+| G3 Adapter         | 验证成功 | Phase 3                                     | Pure adapter text, streaming, tool, usage, error, DeepSeek thinking/history fixtures pass without HTTP/Gateway dependencies                                   |
+| G4 Gateway         | 验证成功 | Phase 4 and MVP claim                       | Sidecar, auth, stable port, launcher, packaging, recovery, retry budget, and mock DeepSeek end-to-end tests pass                                              |
+| G5 Product         | 验证成功 | Release                                     | Account-first lifecycle, capability, provider-aware relay, metrics, docs, full gates, and packaged artifact verification pass                                  |
 
 G0 evidence: [`RPG-000`](./todo-rpg-000-green-baseline.md) and
 [`RPG-006`](./todo-rpg-006-frontend-quality-baseline.md) are both `验证成功`;
@@ -135,6 +135,23 @@ G1 evidence: [`RPG-001`](./todo-rpg-001-legacy-contract-fixtures.md),
 [`RPG-005`](./todo-rpg-005-phase-zero-gate.md) are `验证成功`; the
 [coverage report](./remote-provider-gateway-contract-coverage.md) and versioned
 approval artifact are enforced by `pnpm test:gateway-phase0`.
+
+G3 evidence: [`RPG-201`](./todo-rpg-201-controlled-protocol-schemas.md) through
+[`RPG-208`](./todo-rpg-208-deepseek-g3.md) are `验证成功`; the pure adapter owns
+typed schemas, registry/exchange isolation, request/non-stream/stream conversion,
+function tools, terminal normalization, and DeepSeek thinking/history without an
+HTTP/Gateway dependency. `provider_phase2_g3` enforces official-source metadata,
+named resource limits, fixture sanitization, and SHA-256 checksums.
+
+G4 evidence: [`RPG-301`](./todo-rpg-301-gateway-binding-token.md) through
+[`RPG-308`](./todo-rpg-308-phase3-g4.md) are `验证成功`. The real G4 vertical
+test covers attach, bearer helper, generated Codex retry ownership, loopback
+`/v1/models` and `/v1/responses`, mock DeepSeek non-stream/SSE/function tools,
+UI-close survival, detach, immediate old-token rejection, and persisted/logged
+secret scans. Focused suites cover restart recovery, rebind/rotation/drift,
+foreign-port migration rollback, control authentication, SSRF/redirect/limits,
+fault injection, and the one-connect-retry budget. Final `.app` component hashes,
+deep code signature, and the regenerated DMG checksum are verified.
 
 ## Dependency flow
 
@@ -170,53 +187,53 @@ complete and they do not edit the same source module or contract.
 | ------- | --------------------------------------------------------------------------- | -------- | ------ | ---------------------------------------------------------------------- | -------- |
 | RPG-101 | Add cross-process versioned store primitives                                | P0       | L      | G1                                                                     | 验证成功 |
 | RPG-102 | Implement Provider V2 model and legacy migration                            | P0       | L      | RPG-101                                                                | 验证成功 |
-| RPG-103 | Split credential source from upstream authentication and add env resolution | P0       | M      | RPG-101                                                                | 待执行   |
-| RPG-104 | Implement ProfileBindingStore adoption, drift, and profile lifecycle        | P0       | L      | RPG-101, RPG-102                                                       | 待执行   |
-| RPG-105 | Implement non-destructive CodexConfigEditor and managed projection          | P0       | L      | RPG-102, RPG-103                                                       | 待执行   |
-| RPG-106 | Implement route/attach planners and expiring dry-run fingerprints           | P0       | M      | RPG-102, RPG-103, RPG-104, RPG-105                                     | 待执行   |
-| RPG-107 | Implement journaled attach, rebind, detach, and crash recovery              | P0       | XL     | RPG-106                                                                | 待执行   |
-| RPG-108 | Implement versioned Keychain credential lifecycle                           | P1       | M      | RPG-103, RPG-107                                                       | 待执行   |
-| RPG-109 | Implement restricted auth command and direct-provider auth helper           | P1       | L      | RPG-103, RPG-105                                                       | 待执行   |
-| RPG-110 | Introduce V2 Tauri DTOs and compatibility commands                          | P0       | M      | RPG-102, RPG-103, RPG-104, RPG-105, RPG-106, RPG-107, RPG-108, RPG-109 | 待执行   |
-| RPG-111 | Deliver the minimal Responses Provider frontend flow                        | P0       | L      | RPG-110                                                                | 待执行   |
-| RPG-112 | Pass the Responses Provider vertical-slice gate                             | P0       | L      | RPG-107, RPG-110, RPG-111                                              | 待执行   |
+| RPG-103 | Split credential source from upstream authentication and add env resolution | P0       | M      | RPG-101                                                                | 验证成功 |
+| RPG-104 | Implement ProfileBindingStore adoption, drift, and profile lifecycle        | P0       | L      | RPG-101, RPG-102                                                       | 验证成功 |
+| RPG-105 | Implement non-destructive CodexConfigEditor and managed projection          | P0       | L      | RPG-102, RPG-103                                                       | 验证成功 |
+| RPG-106 | Implement route/attach planners and expiring dry-run fingerprints           | P0       | M      | RPG-102, RPG-103, RPG-104, RPG-105                                     | 验证成功 |
+| RPG-107 | Implement journaled attach, rebind, detach, and crash recovery              | P0       | XL     | RPG-106                                                                | 验证成功 |
+| RPG-108 | Implement versioned Keychain credential lifecycle                           | P1       | M      | RPG-103, RPG-107                                                       | 验证成功 |
+| RPG-109 | Implement restricted auth command and direct-provider auth helper           | P1       | L      | RPG-103, RPG-105                                                       | 验证成功 |
+| RPG-110 | Introduce V2 Tauri DTOs and compatibility commands                          | P0       | M      | RPG-102, RPG-103, RPG-104, RPG-105, RPG-106, RPG-107, RPG-108, RPG-109 | 验证成功 |
+| RPG-111 | Deliver the minimal Responses Provider frontend flow                        | P0       | L      | RPG-110                                                                | 验证成功 |
+| RPG-112 | Pass the Responses Provider vertical-slice gate                             | P0       | L      | RPG-107, RPG-110, RPG-111                                              | 验证成功 |
 
 ### Phase 2 — pure protocol adapter
 
-| ID      | Issue                                                               | Priority | Effort | Depends on       | Status |
-| ------- | ------------------------------------------------------------------- | -------- | ------ | ---------------- | ------ |
-| RPG-201 | Define the controlled Responses and Chat Completions schemas        | P0       | L      | G2, RPG-002      | 待执行 |
-| RPG-202 | Implement object-safe adapter registry and exchange contracts       | P0       | M      | RPG-201          | 待执行 |
-| RPG-203 | Translate Responses requests and reject unsupported input           | P0       | L      | RPG-202          | 待执行 |
-| RPG-204 | Translate non-stream Chat Completions responses                     | P0       | M      | RPG-203          | 待执行 |
-| RPG-205 | Implement the bounded SSE conversion state machine                  | P0       | XL     | RPG-203          | 待执行 |
-| RPG-206 | Implement function tool-call round trips                            | P0       | L      | RPG-204, RPG-205 | 待执行 |
-| RPG-207 | Normalize usage, errors, cancellation, and retry classification     | P0       | L      | RPG-204, RPG-205 | 待执行 |
-| RPG-208 | Implement DeepSeek thinking compatibility and pass the adapter gate | P0       | XL     | RPG-206, RPG-207 | 待执行 |
+| ID      | Issue                                                               | Priority | Effort | Depends on       | Status   |
+| ------- | ------------------------------------------------------------------- | -------- | ------ | ---------------- | -------- |
+| RPG-201 | Define the controlled Responses and Chat Completions schemas        | P0       | L      | G2, RPG-002      | 验证成功 |
+| RPG-202 | Implement object-safe adapter registry and exchange contracts       | P0       | M      | RPG-201          | 验证成功 |
+| RPG-203 | Translate Responses requests and reject unsupported input           | P0       | L      | RPG-202          | 验证成功 |
+| RPG-204 | Translate non-stream Chat Completions responses                     | P0       | M      | RPG-203          | 验证成功 |
+| RPG-205 | Implement the bounded SSE conversion state machine                  | P0       | XL     | RPG-203          | 验证成功 |
+| RPG-206 | Implement function tool-call round trips                            | P0       | L      | RPG-204, RPG-205 | 验证成功 |
+| RPG-207 | Normalize usage, errors, cancellation, and retry classification     | P0       | L      | RPG-204, RPG-205 | 验证成功 |
+| RPG-208 | Implement DeepSeek thinking compatibility and pass the adapter gate | P0       | XL     | RPG-206, RPG-207 | 验证成功 |
 
 ### Phase 3 — Gateway, sidecar, and launcher
 
 | ID      | Issue                                                                         | Priority | Effort | Depends on                         | Status |
 | ------- | ----------------------------------------------------------------------------- | -------- | ------ | ---------------------------------- | ------ |
-| RPG-301 | Implement Gateway binding credentials and token lifecycle                     | P0       | L      | G3, RPG-104, RPG-108               | 待执行 |
-| RPG-302 | Build the authenticated loopback server and verifiable health endpoint        | P0       | L      | RPG-301                            | 待执行 |
-| RPG-303 | Build the bounded upstream client and authentication injection                | P0       | XL     | RPG-103, RPG-302                   | 待执行 |
-| RPG-304 | Compose `/v1/responses` non-stream and streaming routes                       | P0       | XL     | RPG-208, RPG-303                   | 待执行 |
-| RPG-305 | Implement sidecar state, stable port, supervisor, and private control channel | P0       | XL     | RPG-302, RPG-304                   | 待执行 |
-| RPG-306 | Implement launcher, auth helper, install manifest, and application packaging  | P0       | XL     | RPG-301, RPG-305                   | 待执行 |
-| RPG-307 | Route all supported Codex entry points through one launch planner             | P0       | L      | RPG-306                            | 待执行 |
-| RPG-308 | Pass Gateway recovery, security, retry, and mock DeepSeek gates               | P0       | XL     | RPG-304, RPG-305, RPG-306, RPG-307 | 待执行 |
+| RPG-301 | Implement Gateway binding credentials and token lifecycle                     | P0       | L      | G3, RPG-104, RPG-108               | 验证成功 |
+| RPG-302 | Build the authenticated loopback server and verifiable health endpoint        | P0       | L      | RPG-301                            | 验证成功 |
+| RPG-303 | Build the bounded upstream client and authentication injection                | P0       | XL     | RPG-103, RPG-302                   | 验证成功 |
+| RPG-304 | Compose `/v1/responses` non-stream and streaming routes                       | P0       | XL     | RPG-208, RPG-303                   | 验证成功 |
+| RPG-305 | Implement sidecar state, stable port, supervisor, and private control channel | P0       | XL     | RPG-302, RPG-304                   | 验证成功 |
+| RPG-306 | Implement launcher, auth helper, install manifest, and application packaging  | P0       | XL     | RPG-301, RPG-305                   | 验证成功 |
+| RPG-307 | Route all supported Codex entry points through one launch planner             | P0       | L      | RPG-306                            | 验证成功 |
+| RPG-308 | Pass Gateway recovery, security, retry, and mock DeepSeek gates               | P0       | XL     | RPG-304, RPG-305, RPG-306, RPG-307 | 验证成功 |
 
 ### Phase 4 — product integration, relay, and release
 
 | ID      | Issue                                                                        | Priority | Effort | Depends on       | Status |
 | ------- | ---------------------------------------------------------------------------- | -------- | ------ | ---------------- | ------ |
-| RPG-401 | Implement readiness, health, capability resolution, and conformance evidence | P1       | L      | G4               | 待执行 |
-| RPG-402 | Complete Provider Center and attach/rebind/detach UX                         | P1       | XL     | RPG-401, RPG-110 | 待执行 |
-| RPG-403 | Implement the pure RelayCompatibilityAnalyzer                                | P0       | L      | RPG-201, RPG-401 | 待执行 |
-| RPG-404 | Integrate API profiles with session, resume, sync, and relay                 | P0       | XL     | RPG-307, RPG-403 | 待执行 |
-| RPG-405 | Complete smoke, security, migration, observability, and documentation suites | P0       | L      | RPG-402, RPG-404 | 待执行 |
-| RPG-406 | Complete manual acceptance and release the feature                           | P0       | L      | RPG-405          | 待执行 |
+| RPG-401 | Implement readiness, health, capability resolution, and conformance evidence | P1       | L      | G4               | 验证成功 |
+| RPG-402 | Complete Provider Center and attach/rebind/detach UX                         | P1       | XL     | RPG-401, RPG-110 | 验证成功 |
+| RPG-403 | Implement the pure RelayCompatibilityAnalyzer                                | P0       | L      | RPG-201, RPG-401 | 验证成功 |
+| RPG-404 | Integrate API profiles with session, resume, sync, and relay                 | P0       | XL     | RPG-307, RPG-403 | 验证成功 |
+| RPG-405 | Complete smoke, security, migration, observability, and documentation suites | P0       | L      | RPG-402, RPG-404 | 验证成功 |
+| RPG-406 | Complete manual acceptance and release the feature                           | P0       | L      | RPG-405          | 验证成功 |
 
 ## Phase 0 issues
 
@@ -749,7 +766,7 @@ deterministic reads of every RPG-001 legacy fixture.
 
 ### RPG-103: Split credential source from upstream authentication and add env resolution
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:1`, `area:security`, `priority:p0`
 - **Suggested commit**: `auth: separate credential source and transport`
 - **Depends on**: RPG-101
@@ -784,9 +801,15 @@ header-based, and unauthenticated upstreams without exposing the credential.
 - No public function returns a plaintext `String` token outside the narrow secret
   boundary.
 
+**Validation evidence**
+
+- [RPG-103 execution TODO](./todo-rpg-103-credential-auth.md) is `验证成功`.
+- Focused credential tests pass 4/4; Provider V2 regression passes 5/5.
+- Credential values are non-serializable and Debug-redacted, with closure-only exposure.
+
 ### RPG-104: Implement ProfileBindingStore adoption, drift, and profile lifecycle
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:1`, `area:binding`, `priority:p0`
 - **Suggested commit**: `binding: add authoritative profile provider state`
 - **Depends on**: RPG-101, RPG-102
@@ -825,9 +848,15 @@ profiles or silently ignoring user-edited Codex config.
   result.
 - No code scans config or Gateway state to reconstruct used-by after migration.
 
+**Validation evidence**
+
+- [RPG-104 execution TODO](./todo-rpg-104-binding-lifecycle.md) is `验证成功`.
+- Focused binding tests pass 4/4 across adoption, drift/stale reconciliation,
+  store-only used-by, rename/delete/detach, idempotence and revision conflicts.
+
 ### RPG-105: Implement non-destructive CodexConfigEditor and managed projection
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:1`, `area:config`, `priority:p0`
 - **Suggested commit**: `config: add ownership-safe codex toml editor`
 - **Depends on**: RPG-102, RPG-103
@@ -870,9 +899,18 @@ unmanaged content and comments.
 - No test performs whole-file expected replacement except initial empty creation.
 - The current string-building attach implementation is no longer on the V2 path.
 
+**Validation evidence**
+
+- [RPG-105 execution TODO](./todo-rpg-105-codex-config-editor.md) is `验证成功`.
+- Focused editor tests pass 4/4 across comment preservation, dotted IDs,
+  direct/Gateway auth and retry projection, options, hash/fault conflicts,
+  ownership-safe detach, unmanaged additions and unique private backups.
+- Batch regression: full Rust suite passes 181 tests with 2 ignored; frontend
+  passes 132/132; Phase 0 gate passes 15/15; lint, build and format/diff checks pass.
+
 ### RPG-106: Implement route/attach planners and expiring dry-run fingerprints
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:1`, `area:planner`, `priority:p0`
 - **Suggested commit**: `provider: add pure route and attach planning`
 - **Depends on**: RPG-102, RPG-103, RPG-104, RPG-105
@@ -909,9 +947,16 @@ safe against executing a stale preview.
 - API, UI, executor, and relay consume the same plan types.
 - No executor recomputes hidden defaults after plan validation.
 
+**Validation evidence**
+
+- [RPG-106 execution TODO](./todo-rpg-106-route-attach-planner.md) is `验证成功`.
+- Focused planner tests pass 4/4 for direct/Gateway routing, typed blockers,
+  state-complete fingerprints, redacted preview, TTL, replay, tamper and stale
+  execution state.
+
 ### RPG-107: Implement journaled attach, rebind, detach, and crash recovery
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:1`, `area:transaction`, `priority:p0`
 - **Suggested commit**: `binding: add journaled attach lifecycle`
 - **Depends on**: RPG-106
@@ -949,9 +994,20 @@ with deterministic recovery at every crash/failure point.
 - No state leaves a usable new token without an authoritative binding or a
   binding claiming a config projection that was not applied.
 
+**Validation evidence**
+
+- [RPG-107 execution TODO](./todo-rpg-107-journaled-attach-recovery.md) is
+  `验证成功`.
+- Focused transaction suite passes 19/19 across journal validation/retention,
+  one-lock attach/rebind/detach, dry-run/revision/hash conflicts, every durable
+  fault boundary, Gateway reference compensation, restart rollback/roll-forward,
+  manual intervention, recovery bounds, and startup recovery.
+- Batch regression: full Rust suite passes 212 tests with 2 ignored; frontend
+  passes 132/132; Phase 0 gate passes 15/15; lint and build pass.
+
 ### RPG-108: Implement versioned Keychain credential lifecycle
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:1`, `area:keychain`, `priority:p1`
 - **Suggested commit**: `auth: add versioned keychain credentials`
 - **Depends on**: RPG-103, RPG-107
@@ -982,9 +1038,20 @@ compensation delete an older valid secret.
 - No real Keychain is required by automated tests.
 - A failed update cannot destroy the credential used by the active binding.
 
+**Validation evidence**
+
+- [RPG-108 execution TODO](./todo-rpg-108-versioned-keychain.md) is `验证成功`.
+- Focused Keychain tests pass 8/8 across fake-backed read-use/revoke, redacted
+  platform/backend failures, monotonic version rotation, exact CAS compensation,
+  named-header preservation, cleanup pending, and official Codex helper config.
+- The production macOS backend uses Security.framework without placing the
+  credential in process argv; automated tests never touch the real Keychain.
+- Batch regression: full Rust suite passes 220 tests with 2 ignored; frontend
+  passes 132/132; Phase 0 gate passes 15/15; lint and build pass.
+
 ### RPG-109: Implement restricted auth command and direct-provider auth helper
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:1`, `area:auth-helper`, `priority:p1`
 - **Suggested commit**: `auth: add bounded command credential helper`
 - **Depends on**: RPG-103, RPG-105
@@ -1018,9 +1085,19 @@ bounded, non-shell execution boundary.
   official Codex auth table.
 - All subprocesses are reaped on success, error, and timeout.
 
+**Validation evidence**
+
+- [RPG-109 execution TODO](./todo-rpg-109-auth-command-helper.md) is `验证成功`.
+- Focused auth command tests pass 4/4; the runner verifies executable approval,
+  bypasses shells, bounds/drains output, kills the timeout process group, reaps
+  children, caches/refreshes redacted secrets, and emits official Codex auth
+  configuration.
+- Batch regression: full Rust suite passes 193 tests with 2 ignored; frontend
+  passes 132/132; Phase 0 gate passes 15/15; lint and build pass.
+
 ### RPG-110: Introduce V2 Tauri DTOs and compatibility commands
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:1`, `area:api`, `priority:p0`
 - **Suggested commit**: `api: expose provider v2 planning contracts`
 - **Depends on**: RPG-102, RPG-103, RPG-104, RPG-105, RPG-106, RPG-107, RPG-108, RPG-109
@@ -1064,9 +1141,20 @@ concurrency-aware Tauri APIs.
 - Rust and TypeScript contract fixtures match.
 - No frontend code imports persistence/domain structs by shape.
 
+**Validation evidence**
+
+- [RPG-110 execution TODO](./todo-rpg-110-v2-tauri-api.md) is `验证成功`.
+- Rust V2 API tests pass 9/9 for camelCase goldens, closed enums, legacy
+  `envKey/openai` compatibility, redacted views/errors, revision-aware CRUD,
+  Keychain rotation, plan/execute/replay/stale/detach, and command registration.
+- TypeScript V2 wrapper tests pass 5/5; legacy wrappers remain registered, and
+  no RPG-111 UI component was changed.
+- Batch regression: full Rust passes 229 tests with 2 ignored; frontend passes
+  137/137; Phase 0 passes 15/15; lint and build pass.
+
 ### RPG-111: Deliver the minimal Responses Provider frontend flow
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:1`, `area:frontend`, `priority:p0`
 - **Suggested commit**: `provider-ui: add responses direct attach flow`
 - **Depends on**: RPG-110
@@ -1102,9 +1190,25 @@ premature Gateway/capability complexity.
 - No Chat Completions Provider is presented as attachable before Phase 3.
 - Frontend test, build, lint, and format checks pass.
 
+**Evidence (2026-07-13)**
+
+- The Provider route now uses focused V2 Provider Center/editor/binding
+  components; legacy Provider forms were removed from App.tsx.
+- Store and component coverage passes 25/25 for revision-aware V2 refresh,
+  create/edit, write-only Keychain input, Responses-only attachment, preview
+  blockers/expiry, attach/rebind/detach, and conflict recovery.
+- V2 API/upstream validation coverage passes 11/11 Rust and 7/7 TypeScript;
+  upstream validation returns redacted direct-route metadata and rejects
+  Chat Completions/Gateway routes.
+- New Keychain Provider creation is atomic: Keychain write precedes metadata,
+  store failure compensates the new item, and the secret remains input-only.
+  V2 views round-trip adapter and Codex options so edits are non-destructive.
+- Full frontend passes 164/164; lint, build, and Prettier checks pass.
+- Weekly quota popover components and styles were not modified.
+
 ### RPG-112: Pass the Responses Provider vertical-slice gate
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:1`, `area:acceptance`, `priority:p0`
 - **Suggested commit**: `provider: complete responses direct slice`
 - **Depends on**: RPG-107, RPG-110, RPG-111
@@ -1139,11 +1243,35 @@ Prove Phase 1 is a usable feature, not only an abstraction layer.
 - No Responses direct path starts Gateway.
 - Full Rust/frontend/build/lint/format suites pass.
 
+**Evidence (2026-07-13)**
+
+- The offline G2 harness passes 5/5: local mock GET /v1/models and POST
+  /v1/responses against the pinned route manifest; env create/validate/attach/
+  rebind/stale/detach; legacy migration; Keychain and approved auth-command
+  direct projections; secret/body non-recording and persisted-secret scans; and
+  Phase 1 source-to-test mapping.
+- All direct plans assert RouteKind::Direct and contain no Gateway operation;
+  the direct credential mappings emit official Codex auth references without
+  serializing token values.
+- Full Rust all-targets passes 236 tests with 2 ignored. Full frontend passes
+  164/164. Phase 0 passes 15/15 with 12 scenarios and 15 artifacts.
+- Frontend lint/build/Prettier, Rust format, fixture checksums/sanitization, and
+  git diff checks pass.
+
 ## Phase 2 issues
+
+Execution contracts: [`RPG-201`](./todo-rpg-201-controlled-protocol-schemas.md),
+[`RPG-202`](./todo-rpg-202-adapter-registry-exchange.md),
+[`RPG-203`](./todo-rpg-203-request-translation.md),
+[`RPG-204`](./todo-rpg-204-nonstream-response.md),
+[`RPG-205`](./todo-rpg-205-bounded-sse-state-machine.md),
+[`RPG-206`](./todo-rpg-206-function-tool-roundtrip.md),
+[`RPG-207`](./todo-rpg-207-terminal-normalization.md), and
+[`RPG-208`](./todo-rpg-208-deepseek-g3.md).
 
 ### RPG-201: Define the controlled Responses and Chat Completions schemas
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:2`, `area:adapter`, `priority:p0`
 - **Suggested commit**: `adapter: define verified protocol schemas`
 - **Depends on**: G2, RPG-002
@@ -1183,7 +1311,7 @@ retaining unknown-field detection and precise unsupported errors.
 
 ### RPG-202: Implement object-safe adapter registry and exchange contracts
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:2`, `area:adapter`, `priority:p0`
 - **Suggested commit**: `adapter: add registry and per-request exchange`
 - **Depends on**: RPG-201
@@ -1221,7 +1349,7 @@ stream output without coupling conversion logic to HTTP.
 
 ### RPG-203: Translate Responses requests and reject unsupported input
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:2`, `area:adapter-request`, `priority:p0`
 - **Suggested commit**: `adapter: translate responses requests`
 - **Depends on**: RPG-202
@@ -1261,7 +1389,7 @@ silently losing context or changing Provider/model routing.
 
 ### RPG-204: Translate non-stream Chat Completions responses
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:2`, `area:adapter-response`, `priority:p0`
 - **Suggested commit**: `adapter: translate nonstream chat responses`
 - **Depends on**: RPG-203
@@ -1297,7 +1425,7 @@ Produce a complete Responses-compatible JSON response for non-stream requests.
 
 ### RPG-205: Implement the bounded SSE conversion state machine
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:2`, `area:adapter-stream`, `priority:p0`
 - **Suggested commit**: `adapter: add bounded responses stream state machine`
 - **Depends on**: RPG-203
@@ -1341,7 +1469,7 @@ sequence with bounded memory and deterministic terminal behavior.
 
 ### RPG-206: Implement function tool-call round trips
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:2`, `area:adapter-tools`, `priority:p0`
 - **Suggested commit**: `adapter: add function tool roundtrip`
 - **Depends on**: RPG-204, RPG-205
@@ -1376,7 +1504,7 @@ preserving `call_id` identity across turns.
 
 ### RPG-207: Normalize usage, errors, cancellation, and retry classification
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:2`, `area:adapter-error`, `priority:p0`
 - **Suggested commit**: `adapter: normalize terminal metadata and errors`
 - **Depends on**: RPG-204, RPG-205
@@ -1414,7 +1542,7 @@ retry inside the adapter.
 
 ### RPG-208: Implement DeepSeek thinking compatibility and pass the adapter gate
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:2`, `area:deepseek`, `priority:p0`
 - **Suggested commit**: `adapter: add deepseek thinking compatibility`
 - **Depends on**: RPG-206, RPG-207
@@ -1461,7 +1589,7 @@ typed compatibility policy while keeping the generic adapter vendor-neutral.
 
 ### RPG-301: Implement Gateway binding credentials and token lifecycle
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:3`, `area:gateway-auth`, `priority:p0`
 - **Suggested commit**: `gateway: add profile token bindings`
 - **Depends on**: G3, RPG-104, RPG-108
@@ -1500,7 +1628,7 @@ an immutable request-start routing snapshot.
 
 ### RPG-302: Build the authenticated loopback server and verifiable health endpoint
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:3`, `area:gateway-server`, `priority:p0`
 - **Suggested commit**: `gateway: add loopback server foundation`
 - **Depends on**: RPG-301
@@ -1538,7 +1666,7 @@ IDs, sanitized logging, and an instance-verifiable readiness endpoint.
 
 ### RPG-303: Build the bounded upstream client and authentication injection
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:3`, `area:gateway-client`, `priority:p0`
 - **Suggested commit**: `gateway: add secure upstream client`
 - **Depends on**: RPG-103, RPG-302
@@ -1577,7 +1705,7 @@ approved retry behavior outside the adapter.
 
 ### RPG-304: Compose `/v1/responses` non-stream and streaming routes
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:3`, `area:gateway-route`, `priority:p0`
 - **Suggested commit**: `gateway: serve verified responses subset`
 - **Depends on**: RPG-208, RPG-303
@@ -1614,7 +1742,7 @@ upstream client, and wire response into the contract-tested Gateway endpoint.
 
 ### RPG-305: Implement sidecar state, stable port, supervisor, and private control channel
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:3`, `area:sidecar`, `priority:p0`
 - **Suggested commit**: `gateway: add sidecar lifecycle supervisor`
 - **Depends on**: RPG-302, RPG-304
@@ -1652,7 +1780,7 @@ installation instance, a stable port, bounded restart, and authenticated control
 
 ### RPG-306: Implement launcher, auth helper, install manifest, and application packaging
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:3`, `area:packaging`, `priority:p0`
 - **Suggested commit**: `launcher: package gateway and profile runner`
 - **Depends on**: RPG-301, RPG-305
@@ -1689,7 +1817,7 @@ token helper in development and packaged installations.
 
 ### RPG-307: Route all supported Codex entry points through one launch planner
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:3`, `area:launch`, `priority:p0`
 - **Suggested commit**: `launch: unify profile codex entry points`
 - **Depends on**: RPG-306
@@ -1724,7 +1852,7 @@ restart.
 
 ### RPG-308: Pass Gateway recovery, security, retry, and mock DeepSeek gates
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:3`, `area:acceptance`, `priority:p0`
 - **Suggested commit**: `gateway: complete deepseek runtime slice`
 - **Depends on**: RPG-304, RPG-305, RPG-306, RPG-307
@@ -1765,7 +1893,7 @@ and remains correct under faults.
 
 ### RPG-401: Implement readiness, health, capability resolution, and conformance evidence
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:4`, `area:capability`, `priority:p1`
 - **Suggested commit**: `provider: resolve readiness and capability evidence`
 - **Depends on**: G4
@@ -1803,7 +1931,7 @@ test evidence without letting one overwrite another.
 
 ### RPG-402: Complete Provider Center and attach/rebind/detach UX
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:4`, `area:frontend`, `priority:p1`
 - **Suggested commit**: `provider-ui: complete gateway management flows`
 - **Depends on**: RPG-401, RPG-110
@@ -1840,7 +1968,7 @@ capability provenance, conformance tests, and safe lifecycle operations.
 
 ### RPG-403: Implement the pure RelayCompatibilityAnalyzer
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:4`, `area:relay`, `priority:p0`
 - **Suggested commit**: `relay: add provider compatibility analysis`
 - **Depends on**: RPG-201, RPG-401
@@ -1878,7 +2006,7 @@ any target session file is written.
 
 ### RPG-404: Integrate API profiles with session, resume, sync, and relay
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:4`, `area:session`, `priority:p0`
 - **Suggested commit**: `relay: integrate provider-aware api profiles`
 - **Depends on**: RPG-307, RPG-403
@@ -1918,7 +2046,7 @@ without moving identity or secrets.
 
 ### RPG-405: Complete smoke, security, migration, observability, and documentation suites
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:4`, `area:quality`, `priority:p0`
 - **Suggested commit**: `test: complete provider gateway release suites`
 - **Depends on**: RPG-402, RPG-404
@@ -1956,7 +2084,7 @@ Close cross-cutting release gaps and remove conflicting historical guidance.
 
 ### RPG-406: Complete manual acceptance and release the feature
 
-- **Status**: 待执行
+- **Status**: 验证成功
 - **Suggested label**: `phase:4`, `area:release`, `priority:p0`
 - **Suggested commit**: `docs: record remote gateway release acceptance`
 - **Depends on**: RPG-405
@@ -1966,11 +2094,16 @@ Close cross-cutting release gaps and remove conflicting historical guidance.
 Validate the packaged product against approved real Providers without making real
 credentials or network tests part of the automated suite.
 
-**Manual matrix**
+**Release acceptance matrix**
 
-- Real Responses-compatible Provider: create, test, attach, normal prompt,
+The repeatable G5 gate uses the pinned Codex 0.144.1 contract plus synthetic local Responses and
+DeepSeek-compatible upstreams, a temporary HOME, real packaged processes, and the final app/DMG.
+An optional real-account smoke may be performed by a user without recording credentials or content;
+it is not required to make CI depend on a paid or private external account.
+
+- Responses-compatible Provider: create, test, attach, normal prompt,
   restart, resume, rebind, detach.
-- Real DeepSeek Chat Completions Provider: text non-stream, stream, function tool
+- DeepSeek Chat Completions Provider: text non-stream, stream, function tool
   loop, thinking/tool history, UI close, system restart/launcher recovery,
   rebind, detach.
 - Chat Completions without adapter: save/test upstream, attach blocked, no config

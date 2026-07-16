@@ -3,9 +3,10 @@ import {
   planTypeLabel,
   quotaDisplayWindows,
   accountHasAvailableQuota,
+  quotaRefreshProfileIds,
   resetCreditDisplay,
 } from './quota';
-import type { UsageQuotaSnapshot } from './types';
+import type { CodexAccount, UsageQuotaSnapshot } from './types';
 
 const baseQuota: UsageQuotaSnapshot = {
   profileId: 'main',
@@ -72,6 +73,26 @@ describe('quotaDisplayWindows', () => {
         resetAt: '1784724636',
         variant: 'monthly',
       },
+    ]);
+  });
+});
+
+describe('quotaRefreshProfileIds', () => {
+  const account = (id: string): CodexAccount => ({ id }) as CodexAccount;
+
+  it('excludes External API bindings while preserving normal account order', () => {
+    expect(
+      quotaRefreshProfileIds(
+        [account('main'), account('external'), account('team')],
+        ['external', 'deleted-binding'],
+      ),
+    ).toEqual(['main', 'team']);
+  });
+
+  it('keeps all accounts when there are no External API bindings', () => {
+    expect(quotaRefreshProfileIds([account('main'), account('team')], [])).toEqual([
+      'main',
+      'team',
     ]);
   });
 });

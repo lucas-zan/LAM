@@ -18,15 +18,16 @@ import {
   IconInfo,
 } from './components/icons';
 import { SyncModal } from './components/sync-modal';
+import { ProviderCenter } from './components/provider-center';
+import { ApiAccountFlow } from './components/api-account-flow';
 import { ThemeToggle } from './components/theme-toggle';
 import { UIButton } from './components/ui-button';
 import { sessionDisplayName } from './lib/format';
+import { quotaRefreshProfileIds } from './lib/quota';
 import { routeTitle as routeTitleFromModule } from './routes/types';
 import { UsagePage } from './routes/usage';
 import type {
-  AttachProviderRequest,
   CreateAccountRequest,
-  CreateProviderRequest,
   CodexSession,
   UsageDashboardRequest,
   UsageWindow,
@@ -34,6 +35,7 @@ import type {
   OperationPlan,
   RenameAccountRequest,
   SyncPlan,
+  ProfileAttachPlanViewV2,
   SyncRequest,
   SyncResult,
   AntigravityQuotaResponse,
@@ -72,16 +74,6 @@ const emptyRenameReq: RenameAccountRequest = {
   toName: '',
   overwriteWrapper: false,
 };
-const emptyProviderReq: CreateProviderRequest = {
-  id: 'company-proxy',
-  name: 'Company Proxy',
-  baseUrl: 'https://proxy.example.test/v1',
-  wireApi: 'openai',
-  defaultModel: 'gpt-5-codex',
-  envKey: 'COMPANY_PROXY_API_KEY',
-  secret: { kind: 'env', envKey: 'COMPANY_PROXY_API_KEY' },
-};
-
 function chatgptPlanTypeFromIdToken(idToken: unknown) {
   if (typeof idToken !== 'string') return '';
   const payload = idToken.split('.')[1];
@@ -179,13 +171,7 @@ export function App() {
     refreshUsage,
     selectUsageScope,
   } = useUsageStore();
-  const {
-    providers,
-    testProvider: runProviderTest,
-    removeProvider,
-    createFromModal,
-    attachToProfile,
-  } = useProviderStore();
+  const { providers, bindings } = useProviderStore();
 
   const selectedAccount = useAccountStore((s) => s.selectedAccount());
   const selectedSession = useSessionStore((s) => s.selectedSession());
@@ -201,12 +187,6 @@ export function App() {
   const [plan, setPlan] = useState<OperationPlan | SyncPlan | null>(null);
   const [syncReq, setSyncReq] = useState<SyncRequest | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
-  const [providerReq, setProviderReq] = useState(emptyProviderReq);
-  const [attachReq, setAttachReq] = useState<AttachProviderRequest>({
-    profileId: '',
-    providerId: '',
-    model: null,
-  });
   const [handoffSourceId, setHandoffSourceId] = useState('');
   const [handoffTargetId, setHandoffTargetId] = useState('');
   const [handoffSessionId, setHandoffSessionId] = useState('');
@@ -222,6 +202,9 @@ export function App() {
   const [profileSessionJson, setProfileSessionJson] = useState('');
   const [profileSessionOverwriteWrapper, setProfileSessionOverwriteWrapper] = useState(false);
   const [deleteAccountTarget, setDeleteAccountTarget] = useState<CodexAccount | null>(null);
+  const [modelSwitchTarget, setModelSwitchTarget] = useState<CodexAccount | null>(null);
+  const [modelSwitchValue, setModelSwitchValue] = useState('');
+  const [modelSwitchPlan, setModelSwitchPlan] = useState<ProfileAttachPlanViewV2 | null>(null);
   const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
   const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
@@ -324,9 +307,13 @@ export function App() {
 
   // Auto-refresh quotas — start/stop are stable store actions
   useEffect(() => {
-    if (accounts.length) startAutoRefresh(accounts.map((a) => a.id));
+    const profileIds = quotaRefreshProfileIds(
+      accounts,
+      bindings.map((binding) => binding.profileId),
+    );
+    if (profileIds.length) startAutoRefresh(profileIds);
     return stopAutoRefresh;
-  }, [accounts]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [accounts, bindings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const usageRequest = useMemo<UsageDashboardRequest>(
     () => ({
@@ -517,6 +504,17 @@ export function App() {
     openModal('account');
   }
 
+  function openExternalApiModal() {
+    openModal('externalApi');
+  }
+
+  async function handleApiAccountCreated(profileId: string) {
+    await refresh();
+    setSelectedAccountId(profileId);
+    useAppStore.getState().setStatus(`Created API Account '${profileId}'`);
+    closeModal();
+  }
+
   async function openSyncModal(from = selectedAccount?.id) {
     const target = accounts.find((a) => a.id !== from)?.id ?? '';
     setSyncReq({
@@ -530,16 +528,6 @@ export function App() {
     setSyncResult(null);
     openModal('sync');
   }
-  function openAttachProviderModal(providerId: string) {
-    setAttachReq({
-      profileId: selectedAccount?.id ?? accounts[0]?.id ?? '',
-      providerId,
-      model: providers.find((p) => p.id === providerId)?.defaultModel ?? null,
-    });
-    setPlan(null);
-    openModal('attachProvider');
-  }
-
   function openRenameAccountModal(account: (typeof accounts)[number]) {
     setRenameReq({
       fromProfileId: account.id,
@@ -591,7 +579,11 @@ export function App() {
     if (!account || account.id === 'main') return;
     setDeletingAccountId(account.id);
     try {
-      await api.deleteAccount({ profileId: account.id });
+      if (bindings.some((binding) => binding.profileId === account.id)) {
+        await api.deleteApiAccountV2(account.id);
+      } else {
+        await api.deleteAccount({ profileId: account.id });
+      }
       useAppStore.getState().setStatus(`Deleted ${account.displayName}`);
       setDeleteAccountTarget(null);
       await refresh();
@@ -870,8 +862,8 @@ export function App() {
             <UIButton size="sm" className="toolbarBtn" onClick={openAccountModal}>
               <IconPlus size={14} /> New Account
             </UIButton>
-            <UIButton size="sm" className="toolbarBtn" onClick={() => openModal('provider')}>
-              <IconPlus size={14} /> New Provider
+            <UIButton size="sm" className="toolbarBtn" onClick={openExternalApiModal}>
+              <IconPlus size={14} /> External API
             </UIButton>
           </div>
           <ThemeToggle value={themeMode} onChange={setThemeMode} />
@@ -889,6 +881,13 @@ export function App() {
             openSync={openSyncModal}
             rename={openRenameAccountModal}
             deleteAccount={deleteProfileAccount}
+            apiAccountIds={bindings.map((binding) => binding.profileId)}
+            switchModel={(account) => {
+              const provider = providers.find((item) => item.id === account.providerId);
+              setModelSwitchTarget(account);
+              setModelSwitchValue(account.model ?? provider?.defaultModel ?? '');
+              setModelSwitchPlan(null);
+            }}
             login={(account) =>
               authMode === 'pat' && account.hasPersonalAccessToken
                 ? openUpdatePatSessionModal(account)
@@ -948,13 +947,9 @@ export function App() {
           />
         ) : null}
         {appReady && route === 'providers' ? (
-          <Views.Providers
-            accounts={accounts}
-            providers={providers}
-            create={() => openModal('provider')}
-            test={runProviderTest}
-            remove={removeProvider}
-            attach={openAttachProviderModal}
+          <ProviderCenter
+            profiles={accounts.map((account) => account.id)}
+            onAddExternalApi={openExternalApiModal}
           />
         ) : null}
         {appReady && route === 'sync' ? (
@@ -1045,10 +1040,20 @@ export function App() {
         </Shell.Modal>
       ) : null}
 
+      {modal === 'externalApi' ? (
+        <Shell.Modal title="Add External API" close={closeModal} wide>
+          <ApiAccountFlow
+            providers={providers}
+            onCancel={closeModal}
+            onCreated={handleApiAccountCreated}
+          />
+        </Shell.Modal>
+      ) : null}
+
       {modal === 'account' ? (
         <Shell.Modal title="Add Account" close={closeModal}>
-          {modeAvailability === 'both' ? (
-            <div className="createModeTabs">
+          <div className="createModeTabs">
+            {modeAvailability !== 'pat' ? (
               <button
                 className={createMode === 'oauth' ? 'active' : ''}
                 onClick={() => {
@@ -1058,6 +1063,8 @@ export function App() {
               >
                 Profile Account
               </button>
+            ) : null}
+            {modeAvailability !== 'profile' ? (
               <button
                 className={createMode === 'pat' ? 'active' : ''}
                 onClick={() => {
@@ -1067,8 +1074,8 @@ export function App() {
               >
                 PAT Account
               </button>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
 
           {createMode === 'oauth' ? (
             <>
@@ -1399,6 +1406,85 @@ export function App() {
         </Shell.Modal>
       ) : null}
 
+      {modelSwitchTarget ? (
+        <Shell.Modal
+          title={`Switch model · ${modelSwitchTarget.displayName}`}
+          close={() => {
+            setModelSwitchTarget(null);
+            setModelSwitchPlan(null);
+          }}
+        >
+          <label>
+            Model
+            <select
+              aria-label="API Account model"
+              value={modelSwitchValue}
+              onChange={(event) => {
+                setModelSwitchValue(event.target.value);
+                setModelSwitchPlan(null);
+              }}
+            >
+              {providers
+                .find((provider) => provider.id === modelSwitchTarget.providerId)
+                ?.models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}
+                  </option>
+                ))}
+            </select>
+          </label>
+          {modelSwitchPlan ? (
+            <div className="previewBox">
+              <div className="previewLine">
+                <span>CODEX_HOME</span>
+                <strong>{modelSwitchTarget.codexHome}</strong>
+              </div>
+              <div className="previewLine">
+                <span>New default model</span>
+                <strong>{modelSwitchPlan.selectedModel}</strong>
+              </div>
+            </div>
+          ) : null}
+          <div className="modalFoot">
+            <UIButton type="button" variant="ghost" onClick={() => setModelSwitchTarget(null)}>
+              Cancel
+            </UIButton>
+            <div className="modalFootPrimary">
+              <UIButton
+                type="button"
+                onClick={async () => {
+                  setModelSwitchPlan(
+                    await api.planApiAccountModelSwitchV2(modelSwitchTarget.id, modelSwitchValue),
+                  );
+                }}
+              >
+                Review
+              </UIButton>
+              <UIButton
+                type="button"
+                variant="primary"
+                disabled={!modelSwitchPlan || Boolean(modelSwitchPlan.blockers.length)}
+                onClick={async () => {
+                  if (!modelSwitchPlan) return;
+                  await api.executeApiAccountModelSwitchV2(
+                    modelSwitchPlan.planId,
+                    modelSwitchPlan.fingerprint,
+                  );
+                  useAppStore
+                    .getState()
+                    .setStatus(`Switched ${modelSwitchTarget.displayName} to ${modelSwitchValue}`);
+                  setModelSwitchTarget(null);
+                  setModelSwitchPlan(null);
+                  await refresh();
+                }}
+              >
+                Switch Model
+              </UIButton>
+            </div>
+          </div>
+        </Shell.Modal>
+      ) : null}
+
       {modal === 'updatePatSession' && updatePatAccount ? (
         <Shell.Modal title="Update Session Auth" close={closeModal}>
           <form
@@ -1638,159 +1724,6 @@ export function App() {
             }}
             onClose={closeModal}
           />
-        </Shell.Modal>
-      ) : null}
-
-      {modal === 'provider' ? (
-        <Shell.Modal title="Add External Provider" close={closeModal}>
-          <div className="formGrid">
-            <label>
-              Provider id
-              <input
-                value={providerReq.id}
-                onChange={(e) => setProviderReq({ ...providerReq, id: e.target.value })}
-              />
-            </label>
-            <label>
-              Name
-              <input
-                value={providerReq.name}
-                onChange={(e) => setProviderReq({ ...providerReq, name: e.target.value })}
-              />
-            </label>
-            <label>
-              Base URL
-              <input
-                value={providerReq.baseUrl}
-                onChange={(e) => setProviderReq({ ...providerReq, baseUrl: e.target.value })}
-              />
-            </label>
-            <label>
-              Wire API
-              <input
-                value={providerReq.wireApi}
-                onChange={(e) => setProviderReq({ ...providerReq, wireApi: e.target.value })}
-              />
-            </label>
-            <label>
-              Default model
-              <input
-                value={providerReq.defaultModel}
-                onChange={(e) => setProviderReq({ ...providerReq, defaultModel: e.target.value })}
-              />
-            </label>
-            <label>
-              Env key
-              <input
-                value={providerReq.envKey ?? ''}
-                onChange={(e) => setProviderReq({ ...providerReq, envKey: e.target.value || null })}
-              />
-            </label>
-          </div>
-          <div className="previewBox">
-            <div className="previewLine">
-              <span>Provider ID</span>
-              <strong>{providerReq.id || 'provider-id'}</strong>
-            </div>
-            <div className="previewLine">
-              <span>Secret storage</span>
-              <strong>{providerReq.envKey ? `ENV (${providerReq.envKey})` : 'None'}</strong>
-            </div>
-          </div>
-          <div className="notice">
-            Secrets are not shown or stored in config.toml. Use an environment variable or
-            Keychain-backed secret storage.
-          </div>
-          <div className="modalFoot">
-            <UIButton type="button" variant="ghost" onClick={closeModal}>
-              Cancel
-            </UIButton>
-            <div className="modalFootPrimary">
-              <UIButton
-                type="button"
-                variant="primary"
-                onClick={() => createFromModal(providerReq)}
-              >
-                Create Provider
-              </UIButton>
-            </div>
-          </div>
-        </Shell.Modal>
-      ) : null}
-
-      {modal === 'attachProvider' ? (
-        <Shell.Modal title="Attach Provider to Account" close={closeModal}>
-          <div className="formGrid">
-            <label>
-              Account
-              <select
-                value={attachReq.profileId}
-                onChange={(e) => setAttachReq({ ...attachReq, profileId: e.target.value })}
-              >
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Provider
-              <select
-                value={attachReq.providerId}
-                onChange={(e) => setAttachReq({ ...attachReq, providerId: e.target.value })}
-              >
-                {providers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Model
-              <input
-                value={attachReq.model ?? ''}
-                onChange={(e) => setAttachReq({ ...attachReq, model: e.target.value || null })}
-              />
-            </label>
-          </div>
-          <div className="previewBox">
-            <div className="previewLine">
-              <span>Target profile</span>
-              <strong>{attachReq.profileId || 'profile'}</strong>
-            </div>
-            <div className="previewLine">
-              <span>Provider</span>
-              <strong>{attachReq.providerId || 'provider'}</strong>
-            </div>
-          </div>
-          <div className="notice">
-            Attach backs up config.toml and writes provider references only. API keys are never
-            written.
-          </div>
-          <Views.PlanView plan={plan} />
-          <div className="modalFoot">
-            <UIButton type="button" variant="ghost" onClick={closeModal}>
-              Cancel
-            </UIButton>
-            <div className="modalFootPrimary">
-              <UIButton
-                type="button"
-                onClick={async () => setPlan(await api.planAttachProviderToProfile(attachReq))}
-              >
-                Dry Run
-              </UIButton>
-              <UIButton
-                type="button"
-                variant="primary"
-                disabled={!plan}
-                onClick={() => attachToProfile(attachReq)}
-              >
-                Attach
-              </UIButton>
-            </div>
-          </div>
         </Shell.Modal>
       ) : null}
 

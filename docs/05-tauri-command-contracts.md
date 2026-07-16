@@ -2,6 +2,15 @@
 
 > **基础契约草案 / 部分有效：** 本文保留 Phase 1 Codex MVP 的基础 command 形状。Provider、UsageQuota、Sync manifest、dry-run plan、AgentProfile 等扩展以 `docs/FINAL-DESIGN.md` §6.3 和 `docs/IMPLEMENTATION-ISSUES.md` 为准。
 
+> **v0.2.1 authoritative extension:** external API accounts use
+> `plan_api_account_v2` → `execute_api_account_v2`, model changes use
+> `plan_api_account_model_switch_v2` → `execute_api_account_model_switch_v2`, and deletion uses
+> `delete_api_account_v2`. The plan never contains a secret; `keychainSecret` exists only on execute.
+> External model discovery uses the separate write-only `discover_provider_models_v2` command; its result is
+> advisory and cannot mutate a Provider or API Account.
+> `relay_resume_session` accepts `confirmCompatibilityLoss` and returns a sanitized compatibility report
+> plus `compatibilityFingerprint`. A blocked report causes zero target writes.
+
 版本：0.1 draft
 
 ---
@@ -112,6 +121,42 @@ export async function openTerminalWithResume(req: ResumeCommandRequest) {
   return invoke("open_terminal_with_resume", { req });
 }
 ```
+
+---
+
+### 2.1 External Provider 模型发现（v0.2.1）
+
+模型发现与创建事务分离。它只接受标准 OpenAI `/models` 响应并返回规范化候选项；用户选择或手工添加
+模型后，才由 API Account plan/execute 持久化 allowlist。
+
+```ts
+export type DiscoverProviderModelsRequestV2 = {
+  baseUrl: string;
+  apiKey: string;
+};
+
+export type DiscoverProviderModelsViewV2 = {
+  models: Array<{ id: string; label: string }>;
+};
+
+export async function discoverProviderModelsV2(
+  req: DiscoverProviderModelsRequestV2,
+): Promise<DiscoverProviderModelsViewV2> {
+  return invoke("discover_provider_models_v2", { req });
+}
+```
+
+```rust
+#[tauri::command]
+pub async fn discover_provider_models_v2(
+    req: DiscoverProviderModelsRequestV2,
+) -> Result<DiscoverProviderModelsViewV2, StructuredErrorView>;
+```
+
+`apiKey` 是 write-only secret：request 的自定义 `Debug` 必须输出 `[REDACTED]`，command 不得将它
+写入 DTO、Provider、plan、journal 或日志。服务关闭系统 proxy 和 redirect，使用 bearer auth，并强制
+15 秒总超时、1 MiB body、2048 个模型以及单 id 256 bytes 上限。只接受 `{ data: [{ id }] }`；空、
+duplicate、含空白或控制字符的 id、缺失 `data` 和非成功 HTTP 都返回结构化错误且不暴露上游 body。
 
 ---
 

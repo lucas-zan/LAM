@@ -29,6 +29,7 @@ vi.mock('../lib/api', () => ({
   listAccounts: vi.fn(),
   listCachedAccounts: vi.fn(),
   listCachedQuotas: vi.fn(),
+  listProfileProviderBindingsV2: vi.fn(),
   listSessions: vi.fn(),
   openTerminalWithCommand: vi.fn(),
   openTerminalWithResume: vi.fn(),
@@ -144,6 +145,7 @@ beforeEach(() => {
     },
   ]);
   vi.mocked(api.getProfileQuota).mockResolvedValue(freshQuota);
+  vi.mocked(api.listProfileProviderBindingsV2).mockResolvedValue([]);
   vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
   vi.mocked(api.restartChatgpt).mockResolvedValue();
   vi.mocked(api.showUsageStats).mockResolvedValue();
@@ -288,6 +290,35 @@ describe('TrayQuotaPanel', () => {
 
     await waitFor(() => expect(screen.getAllByText('Auth').length).toBeGreaterThan(0));
     expect(screen.queryByText('API Key')).toBeNull();
+  });
+
+  it('marks External API accounts and skips their quota sync', async () => {
+    const apiAccount = { ...account, id: 'api-1', displayName: 'api-1', authMode: 'config' };
+    vi.mocked(api.listCachedAccounts).mockResolvedValue([account, apiAccount]);
+    vi.mocked(api.listAccounts).mockResolvedValue([account, apiAccount]);
+    vi.mocked(api.listCachedQuotas).mockResolvedValue([cachedQuota]);
+    vi.mocked(api.listProfileProviderBindingsV2).mockResolvedValue([
+      {
+        profileId: 'api-1',
+        providerId: 'account-api-1',
+        selectedModel: 'gpt-5',
+        routeKind: 'gateway',
+        revision: 1,
+        providerRevision: 1,
+      },
+    ]);
+
+    render(<TrayQuotaPanel />);
+
+    await waitFor(() => expect(screen.getByText('api-1')).toBeTruthy());
+    expect(screen.getByText('External API')).toBeTruthy();
+    expect(screen.getByText('External API · no quota tracking')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Refresh api-1 quota' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh quotas' }));
+
+    await waitFor(() => expect(api.getProfileQuota).toHaveBeenCalledWith('main', true));
+    expect(api.getProfileQuota).not.toHaveBeenCalledWith('api-1', true);
   });
 
   it('shows Antigravity model rows with weekly and five-hour quota windows', async () => {

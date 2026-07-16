@@ -1,4 +1,7 @@
 use super::error::{AppError, Result};
+use super::provider_credentials::{
+    validate_codex_security_options, validate_upstream_auth, CredentialSource, UpstreamAuth,
+};
 use super::storage::{StoreSnapshot, VersionedFileStore};
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
@@ -55,30 +58,6 @@ pub struct ProviderModel {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum CredentialReference {
-    Env {
-        env_key: String,
-    },
-    Keychain {
-        service: String,
-        account: String,
-        version: u64,
-    },
-    AuthCommand {
-        approval_id: String,
-    },
-    None,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum UpstreamAuthKind {
-    Bearer,
-    None,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AdapterConfig {
     None,
     Local {
@@ -94,6 +73,8 @@ pub struct CodexProviderOptions {
     pub stream_idle_timeout_ms: Option<u64>,
     pub direct_request_max_retries: Option<u8>,
     pub direct_stream_max_retries: Option<u8>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub route_via_gateway: bool,
     pub query_params: BTreeMap<String, String>,
     pub env_http_headers: BTreeMap<String, String>,
 }
@@ -107,8 +88,7 @@ pub struct ProviderInput {
     pub base_url: String,
     pub default_model: String,
     pub models: Vec<ProviderModel>,
-    pub credential: CredentialReference,
-    pub upstream_auth: UpstreamAuthKind,
+    pub upstream_auth: UpstreamAuth,
     pub adapter: AdapterConfig,
     pub compatibility_profile: Option<String>,
     pub codex: CodexProviderOptions,
@@ -123,8 +103,7 @@ pub struct ProviderProfileV2 {
     pub base_url: String,
     pub default_model: String,
     pub models: Vec<ProviderModel>,
-    pub credential: CredentialReference,
-    pub upstream_auth: UpstreamAuthKind,
+    pub upstream_auth: UpstreamAuth,
     pub capabilities: CapabilityDeclaration,
     pub adapter: AdapterConfig,
     pub compatibility_profile: Option<String>,
@@ -218,6 +197,44 @@ impl ProviderRepository {
         self.store
             .compare_and_swap(expected_revision, &snapshot.value)
     }
+
+    pub fn replace_credential_source(
+        &self,
+        expected_store_revision: u64,
+        provider_id: &str,
+        expected_source: &CredentialSource,
+        replacement: CredentialSource,
+        now: &str,
+    ) -> Result<StoreSnapshot<ProviderCollection>> {
+        validate_timestamp(now)?;
+        let mut snapshot = self.load()?;
+        let provider = snapshot
+            .value
+            .providers
+            .iter_mut()
+            .find(|item| item.id == provider_id)
+            .ok_or_else(|| AppError::new("PROVIDER_NOT_FOUND", provider_id))?;
+        let source = match &mut provider.upstream_auth {
+            UpstreamAuth::Bearer { source } | UpstreamAuth::Header { source, .. } => source,
+            UpstreamAuth::None => {
+                return Err(AppError::new(
+                    "PROVIDER_AUTH_ROUTE_UNSUPPORTED",
+                    "unauthenticated Provider has no credential reference",
+                ))
+            }
+        };
+        if source != expected_source {
+            return Err(AppError::new(
+                "PROVIDER_CREDENTIAL_CONFLICT",
+                "Provider credential reference changed",
+            ));
+        }
+        *source = replacement;
+        validate_upstream_auth(&provider.upstream_auth)?;
+        provider.updated_at = now.into();
+        self.store
+            .compare_and_swap(expected_store_revision, &snapshot.value)
+    }
 }
 
 pub fn build_provider(input: ProviderInput, now: &str) -> Result<ProviderProfileV2> {
@@ -228,7 +245,7 @@ pub fn build_provider(input: ProviderInput, now: &str) -> Result<ProviderProfile
     let (models, default_model) = validate_models(input.models, &input.default_model)?;
     let adapter = validate_adapter(input.protocol, input.adapter)?;
     let compatibility_profile = validate_compatibility(input.compatibility_profile)?;
-    validate_credential(&input.credential, input.upstream_auth)?;
+    validate_upstream_auth(&input.upstream_auth)?;
     validate_codex_options(&input.codex)?;
     Ok(ProviderProfileV2 {
         id,
@@ -237,7 +254,6 @@ pub fn build_provider(input: ProviderInput, now: &str) -> Result<ProviderProfile
         base_url,
         default_model,
         models,
-        credential: input.credential,
         upstream_auth: input.upstream_auth,
         capabilities: CapabilityDeclaration::default(),
         adapter,
@@ -260,15 +276,12 @@ pub fn migrate_legacy_provider_array(bytes: &[u8], now: &str) -> Result<LegacyPr
         } else if item.wire_api != "responses" {
             return Err(AppError::new("PROVIDER_PROTOCOL_UNKNOWN", item.wire_api));
         }
-        let credential = match (item.secret_storage.as_str(), item.env_key) {
-            ("env", Some(env_key)) => CredentialReference::Env { env_key },
-            ("none", _) => CredentialReference::None,
+        let upstream_auth = match (item.secret_storage.as_str(), item.env_key) {
+            ("env", Some(env_key)) => UpstreamAuth::Bearer {
+                source: CredentialSource::Env { env_key },
+            },
+            ("none", _) => UpstreamAuth::None,
             (kind, _) => return Err(AppError::new("PROVIDER_CREDENTIAL_UNKNOWN", kind)),
-        };
-        let upstream_auth = if matches!(credential, CredentialReference::None) {
-            UpstreamAuthKind::None
-        } else {
-            UpstreamAuthKind::Bearer
         };
         let model = ProviderModel {
             id: item.default_model.clone(),
@@ -283,7 +296,6 @@ pub fn migrate_legacy_provider_array(bytes: &[u8], now: &str) -> Result<LegacyPr
                 base_url: item.base_url,
                 default_model: item.default_model,
                 models: vec![model],
-                credential,
                 upstream_auth,
                 adapter: AdapterConfig::None,
                 compatibility_profile: None,
@@ -353,7 +365,9 @@ fn canonicalize_base_url(input: &str) -> Result<String> {
             "URL userinfo is forbidden",
         ));
     }
-    if url.scheme() != "https" {
+    let loopback_http =
+        url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "::1" | "localhost"));
+    if url.scheme() != "https" && !loopback_http {
         return Err(AppError::new(
             "PROVIDER_URL_INSECURE",
             "remote Provider base URL must use HTTPS",
@@ -448,36 +462,6 @@ fn validate_compatibility(value: Option<String>) -> Result<Option<String>> {
     }
 }
 
-fn validate_credential(value: &CredentialReference, auth: UpstreamAuthKind) -> Result<()> {
-    match (value, auth) {
-        (CredentialReference::None, UpstreamAuthKind::None) => Ok(()),
-        (CredentialReference::None, _) | (_, UpstreamAuthKind::None) => Err(AppError::new(
-            "PROVIDER_AUTH_CONFLICT",
-            "credential and upstream auth are inconsistent",
-        )),
-        (CredentialReference::Env { env_key }, _) if valid_env_name(env_key) => Ok(()),
-        (CredentialReference::Env { .. }, _) => Err(AppError::new(
-            "PROVIDER_ENV_INVALID",
-            "invalid environment variable name",
-        )),
-        (
-            CredentialReference::Keychain {
-                service,
-                account,
-                version,
-            },
-            _,
-        ) if !service.trim().is_empty() && !account.trim().is_empty() && *version > 0 => Ok(()),
-        (CredentialReference::AuthCommand { approval_id }, _) if !approval_id.trim().is_empty() => {
-            Ok(())
-        }
-        _ => Err(AppError::new(
-            "PROVIDER_CREDENTIAL_INVALID",
-            "invalid credential reference",
-        )),
-    }
-}
-
 fn validate_codex_options(options: &CodexProviderOptions) -> Result<()> {
     if options
         .direct_request_max_retries
@@ -494,21 +478,17 @@ fn validate_codex_options(options: &CodexProviderOptions) -> Result<()> {
             "Codex Provider option is outside the approved range",
         ));
     }
-    Ok(())
-}
-
-fn valid_env_name(value: &str) -> bool {
-    let mut chars = value.chars();
-    chars
-        .next()
-        .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
-        && chars.all(|item| item == '_' || item.is_ascii_alphanumeric())
+    validate_codex_security_options(options)
 }
 
 fn validate_timestamp(value: &str) -> Result<()> {
     DateTime::parse_from_rfc3339(value)
         .map(|_| ())
         .map_err(|error| AppError::new("PROVIDER_TIMESTAMP_INVALID", error.to_string()))
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn required_trimmed(value: &str, field: &str) -> Result<String> {

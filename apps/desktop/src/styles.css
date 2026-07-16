@@ -1911,6 +1911,11 @@ html[data-tray-popover='1'] #root {
   margin-top: -6px;
   margin-bottom: -2px;
 }
+.trayAccountApiNote {
+  margin: 4px 0 0 16px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
 .trayAccountNameWrap > strong {
   font-weight: 800;
   min-width: 0;
@@ -5041,4 +5046,511 @@ pre {
 .accountActionBtn--full {
   flex: 1;
   width: 100%;
+}
+
+/* Optimized API Account Add Flow */
+.apiFlowContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Interactive Model Selector styling */
+.apiBaseUrlRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 0.42fr);
+  gap: 8px;
+}
+
+.apiEndpointSuffix[readonly] {
+  color: var(--muted);
+  background: var(--surface2);
+  cursor: default;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.apiModelDiscoveryRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.apiFetchModelsBtn {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding-inline: 10px;
+  white-space: nowrap;
+}
+
+.apiModelDiscoveryRow span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.apiModelFieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.apiModelFieldset legend {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.apiModelChecklist {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.apiModelCheckItem input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.apiModelCheckItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.apiModelCheckItem:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: var(--surface2);
+}
+
+.apiModelCheckItem.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.apiModelCheckIndicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--muted);
+  color: transparent;
+  font-size: 10px;
+  font-weight: 700;
+  transition: all 0.15s ease;
+}
+
+.apiModelCheckItem.active .apiModelCheckIndicator {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+
+.apiCustomModelInputGroup {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.apiCustomModelInputGroup input {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.apiCustomModelInputGroup button {
+  flex-shrink: 0;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  transition: all 0.15s ease;
+}
+
+.apiCustomModelInputGroup button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface2));
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.apiSelectedTagsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.apiSelectedTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface2));
+  border: 1px solid color-mix(in srgb, var(--accent) 15%, var(--line));
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: none;
+}
+
+.apiSelectedTagRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: none;
+  padding: 0;
+}
+
+.apiSelectedTagRemove:hover {
+  background: var(--accent);
+  color: white;
+}
+
+.apiFormSection {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.apiFormSectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.apiFormSectionTitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.apiInputWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.apiInputWrapper input {
+  padding-right: 40px !important;
+  width: 100%;
+}
+
+.apiInputToggleBtn {
+  position: absolute;
+  right: 10px;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.apiInputToggleBtn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.apiSuggestionsList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.apiSuggestionPill {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  padding: 3px 8px;
+  border-radius: 100px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.apiSuggestionPill:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface2));
+}
+
+.apiVisualPlan {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--surface2) 100%);
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.apiVisualPlanHeader {
+  background: var(--surface2);
+  border-bottom: 1px solid var(--line);
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.apiVisualPlanContent {
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.apiVisualPlanRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12.5px;
+}
+
+.apiVisualPlanLabel {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.apiVisualPlanValue {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text);
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* External API flow layout refinements */
+.apiFlowContainer {
+  container-type: inline-size;
+}
+
+.apiAdvancedEmpty,
+.apiHelperText {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.apiAdvancedToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.apiAdvancedToggle:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  color: var(--text);
+}
+
+.apiAdvancedPanel {
+  display: grid;
+  gap: 8px;
+  margin-top: -8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface2) 70%, var(--surface));
+}
+
+.apiReuseOption {
+  display: flex;
+  grid-template-columns: none;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.apiReuseOption input {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.apiReuseOption > span {
+  display: grid;
+  gap: 3px;
+}
+
+.apiReuseOption strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.apiReuseOption small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.apiReuseOption:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.apiAdvancedEmpty {
+  padding-left: 26px;
+}
+
+.apiFlowGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.apiFormSection {
+  min-width: 0;
+  background: var(--surface2);
+}
+
+.apiFormSectionHeader {
+  display: grid;
+  align-items: initial;
+  gap: 5px;
+  margin-bottom: 4px;
+}
+
+.apiFormSectionHeader p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.apiFormSectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.apiStepBadge {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.apiModelChecklistViewport {
+  max-height: 210px;
+  overflow: auto;
+  padding-right: 3px;
+  overscroll-behavior: contain;
+}
+
+.apiModelChecklist {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.apiModelCheckItem {
+  min-width: 0;
+}
+
+.apiModelCheckItem > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.apiSelectedTag {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+@container (max-width: 680px) {
+  .apiFlowGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container (max-width: 420px) {
+  .apiBaseUrlRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .apiCustomModelInputGroup,
+  .apiModelDiscoveryRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .apiCustomModelInputGroup button {
+    min-height: 36px;
+  }
 }

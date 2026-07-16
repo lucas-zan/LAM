@@ -18,7 +18,7 @@ import type {
   CodexSession,
   DivergedSessionStrategy,
   HealthCheck,
-  ProviderProfile,
+  ProviderProfileViewV2,
   UsageQuotaSnapshot,
   AntigravityQuotaResponse,
   TokenExpirationStatus,
@@ -28,8 +28,6 @@ import type {
 import { QuotaWindow } from '../components/quota-window';
 import {
   IconCopy,
-  IconProviders,
-  IconInfo,
   MetricIcon,
   type MetricIconName,
   IconPlay,
@@ -261,6 +259,8 @@ export function Overview({
   openSync,
   rename,
   deleteAccount,
+  switchModel = () => {},
+  apiAccountIds = [],
   login,
   switchAccount,
   exportCpa,
@@ -280,11 +280,13 @@ export function Overview({
 }: {
   accounts: CodexAccount[];
   quotas: UsageQuotaSnapshot[];
-  providers: ProviderProfile[];
+  providers: ProviderProfileViewV2[];
   select: (id: string) => void;
   openSync: (id: string) => void;
   rename: (account: CodexAccount) => void;
   deleteAccount: (account: CodexAccount) => void;
+  switchModel?: (account: CodexAccount) => void;
+  apiAccountIds?: string[];
   login: (account: CodexAccount) => void;
   switchAccount: (account: CodexAccount) => void;
   exportCpa: (account: CodexAccount) => void;
@@ -378,6 +380,8 @@ export function Overview({
           openSync={openSync}
           rename={rename}
           deleteAccount={deleteAccount}
+          switchModel={switchModel}
+          apiAccountIds={apiAccountIds}
           login={login}
           switchAccount={switchAccount}
           exportCpa={exportCpa}
@@ -453,6 +457,8 @@ export function Accounts({
   openSync,
   rename,
   deleteAccount,
+  switchModel = () => {},
+  apiAccountIds = [],
   login,
   switchAccount,
   exportCpa,
@@ -474,6 +480,8 @@ export function Accounts({
   openSync: (id: string) => void;
   rename: (account: CodexAccount) => void;
   deleteAccount: (account: CodexAccount) => void;
+  switchModel?: (account: CodexAccount) => void;
+  apiAccountIds?: string[];
   login: (account: CodexAccount) => void;
   switchAccount: (account: CodexAccount) => void;
   exportCpa: (account: CodexAccount) => void;
@@ -561,8 +569,9 @@ export function Accounts({
         {orderedAccounts.map((account) => {
           const isRefreshing = refreshingQuotaIds.includes(account.id);
           const isResetting = resettingQuotaIds.includes(account.id);
+          const isApiAccount = apiAccountIds.includes(account.id);
           const quota = quotas.find((item) => item.profileId === account.id);
-          const resetCredits = resetCreditDisplay(quota);
+          const resetCredits = isApiAccount ? null : resetCreditDisplay(quota);
           const canResetQuota = (quota?.resetCreditCount ?? 0) > 0 && !isResetting;
           const modelLabel = account.model ?? 'unknown';
           const hasProvider = account.providerId && account.providerId !== 'unknown';
@@ -612,20 +621,22 @@ export function Accounts({
                   ) : null}
                 </div>
                 <div className="cardHeadActions">
-                  <UIButton
-                    variant="icon"
-                    size="sm"
-                    className={`iconCircleBtn ${isRefreshing ? 'isSpinning' : ''}`}
-                    title={`Refresh ${account.displayName} quota`}
-                    aria-label={`Refresh ${account.displayName} quota`}
-                    disabled={isRefreshing}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      refreshAccountQuota(account.id);
-                    }}
-                  >
-                    ↻
-                  </UIButton>
+                  {!isApiAccount ? (
+                    <UIButton
+                      variant="icon"
+                      size="sm"
+                      className={`iconCircleBtn ${isRefreshing ? 'isSpinning' : ''}`}
+                      title={`Refresh ${account.displayName} quota`}
+                      aria-label={`Refresh ${account.displayName} quota`}
+                      disabled={isRefreshing}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        refreshAccountQuota(account.id);
+                      }}
+                    >
+                      ↻
+                    </UIButton>
+                  ) : null}
                   <div className="cardMenuContainer">
                     <UIButton
                       variant="icon"
@@ -655,25 +666,27 @@ export function Accounts({
                               <IconCloud size={13} />
                               <span>Sync Sessions...</span>
                             </button>
-                            <button
-                              type="button"
-                              className="cardMenuDropdownItem"
-                              disabled={!canResetQuota}
-                              title={
-                                quota?.resetCreditCount
-                                  ? `Reset ${account.displayName} quota`
-                                  : 'No reset credits available'
-                              }
-                              onClick={async () => {
-                                setActiveMenuId(null);
-                                if (await confirmResetQuota(account.displayName)) {
-                                  void resetAccountQuota(account.id);
+                            {!isApiAccount ? (
+                              <button
+                                type="button"
+                                className="cardMenuDropdownItem"
+                                disabled={!canResetQuota}
+                                title={
+                                  quota?.resetCreditCount
+                                    ? `Reset ${account.displayName} quota`
+                                    : 'No reset credits available'
                                 }
-                              }}
-                            >
-                              <IconPlay size={13} />
-                              <span>{isResetting ? 'Resetting...' : 'Reset Quota'}</span>
-                            </button>
+                                onClick={async () => {
+                                  setActiveMenuId(null);
+                                  if (await confirmResetQuota(account.displayName)) {
+                                    void resetAccountQuota(account.id);
+                                  }
+                                }}
+                              >
+                                <IconPlay size={13} />
+                                <span>{isResetting ? 'Resetting...' : 'Reset Quota'}</span>
+                              </button>
+                            ) : null}
                             {account.hasAuth && (
                               <button
                                 type="button"
@@ -700,6 +713,19 @@ export function Accounts({
                               <IconPencil size={13} />
                               <span>Rename</span>
                             </button>
+                            {isApiAccount ? (
+                              <button
+                                type="button"
+                                className="cardMenuDropdownItem"
+                                onClick={() => {
+                                  setActiveMenuId(null);
+                                  switchModel(account);
+                                }}
+                              >
+                                <IconPlay size={13} />
+                                <span>Switch model...</span>
+                              </button>
+                            ) : null}
                             <button
                               type="button"
                               className="cardMenuDropdownItem cardMenuDropdownItem--danger"
@@ -727,25 +753,27 @@ export function Accounts({
                               <IconCloud size={13} />
                               <span>Export CPA</span>
                             </button>
-                            <button
-                              type="button"
-                              className="cardMenuDropdownItem"
-                              disabled={!canResetQuota}
-                              title={
-                                quota?.resetCreditCount
-                                  ? `Reset ${account.displayName} quota`
-                                  : 'No reset credits available'
-                              }
-                              onClick={async () => {
-                                setActiveMenuId(null);
-                                if (await confirmResetQuota(account.displayName)) {
-                                  void resetAccountQuota(account.id);
+                            {!isApiAccount ? (
+                              <button
+                                type="button"
+                                className="cardMenuDropdownItem"
+                                disabled={!canResetQuota}
+                                title={
+                                  quota?.resetCreditCount
+                                    ? `Reset ${account.displayName} quota`
+                                    : 'No reset credits available'
                                 }
-                              }}
-                            >
-                              <IconPlay size={13} />
-                              <span>{isResetting ? 'Resetting...' : 'Reset Quota'}</span>
-                            </button>
+                                onClick={async () => {
+                                  setActiveMenuId(null);
+                                  if (await confirmResetQuota(account.displayName)) {
+                                    void resetAccountQuota(account.id);
+                                  }
+                                }}
+                              >
+                                <IconPlay size={13} />
+                                <span>{isResetting ? 'Resetting...' : 'Reset Quota'}</span>
+                              </button>
+                            ) : null}
                             <button
                               type="button"
                               className="cardMenuDropdownItem"
@@ -766,7 +794,7 @@ export function Accounts({
                 </div>
               </div>
               <div className="cardTagsRow">
-                <PlanTypeBadge planType={quota?.planType} />
+                {!isApiAccount ? <PlanTypeBadge planType={quota?.planType} /> : null}
                 {isActiveAccount ? (
                   <span className="accountActiveBadge" aria-label="Active session account">
                     Active
@@ -775,12 +803,17 @@ export function Accounts({
                   <span className="badge badge--auth" aria-label="Logged in account">
                     Logged in
                   </span>
-                ) : (
+                ) : !isApiAccount ? (
                   <span className="badge warn" aria-label="Login needed account">
                     Login needed
                   </span>
-                )}
-                <AuthModeBadge authMode={account.authMode} />
+                ) : null}
+                {isApiAccount ? (
+                  <span className="badge badge--auth" aria-label="External API account">
+                    External API
+                  </span>
+                ) : null}
+                {!isApiAccount ? <AuthModeBadge authMode={account.authMode} /> : null}
                 <TokenExpirationBadge status={tokenStatuses[account.id]} />
               </div>
               <p className="cardPath mono" title={account.codexHome}>
@@ -790,22 +823,50 @@ export function Accounts({
                 {metaText}
               </p>
               <AccountNotePanel account={account} onSave={onSaveAccountNote} />
-              <div className="accountQuota">
-                {quotaDisplayWindows(quota).map((window) => (
-                  <QuotaWindow
-                    key={window.key}
-                    label={window.label}
-                    usedPercent={window.usedPercent}
-                    resetAt={window.resetAt}
-                    variant={window.variant}
-                  />
-                ))}
-              </div>
+              {!isApiAccount ? (
+                <div className="accountQuota">
+                  {quotaDisplayWindows(quota).map((window) => (
+                    <QuotaWindow
+                      key={window.key}
+                      label={window.label}
+                      usedPercent={window.usedPercent}
+                      resetAt={window.resetAt}
+                      variant={window.variant}
+                    />
+                  ))}
+                </div>
+              ) : null}
               <div
                 className={compactButtons ? 'cardActions cardActions--singleRow' : 'cardActions'}
               >
                 {authMode === 'oauth' ? (
-                  account.hasAuth ? (
+                  isApiAccount ? (
+                    <>
+                      <UIButton
+                        size="sm"
+                        variant="primary"
+                        className="accountActionBtn accountActionBtn--primary"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          switchModel(account);
+                        }}
+                      >
+                        Switch Model
+                      </UIButton>
+                      <UIButton
+                        size="sm"
+                        variant="default"
+                        className="accountActionBtn accountActionBtn--secondary"
+                        disabled={accounts.length < 2}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openHandoff(account);
+                        }}
+                      >
+                        <IconPlay size={13} /> Handoff
+                      </UIButton>
+                    </>
+                  ) : account.hasAuth ? (
                     <>
                       <UIButton
                         size="sm"
@@ -1293,101 +1354,6 @@ export function Sessions({
         <div className="emptyBox">No sessions. Unknown cwd values will display as `unknown`.</div>
       )}
     </section>
-  );
-}
-
-export function Providers({
-  accounts,
-  providers,
-  create,
-  test,
-  remove,
-  attach,
-}: {
-  accounts: CodexAccount[];
-  providers: ProviderProfile[];
-  create: () => void;
-  test: (providerId: string) => void;
-  remove: (providerId: string) => void;
-  attach: (providerId: string) => void;
-}) {
-  return (
-    <div className="providersPage">
-      <section className="panel pagePanel">
-        <div className="panelHead">
-          <h3 className="sectionTitle">Providers</h3>
-          <UIButton variant="primary" onClick={create}>
-            Add Provider
-          </UIButton>
-        </div>
-        {providers.length ? (
-          <div className="cardGrid">
-            {providers.map((provider) => (
-              <article className="card" key={provider.id}>
-                <div className="cardHead">
-                  <h3>{provider.name}</h3>
-                  <span className="badge">{provider.health}</span>
-                </div>
-                <p className="mono cardPath">{provider.baseUrl}</p>
-                <div className="kv">
-                  <span>ID</span>
-                  <strong>{provider.id}</strong>
-                  <span>Model</span>
-                  <strong>{provider.defaultModel}</strong>
-                  <span>Secret</span>
-                  <strong>
-                    {provider.secretStorage}
-                    {provider.envKey ? ` · ${provider.envKey}` : ''}
-                  </strong>
-                </div>
-                <div className="cardActions">
-                  <UIButton size="sm" onClick={() => test(provider.id)}>
-                    Test
-                  </UIButton>
-                  <UIButton size="sm" onClick={() => attach(provider.id)}>
-                    Attach
-                  </UIButton>
-                  <UIButton variant="danger" size="sm" onClick={() => remove(provider.id)}>
-                    Delete
-                  </UIButton>
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <div className="emptyState">
-            <div className="emptyStateIcon" aria-hidden>
-              <IconProviders size={32} />
-            </div>
-            <strong>No provider profiles yet</strong>
-            <p>Add a provider profile to start managing API keys and bindings.</p>
-          </div>
-        )}
-        <div className="infoBanner">
-          <IconInfo size={16} />
-          <span>
-            API keys are never returned to the UI. Provider store contains metadata and secret
-            references only.
-          </span>
-        </div>
-      </section>
-      <section className="panel pagePanel">
-        <div className="panelHead">
-          <h3 className="sectionTitle">Bindings</h3>
-        </div>
-        <div className="bindingList">
-          {accounts.map((account) => (
-            <div className="bindingRow" key={account.id}>
-              <span className="bindingName">{account.id}</span>
-              <strong>
-                {account.providerId ?? 'unknown'} · {account.model ?? 'unknown'}
-              </strong>
-              <em>{account.authMode ?? 'unknown'}</em>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
   );
 }
 

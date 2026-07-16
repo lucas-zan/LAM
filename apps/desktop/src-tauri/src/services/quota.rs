@@ -1,5 +1,6 @@
 use super::account::{list_accounts, quota_account, CodexAccount};
 use super::error::{AppError, Result};
+use super::provider_api_v2::list_binding_views_service_v2;
 use super::types::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -103,6 +104,9 @@ pub fn get_profile_quota(
     force_refresh: bool,
 ) -> Result<UsageQuotaSnapshot> {
     let account = quota_account(home_root, profile_id)?;
+    if force_refresh && external_api_profile_ids(home_root)?.contains(profile_id) {
+        return Ok(external_api_quota_snapshot(profile_id));
+    }
     if force_refresh && app_server_quota_enabled() {
         match try_codex_app_server_quota(home_root, &account) {
             Ok(mut snapshot) => {
@@ -162,9 +166,13 @@ pub fn refresh_all_quotas(
 ) -> Result<QuotaRefreshResult> {
     let accounts = list_accounts(home_root)?;
     let requested = profile_ids.unwrap_or_else(|| accounts.iter().map(|a| a.id.clone()).collect());
+    let external_api_ids = external_api_profile_ids(home_root)?;
     let mut snapshots = Vec::new();
     let mut warnings = Vec::new();
     for profile_id in requested {
+        if external_api_ids.contains(&profile_id) {
+            continue;
+        }
         match get_profile_quota(home_root, &profile_id, true) {
             Ok(snapshot) => {
                 if snapshot.staleness != "fresh" {
@@ -289,6 +297,13 @@ fn quota_fallback_warning(profile_id: &str, snapshot: &UsageQuotaSnapshot) -> St
     )
 }
 
+fn external_api_profile_ids(home_root: &Path) -> Result<std::collections::HashSet<String>> {
+    Ok(list_binding_views_service_v2(home_root)?
+        .into_iter()
+        .map(|binding| binding.profile_id)
+        .collect())
+}
+
 fn reset_operation_path(home_root: &Path, profile_id: &str) -> PathBuf {
     let safe = profile_id.replace(['/', '\\', ':'], "_");
     config_root(home_root)
@@ -399,6 +414,12 @@ fn unavailable_quota_snapshot(profile_id: &str, alert: Option<String>) -> UsageQ
         alerts: alert.into_iter().collect(),
         suggested_actions: Vec::new(),
     }
+}
+
+fn external_api_quota_snapshot(profile_id: &str) -> UsageQuotaSnapshot {
+    let mut snapshot = unavailable_quota_snapshot(profile_id, None);
+    snapshot.source = "external_api_quota_unsupported".into();
+    snapshot
 }
 
 fn app_server_quota_enabled() -> bool {
@@ -896,7 +917,7 @@ fn parse_reset_consume_line(line: &str) -> Result<Option<String>> {
 }
 
 fn parse_reset_consume_value(value: &Value) -> Option<String> {
-    let result = value.get("result").unwrap_or(&value);
+    let result = value.get("result").unwrap_or(value);
     let outcome = result
         .as_str()
         .or_else(|| result.get("outcome").and_then(Value::as_str))

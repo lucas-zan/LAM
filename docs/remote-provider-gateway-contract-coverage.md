@@ -6,13 +6,14 @@
 
 - Codex: exact-tested `0.144.1`
 - Platform: `darwin arm64`, OS `15.6`
-- Capture date: `2026-07-10`
+- Capture date: `2026-07-14`
 - State mode: `full-input`; response store disabled; `previous_response_id` rejected
 
 ## Route contract
 
 - Required and observed: `GET /v1/models`, `POST /v1/responses`
 - Explicitly unsupported: `GET /v1/responses/{id}`, `POST /v1/responses/{id}`, `POST /v1/responses/{id}/cancel`
+- Model catalog: non-empty top-level `models`; OpenAI `data[]` is not the Codex catalog shape; fallback metadata is forbidden.
 
 ## Captured behavior
 

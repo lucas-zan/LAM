@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "externalBin": [
+      "binaries/lam",
+      "binaries/lam-provider-gateway",
+      "binaries/lam-auth-helper"
+    ],
+    "resources": {
+      "generated/provider-gateway-install-manifest.json": "provider-gateway-install-manifest.json"
+    }
+  }
+}

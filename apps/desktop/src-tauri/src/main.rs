@@ -28,15 +28,30 @@ fn main() {
             }
         })
         .setup(|app| {
+            let home = localagentmanager_core::resolve_home_root()?;
+            localagentmanager_core::recover_provider_transactions_service_v2(
+                &home,
+                chrono::Utc::now().timestamp_millis().max(0) as u64,
+            )?;
+            localagentmanager_core::repair_managed_wrappers(&home)?;
+            let supervisor_home = home.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) =
+                    localagentmanager_core::gateway::supervisor::monitor_packaged_gateway(
+                        supervisor_home,
+                    )
+                    .await
+                {
+                    eprintln!("{}", error.code);
+                }
+            });
             tray::setup_tray(app.handle())?;
 
             #[cfg(target_os = "macos")]
             {
-                if let Ok(home) = localagentmanager_core::resolve_home_root() {
-                    let hide = localagentmanager_core::types::get_hide_dock_icon(&home);
-                    if hide {
-                        app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-                    }
+                let hide = localagentmanager_core::types::get_hide_dock_icon(&home);
+                if hide {
+                    app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 }
             }
 
@@ -101,6 +116,28 @@ fn main() {
             commands::plan_attach_provider_to_profile,
             commands::attach_provider_to_profile,
             commands::execute_attach_provider_to_profile,
+            commands::list_providers_v2,
+            commands::discover_provider_models_v2,
+            commands::test_provider_upstream_v2,
+            commands::create_provider_v2,
+            commands::approve_provider_auth_command_v2,
+            commands::list_provider_auth_command_approvals_v2,
+            commands::create_provider_with_keychain_v2,
+            commands::create_provider_legacy_compat_v2,
+            commands::update_provider_v2,
+            commands::rotate_provider_credential_v2,
+            commands::list_profile_provider_bindings_v2,
+            commands::plan_attach_provider_v2,
+            commands::execute_attach_provider_v2,
+            commands::plan_detach_provider_v2,
+            commands::execute_detach_provider_v2,
+            commands::plan_api_account_v2,
+            commands::execute_api_account_v2,
+            commands::plan_api_account_model_switch_v2,
+            commands::execute_api_account_model_switch_v2,
+            commands::delete_api_account_v2,
+            commands::plan_gateway_port_migration_v2,
+            commands::execute_gateway_port_migration_v2,
             commands::get_antigravity_quota,
             commands::upload_pat_credentials,
             commands::get_pat_metadata,

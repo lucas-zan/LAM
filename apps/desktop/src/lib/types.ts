@@ -172,6 +172,7 @@ export type RelayResumeRequest = {
   sessionId: string;
   cwd?: string | null;
   divergedStrategy?: DivergedSessionStrategy | null;
+  confirmCompatibilityLoss?: boolean;
 };
 
 export type RelayResumeResult = {
@@ -186,6 +187,23 @@ export type RelayResumeResult = {
   handoffPath?: string | null;
   resume: ResumeCommand;
   warnings: string[];
+  compatibility?: {
+    disposition: 'compatible' | 'compatible_with_loss' | 'blocked';
+    confirmationRequired: boolean;
+    issues: Array<{
+      itemId: string;
+      itemType: string;
+      reason: string;
+      recoveryAction: string;
+    }>;
+    transformations: Array<{
+      itemId: string;
+      itemType: string;
+      action: string;
+      warning: string;
+    }>;
+  } | null;
+  compatibilityFingerprint?: string | null;
 };
 
 export type DivergedSessionStrategy =
@@ -539,6 +557,277 @@ export type AttachProviderResult = {
   backupPath: string;
   operations: string[];
   warnings: string[];
+};
+
+export type ProviderProtocolV2 = 'responses' | 'chat_completions';
+export type RouteKindV2 = 'direct' | 'gateway';
+
+export type CredentialReferenceV2 =
+  | { kind: 'env'; envKey: string }
+  | { kind: 'keychain'; service: 'lam.remote-provider'; account: string; version: number }
+  | { kind: 'auth_command'; approvalId: string }
+  | { kind: 'none' };
+
+export type UpstreamAuthV2 =
+  | { kind: 'bearer'; credential: CredentialReferenceV2 }
+  | { kind: 'header'; name: string; credential: CredentialReferenceV2 }
+  | { kind: 'none' };
+
+export type AdapterV2 =
+  | { kind: 'none' }
+  | { kind: 'local'; adapterId: string; upstreamPath: string };
+
+export type ProviderDefinitionV2 = {
+  id: string;
+  name: string;
+  protocol: ProviderProtocolV2;
+  baseUrl: string;
+  defaultModel: string;
+  models: Array<{ id: string; label: string }>;
+  upstreamAuth: UpstreamAuthV2;
+  adapter: AdapterV2;
+  compatibilityProfile?: string;
+  codex: {
+    displayName?: string;
+    streamIdleTimeoutMs?: number;
+    directRequestMaxRetries?: number;
+    directStreamMaxRetries?: number;
+    routeViaGateway?: boolean;
+    queryParams: Record<string, string>;
+    envHttpHeaders: Record<string, string>;
+  };
+};
+
+export type CreateProviderRequestV2 = {
+  expectedRevision: number;
+  provider: ProviderDefinitionV2;
+};
+export type UpdateProviderRequestV2 = CreateProviderRequestV2;
+
+export type DiscoverProviderModelsRequestV2 = {
+  baseUrl: string;
+  apiKey: string;
+};
+
+export type DiscoverProviderModelsViewV2 = {
+  models: Array<{ id: string; label: string }>;
+};
+
+export type ApproveAuthCommandRequestV2 = {
+  expectedRevision: number;
+  executable: string;
+  args: string[];
+  timeoutMs: number;
+  maxStdoutBytes: number;
+  refreshIntervalMs: number;
+};
+
+export type AuthCommandApprovalViewV2 = {
+  revision: number;
+  approvalId: string;
+  executable: string;
+};
+
+export type AuthCommandApprovalListV2 = {
+  revision: number;
+  approvals: AuthCommandApprovalViewV2[];
+};
+
+export type ProviderProfileViewV2 = {
+  id: string;
+  name: string;
+  protocol: ProviderProtocolV2;
+  baseUrl: string;
+  defaultModel: string;
+  models: Array<{ id: string; label: string }>;
+  upstreamAuth: UpstreamAuthV2;
+  adapter: AdapterV2;
+  compatibilityProfile?: string;
+  codex: ProviderDefinitionV2['codex'];
+  storeRevision: number;
+  usedBy: string[];
+  readinessBlockers: string[];
+  readiness?: { ready: boolean; blockers: string[]; bindingCount: number };
+  capabilities?: {
+    streaming: {
+      effective: 'supported' | 'partial' | 'unsupported' | 'unknown';
+      provenance: string;
+    };
+    functionTools: {
+      effective: 'supported' | 'partial' | 'unsupported' | 'unknown';
+      provenance: string;
+    };
+    structuredOutputs: {
+      effective: 'supported' | 'partial' | 'unsupported' | 'unknown';
+      provenance: string;
+    };
+    reasoning: {
+      effective: 'supported' | 'partial' | 'unsupported' | 'unknown';
+      provenance: string;
+    };
+    evidenceCurrent: boolean;
+    evidenceFingerprint?: string | null;
+    evidenceFixtureIds: string[];
+  };
+  lastHealth?: {
+    providerId: string;
+    observedAt: string;
+    ok: boolean;
+    latencyMs?: number;
+    errorCode?: string;
+  };
+};
+
+export type CreateProviderWithKeychainRequestV2 = {
+  expectedRevision: number;
+  provider: ProviderDefinitionV2;
+  secret: string;
+};
+
+export type PlanAttachRequestV2 = {
+  profileId: string;
+  providerId: string;
+  selectedModel: string;
+};
+export type ExecuteAttachRequestV2 = { planId: string; fingerprint: string };
+export type ExecuteDetachRequestV2 = ExecuteAttachRequestV2;
+
+export type ApiAccountProviderSelectionV2 =
+  | { kind: 'new'; provider: ProviderDefinitionV2 }
+  | { kind: 'existing'; providerId: string };
+
+export type PlanApiAccountRequestV2 = {
+  accountName: string;
+  selectedModel: string;
+  overwriteWrapper: boolean;
+  provider: ApiAccountProviderSelectionV2;
+};
+
+export type ApiAccountPlanViewV2 = {
+  planId: string;
+  fingerprint: string;
+  expiresAtMs: number;
+  accountName: string;
+  providerId: string;
+  selectedModel: string;
+  routeKind: RouteKindV2;
+  operations: string[];
+  warnings: string[];
+  blockers: string[];
+};
+
+export type ExecuteApiAccountRequestV2 = {
+  planId: string;
+  fingerprint: string;
+  keychainSecret?: string | null;
+};
+
+export type ApiAccountExecutionViewV2 = {
+  account: CreateResult;
+  provider: ProviderProfileViewV2;
+  binding: ProfileProviderBindingViewV2;
+  attach: AttachExecutionViewV2;
+};
+
+export type ProfileAttachPlanViewV2 = {
+  planId: string;
+  fingerprint: string;
+  expiresAtMs: number;
+  profileId: string;
+  providerId: string;
+  selectedModel: string;
+  routeKind: RouteKindV2;
+  blockers: string[];
+  warnings: string[];
+  operations: string[];
+  redactedPreview: string;
+  expectedProviderStoreRevision: number;
+  expectedBindingStoreRevision: number;
+  expectedBindingRevision?: number | null;
+  sourceConfigHash: string;
+};
+
+export type ProfileDetachPlanViewV2 = {
+  planId: string;
+  fingerprint: string;
+  expiresAtMs: number;
+  profileId: string;
+  expectedBindingStoreRevision: number;
+  expectedBindingRevision: number;
+  sourceConfigHash: string;
+};
+
+export type ProfileProviderBindingViewV2 = {
+  profileId: string;
+  providerId: string;
+  selectedModel: string;
+  routeKind: RouteKindV2;
+  revision: number;
+  providerRevision: number;
+};
+
+export type AttachExecutionViewV2 = {
+  operationId?: string | null;
+  state: string;
+  idempotent: boolean;
+};
+
+export type GatewayPortChangePlanV2 = {
+  expectedStateRevision: number;
+  oldPort: number;
+  newPort: number;
+  profileIds: string[];
+  fingerprint: string;
+};
+
+export type GatewayPortMigrationOutcomeV2 = {
+  oldPort: number;
+  newPort: number;
+  migratedProfiles: string[];
+  stateRevision: number;
+  bindingStoreRevision: number;
+};
+
+export type RotateProviderCredentialRequestV2 = {
+  expectedRevision: number;
+  providerId: string;
+  expectedCredential: CredentialReferenceV2;
+  secret: string;
+};
+
+export type CredentialRotationViewV2 = {
+  provider: ProviderProfileViewV2;
+  cleanupPending: boolean;
+};
+
+export type ProviderUpstreamTestViewV2 = {
+  providerId: string;
+  ok: boolean;
+  routeKind: RouteKindV2;
+  modelsEndpoint: string;
+  redactedSummary: string;
+};
+
+export type LegacyCreateProviderCompatRequestV2 = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  wireApi: string;
+  defaultModel: string;
+  envKey?: string | null;
+  secret?: { kind: 'env'; envKey: string } | { kind: 'none' } | null;
+};
+
+export type LegacyCreateProviderResultV2 = {
+  provider: ProviderProfileViewV2;
+  warnings: string[];
+};
+
+export type StructuredErrorViewV2 = {
+  code: string;
+  message: string;
+  recoverable: boolean;
+  recoveryActions: string[];
 };
 
 export type AntigravityModelQuota = {

@@ -1,5 +1,10 @@
 # LAM (LocalAgentManager)
 
+> 当前产品模型：**一个 Account = 一个 Profile = 一个 `CODEX_HOME`**。添加外部 API 请使用
+> **添加账号 → API Account**；默认创建账号专属 Provider 连接，只有高级选项才复用已有
+> Provider。切换模型只更新同一账号的 binding/config，不新建 `CODEX_HOME`。API Key 是
+> write-only 输入并存入 macOS Keychain。
+
 **LAM** 是一款 **macOS 菜单栏应用**，面向使用 **多个 [Codex CLI](https://github.com/openai/codex) 账号**（`~/.codex`、`~/.codex-a` 等）的用户：一眼看额度、按账号浏览 session，并**安全地把对话迁到另一个账号**继续 — 不上传代码与聊天记录到云端。
 
 **English:** [`README.md`](README.md)

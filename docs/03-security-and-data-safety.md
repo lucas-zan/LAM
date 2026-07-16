@@ -218,6 +218,27 @@ Session 内容可能包含代码、路径、业务上下文，必须留在本机
 - [ ] 同步时 `history.jsonl` 默认不会被复制。
 - [ ] 同步前自动备份目标 sessions。
 - [ ] wrapper 里不包含绝对用户名路径以外的敏感信息。
+
+## 9. External API Account / Gateway 边界（v0.2.1）
+
+- API Account 创建、切模和删除使用 plan/fingerprint、CAS 与恢复 journal；启动时恢复半完成操作。
+- API Key 只允许进入模型发现和 execute command 的 write-only 字段，随后写入 macOS Keychain。模型发现
+  关闭系统代理和 HTTP redirect，限制 15 秒总时长、1 MiB 响应体和 2048 个模型；请求、错误和自定义
+  `Debug` 都不得暴露 key 或上游 response body。Provider DTO、`config.toml`、plan、journal、relay report、
+  日志和 metric 只保存 credential reference 或 hash identity。
+- 新建 External API Account 由后端固定选择 Gateway；前端不能降级为 direct，也不能覆盖 Codex
+  request/stream retry 为 0 的策略。
+- Gateway 只监听 loopback，并对 `/v1/models`、`/v1/responses` 强制 bearer；Gateway route 的 Codex
+  request/stream retries 均为 0，避免与上游重试叠加。
+- `/v1/models` 只从 authenticated immutable Provider allowlist 生成非空的严格 Codex 0.144.1 目录；
+  不把上游 OpenAI `{ data: [...] }` 原样暴露给 Codex，也不推断未知模型的 reasoning、verbosity 或
+  parallel-tool 能力。
+- Responses Gateway 路径先校验 bearer、model allowlist、body/history/store 约束，再原样透传上游
+  status、content-type 与 body/SSE；未知模型和 stateful 请求在上游 I/O 前 fail closed。
+- Gateway metric 是 allowlist：request id、route、status、latency、binding hash、retry count 和 token usage；
+  不记录 header、token、prompt、response、tool 参数或 reasoning。
+- 跨 Provider relay 在任何目标写入之前分析 JSONL。previous-response state、encrypted reasoning、
+  hosted/MCP/computer、media、未知/损坏项和未完成 tool state 均 fail closed。
 - [ ] Terminal command 中所有路径和 session id 都被 escape。
 - [ ] app 断网可用。
 

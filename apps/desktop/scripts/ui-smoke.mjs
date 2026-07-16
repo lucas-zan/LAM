@@ -132,7 +132,7 @@ const checks = [
       app.includes('max-height: 100vh') &&
       app.includes('.trayAccountList') &&
       app.includes('flex: 1 1 auto') &&
-      app.includes('max-height: 416px') &&
+      app.includes('max-height: 700px') &&
       app.includes('overflow-y: auto') &&
       app.includes('overscroll-behavior: contain') &&
       app.includes('.trayPopoverFoot') &&
@@ -161,10 +161,10 @@ const checks = [
   ],
   [
     'tray popover height grows up to four accounts',
-    traySize.includes('TRAY_POPOVER_MAX_HEIGHT = 620') &&
+    traySize.includes('TRAY_POPOVER_MAX_HEIGHT = 900') &&
       traySize.includes('measureTrayPopoverHeight') &&
       traySize.includes('list.scrollHeight') &&
-      traySize.includes('Math.min(list.scrollHeight, 416)') &&
+      traySize.includes('Math.min(list.scrollHeight, 700)') &&
       !traySize.includes('panel.getBoundingClientRect().height'),
   ],
   [
@@ -217,7 +217,8 @@ const checks = [
   [
     'stale quota snapshots filtered after account rename',
     quotaLib.includes('filterQuotaSnapshotsForAccounts') &&
-      app.includes('filterToProfileIds(data.map((a) => a.id))') &&
+      quotaLib.includes('quotaRefreshProfileIds') &&
+      app.includes('filterToProfileIds(quotaProfileIds)') &&
       views.includes('countAccountsWithQuotaData(accounts, quotas)') &&
       trayPanel.includes('countAccountsWithQuotaData(accounts, quotas)'),
   ],
@@ -226,7 +227,7 @@ const checks = [
     app.includes('listCachedQuotas') &&
       app.includes('listCachedAccounts') &&
       api.includes('list_cached_quotas') &&
-      api.includes('invoke<UsageQuotaSnapshot[]>("list_cached_quotas"'),
+      api.includes("invoke<UsageQuotaSnapshot[]>('list_cached_quotas'"),
   ],
   [
     'real quota is decoupled from session estimates',
@@ -247,15 +248,45 @@ const checks = [
   [
     'provider delete safety',
     app.includes('variant="danger"') &&
-      app.includes('Delete provider') &&
-      app.includes('window.confirm'),
+      app.includes('Detach Provider') &&
+      app.includes('onDetach(binding)'),
   ],
   [
     'provider center',
     app.includes('Providers') &&
       app.includes('infoBanner') &&
-      app.includes('Attach Provider to Account') &&
-      app.includes('API keys are never returned to the UI'),
+      app.includes('Attach Provider') &&
+      app.includes('Provider views contain credential references only'),
+  ],
+  [
+    'account-first external API lifecycle',
+    app.includes('Create API Account') &&
+      app.includes('Advanced Provider Connections') &&
+      app.includes('Switch Model') &&
+      api.includes("invoke<ApiAccountPlanViewV2>('plan_api_account_v2'") &&
+      api.includes("invoke<ApiAccountExecutionViewV2>('execute_api_account_v2'") &&
+      api.includes("invoke<DeleteAccountResult>('delete_api_account_v2'"),
+  ],
+  [
+    'provider center creation uses the External API account flow',
+    app.includes('onAddExternalApi={openExternalApiModal}') &&
+      app.includes('function openExternalApiModal()') &&
+      !app.includes("setDialog({ kind: 'editor', provider: null })"),
+  ],
+  [
+    'global header opens the External API account flow directly',
+    app.includes('className="toolbarBtn" onClick={openExternalApiModal}') &&
+      app.includes('<IconPlus size={14} /> External API') &&
+      !app.includes('<IconPlus size={14} /> New Provider'),
+  ],
+  [
+    'External API has a dedicated modal shell',
+    app.includes("openModal('externalApi')") &&
+      app.includes("modal === 'externalApi'") &&
+      app.includes('<Shell.Modal title="Add External API"') &&
+      app.includes('<Shell.Modal title="Add Account"') &&
+      !app.includes("setCreateMode('api')") &&
+      !app.includes("createMode === 'api'"),
   ],
   [
     'provider mismatch',
@@ -264,7 +295,7 @@ const checks = [
   ],
   [
     'tauri invokes',
-    api.includes('invoke<HealthCheck>("health_check")') &&
+    api.includes("invoke<HealthCheck>('health_check')") &&
       api.includes('execute_sync') &&
       api.includes('relay_resume_session') &&
       api.includes('open_terminal_with_command') &&

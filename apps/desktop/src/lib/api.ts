@@ -50,9 +50,46 @@ import type {
   UsageSummary,
   UsageSummaryRequest,
   UsageThreadSummary,
+  CreateProviderRequestV2,
+  CreateProviderWithKeychainRequestV2,
+  UpdateProviderRequestV2,
+  ProviderProfileViewV2,
+  PlanAttachRequestV2,
+  ExecuteAttachRequestV2,
+  ExecuteDetachRequestV2,
+  ProfileAttachPlanViewV2,
+  ProfileDetachPlanViewV2,
+  ProfileProviderBindingViewV2,
+  AttachExecutionViewV2,
+  RotateProviderCredentialRequestV2,
+  CredentialRotationViewV2,
+  ProviderUpstreamTestViewV2,
+  LegacyCreateProviderCompatRequestV2,
+  LegacyCreateProviderResultV2,
+  ApproveAuthCommandRequestV2,
+  AuthCommandApprovalListV2,
+  AuthCommandApprovalViewV2,
+  GatewayPortChangePlanV2,
+  GatewayPortMigrationOutcomeV2,
+  PlanApiAccountRequestV2,
+  ApiAccountPlanViewV2,
+  ExecuteApiAccountRequestV2,
+  ApiAccountExecutionViewV2,
+  DiscoverProviderModelsRequestV2,
+  DiscoverProviderModelsViewV2,
 } from './types';
 
-export const inTauri = () => '__TAURI_INTERNALS__' in window;
+type TauriInternals = {
+  invoke?: unknown;
+};
+
+export const inTauri = () => {
+  const internals = (window as unknown as { __TAURI_INTERNALS__?: TauriInternals })
+    .__TAURI_INTERNALS__;
+  return Boolean(
+    internals && typeof internals === 'object' && typeof internals.invoke === 'function',
+  );
+};
 
 export async function healthCheck(): Promise<HealthCheck> {
   if (!inTauri()) {
@@ -421,6 +458,143 @@ export async function attachProviderToProfile(
   req: AttachProviderRequest,
 ): Promise<AttachProviderResult> {
   return invoke<AttachProviderResult>('attach_provider_to_profile', { req });
+}
+
+export async function listProvidersV2(): Promise<ProviderProfileViewV2[]> {
+  return invoke<ProviderProfileViewV2[]>('list_providers_v2');
+}
+
+export async function createProviderV2(
+  req: CreateProviderRequestV2,
+): Promise<ProviderProfileViewV2> {
+  return invoke<ProviderProfileViewV2>('create_provider_v2', { req });
+}
+
+export async function discoverProviderModelsV2(
+  req: DiscoverProviderModelsRequestV2,
+): Promise<DiscoverProviderModelsViewV2> {
+  return invoke<DiscoverProviderModelsViewV2>('discover_provider_models_v2', { req });
+}
+
+export async function listProviderAuthCommandApprovalsV2(): Promise<AuthCommandApprovalListV2> {
+  return invoke<AuthCommandApprovalListV2>('list_provider_auth_command_approvals_v2');
+}
+
+export async function approveProviderAuthCommandV2(
+  req: ApproveAuthCommandRequestV2,
+): Promise<AuthCommandApprovalViewV2> {
+  return invoke<AuthCommandApprovalViewV2>('approve_provider_auth_command_v2', { req });
+}
+
+export async function createProviderWithKeychainV2(
+  req: CreateProviderWithKeychainRequestV2,
+): Promise<ProviderProfileViewV2> {
+  return invoke<ProviderProfileViewV2>('create_provider_with_keychain_v2', { req });
+}
+
+export async function createProviderLegacyCompatV2(
+  req: LegacyCreateProviderCompatRequestV2,
+  expectedRevision: number,
+): Promise<LegacyCreateProviderResultV2> {
+  return invoke<LegacyCreateProviderResultV2>('create_provider_legacy_compat_v2', {
+    req,
+    expectedRevision,
+  });
+}
+
+export async function updateProviderV2(
+  req: UpdateProviderRequestV2,
+): Promise<ProviderProfileViewV2> {
+  return invoke<ProviderProfileViewV2>('update_provider_v2', { req });
+}
+
+export async function rotateProviderCredentialV2(
+  req: RotateProviderCredentialRequestV2,
+): Promise<CredentialRotationViewV2> {
+  return invoke<CredentialRotationViewV2>('rotate_provider_credential_v2', { req });
+}
+
+export async function testProviderUpstreamV2(
+  providerId: string,
+): Promise<ProviderUpstreamTestViewV2> {
+  return invoke<ProviderUpstreamTestViewV2>('test_provider_upstream_v2', { providerId });
+}
+
+export async function listProfileProviderBindingsV2(): Promise<ProfileProviderBindingViewV2[]> {
+  return invoke<ProfileProviderBindingViewV2[]>('list_profile_provider_bindings_v2');
+}
+
+export async function planAttachProviderV2(
+  req: PlanAttachRequestV2,
+): Promise<ProfileAttachPlanViewV2> {
+  return invoke<ProfileAttachPlanViewV2>('plan_attach_provider_v2', { req });
+}
+
+export async function executeAttachProviderV2(
+  req: ExecuteAttachRequestV2,
+): Promise<AttachExecutionViewV2> {
+  return invoke<AttachExecutionViewV2>('execute_attach_provider_v2', { req });
+}
+
+export async function planDetachProviderV2(profileId: string): Promise<ProfileDetachPlanViewV2> {
+  return invoke<ProfileDetachPlanViewV2>('plan_detach_provider_v2', { profileId });
+}
+
+export async function executeDetachProviderV2(
+  req: ExecuteDetachRequestV2,
+): Promise<AttachExecutionViewV2> {
+  return invoke<AttachExecutionViewV2>('execute_detach_provider_v2', { req });
+}
+
+export async function planApiAccountV2(
+  req: PlanApiAccountRequestV2,
+): Promise<ApiAccountPlanViewV2> {
+  return invoke<ApiAccountPlanViewV2>('plan_api_account_v2', { req });
+}
+
+export async function executeApiAccountV2(
+  req: ExecuteApiAccountRequestV2,
+): Promise<ApiAccountExecutionViewV2> {
+  return invoke<ApiAccountExecutionViewV2>('execute_api_account_v2', { req });
+}
+
+export async function planApiAccountModelSwitchV2(
+  profileId: string,
+  selectedModel: string,
+): Promise<ProfileAttachPlanViewV2> {
+  return invoke<ProfileAttachPlanViewV2>('plan_api_account_model_switch_v2', {
+    profileId,
+    selectedModel,
+  });
+}
+
+export async function executeApiAccountModelSwitchV2(
+  planId: string,
+  fingerprint: string,
+): Promise<AttachExecutionViewV2> {
+  return invoke<AttachExecutionViewV2>('execute_api_account_model_switch_v2', {
+    planId,
+    fingerprint,
+  });
+}
+
+export async function deleteApiAccountV2(profileId: string): Promise<DeleteAccountResult> {
+  return invoke<DeleteAccountResult>('delete_api_account_v2', { profileId });
+}
+
+export async function planGatewayPortMigrationV2(
+  newPort: number,
+): Promise<GatewayPortChangePlanV2> {
+  return invoke<GatewayPortChangePlanV2>('plan_gateway_port_migration_v2', { newPort });
+}
+
+export async function executeGatewayPortMigrationV2(
+  plan: GatewayPortChangePlanV2,
+): Promise<GatewayPortMigrationOutcomeV2> {
+  return invoke<GatewayPortMigrationOutcomeV2>('execute_gateway_port_migration_v2', {
+    plan,
+    fingerprint: plan.fingerprint,
+  });
 }
 
 export async function getAntigravityQuota(): Promise<AntigravityQuotaResponse> {

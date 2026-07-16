@@ -7,12 +7,11 @@ import * as api from '../lib/api';
 
 type Modal =
   | 'account'
+  | 'externalApi'
   | 'renameAccount'
   | 'updatePatSession'
   | 'handoff'
   | 'sync'
-  | 'provider'
-  | 'attachProvider'
   | 'sessionDetail'
   | null;
 

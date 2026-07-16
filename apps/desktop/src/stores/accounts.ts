@@ -12,8 +12,18 @@ import { useSessionStore } from './sessions';
 import { useQuotaStore } from './quota';
 import { useProviderStore } from './providers';
 import { formatError } from '../lib/format';
+import { quotaRefreshProfileIds } from '../lib/quota';
 
 const DIVERGED_KEY = 'lam-diverged-session-strategy';
+
+function isCompatibilityConfirmationRequired(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'RELAY_COMPATIBILITY_CONFIRMATION_REQUIRED',
+  );
+}
 
 function readDivergedStrategy(): DivergedSessionStrategy {
   const saved = localStorage.getItem(DIVERGED_KEY);
@@ -72,11 +82,15 @@ export const useAccountStore = create<AccountState>()(
       set({ refreshing: true });
 
       try {
+        const providerRefresh = useProviderStore
+          .getState()
+          .refresh()
+          .catch((e) => app.setError(formatError(e)));
         if (api.inTauri()) {
           try {
             const cached = await api.listCachedAccounts();
             if (cached.length) {
-              applyAccountsList(cached, set, get, true);
+              applyAccountsList(cached, set, get, true, false);
             }
           } catch {
             /* cache miss is fine */
@@ -88,14 +102,11 @@ export const useAccountStore = create<AccountState>()(
           .then(app.setHealth)
           .catch((e) => app.setError(formatError(e)));
         const accountData = await api.listAccounts();
+        await providerRefresh;
         applyAccountsList(accountData, set, get, false, !options?.refreshQuotasNow);
         if (options?.refreshQuotasNow && accountData.length) {
-          await useQuotaStore.getState().refreshQuotas(accountData.map((account) => account.id));
+          await useQuotaStore.getState().refreshQuotas(refreshableProfileIds(accountData));
         }
-        api
-          .listProviders()
-          .then((p) => useProviderStore.getState().setProviders(p))
-          .catch((e) => app.setError(formatError(e)));
       } catch (err) {
         app.setAppReady();
         app.setError(formatError(err));
@@ -136,13 +147,29 @@ export const useAccountStore = create<AccountState>()(
           await useSessionStore.getState().openResume(session);
           return true;
         }
-        const result = await api.relayResumeSession({
+        const request = {
           fromProfileId: session.accountId,
           toProfileId: account.id,
           sessionId: session.id,
           cwd: session.cwd,
           divergedStrategy,
-        });
+        };
+        let result;
+        try {
+          result = await api.relayResumeSession(request);
+        } catch (error) {
+          if (
+            !isCompatibilityConfirmationRequired(error) ||
+            !window.confirm(
+              'This handoff only drops display metadata. Continue with the target Provider?',
+            )
+          )
+            throw error;
+          result = await api.relayResumeSession({
+            ...request,
+            confirmCompatibilityLoss: true,
+          });
+        }
         set({ selectedAccountId: account.id });
         useSessionStore.getState().setSelectedSessionId(session.id);
         useSessionStore.getState().setResume(result.resume);
@@ -200,8 +227,9 @@ function applyAccountsList(
     get().selectedAccountId && data.some((a) => a.id === get().selectedAccountId);
   const nextAccount = keepSelection ? get().selectedAccountId : (data[0]?.id ?? '');
 
+  const quotaProfileIds = refreshableProfileIds(data);
   set({ accounts: data, selectedAccountId: nextAccount });
-  useQuotaStore.getState().filterToProfileIds(data.map((a) => a.id));
+  useQuotaStore.getState().filterToProfileIds(quotaProfileIds);
   app.setAppReady();
 
   if (nextAccount) {
@@ -212,12 +240,9 @@ function applyAccountsList(
 
   if (data.length) {
     get().refreshActiveSession(data);
-    useQuotaStore.getState().loadCachedQuotas(data.map((a) => a.id));
-    if (scheduleQuotaRefresh) {
-      useQuotaStore.getState().scheduleQuotaRefresh(
-        data.map((a) => a.id),
-        8_000,
-      );
+    useQuotaStore.getState().loadCachedQuotas(quotaProfileIds);
+    if (scheduleQuotaRefresh && quotaProfileIds.length) {
+      useQuotaStore.getState().scheduleQuotaRefresh(quotaProfileIds, 8_000);
     }
   } else {
     useQuotaStore.getState().clearQuotas();
@@ -225,5 +250,13 @@ function applyAccountsList(
 
   app.setStatus(
     fromCache ? `Cached ${data.length} accounts · scanning…` : `Loaded ${data.length} accounts`,
+  );
+}
+
+function refreshableProfileIds(accounts: CodexAccount[]): string[] {
+  const bindings = useProviderStore.getState().bindings;
+  return quotaRefreshProfileIds(
+    accounts,
+    bindings.map((binding) => binding.profileId),
   );
 }

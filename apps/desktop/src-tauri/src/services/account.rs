@@ -380,6 +380,7 @@ pub fn execute_create_account(
     let name = validate_profile_name(&req.name)?;
     let home = codex_home_path(home_root, &name);
     let wrapper = wrapper_path(home_root, &name);
+    let wrapper_contents = wrapper_script(&name)?;
     fs::create_dir_all(&home)?;
     set_dir_private(&home)?;
     for sub in [
@@ -404,7 +405,7 @@ pub fn execute_create_account(
             .parent()
             .ok_or_else(|| AppError::new("WRAPPER_PATH_INVALID", "missing wrapper parent"))?,
     )?;
-    write_executable(&wrapper, &wrapper_script(&name))?;
+    write_executable(&wrapper, &wrapper_contents)?;
     Ok(CreateResult {
         profile_id: name,
         home_path: home,
@@ -412,6 +413,82 @@ pub fn execute_create_account(
         operations: plan.operations,
         warnings: plan.warnings,
     })
+}
+
+pub fn repair_managed_wrappers(home_root: &Path) -> Result<Vec<PathBuf>> {
+    let accounts = list_accounts(home_root)?;
+    let managed = accounts
+        .into_iter()
+        .filter(|account| account.managed && account.id != "main")
+        .collect::<Vec<_>>();
+    if managed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let launcher = super::provider_runtime::resolve_launcher_executable()?;
+    let planner = super::gateway::launch_planner::CodexLaunchPlanner::new(
+        launcher.to_string_lossy().into_owned(),
+    );
+    let mut repaired = Vec::new();
+    for account in managed {
+        let path = account
+            .wrapper_path
+            .unwrap_or_else(|| wrapper_path(home_root, &account.id));
+        let expected = planner.wrapper_script(&account.id)?;
+        if fs::read_to_string(&path).ok().as_deref() == Some(&expected) {
+            continue;
+        }
+        replace_wrapper(&path, &expected)?;
+        repaired.push(path);
+    }
+    Ok(repaired)
+}
+
+fn replace_wrapper(path: &Path, contents: &str) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::new("WRAPPER_PATH_INVALID", "missing wrapper parent"))?;
+    fs::create_dir_all(parent)?;
+    let temporary = parent.join(format!(".lam-wrapper-{}.tmp", uuid::Uuid::new_v4()));
+    write_executable(&temporary, contents)?;
+    match fs::rename(&temporary, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            Err(error.into())
+        }
+    }
+}
+
+/// Compensate a just-created account before it has ever been handed to Codex.
+/// The marker and empty session tree are mandatory so this cannot become a
+/// general-purpose destructive profile deletion path.
+pub fn rollback_created_account(home_root: &Path, profile_id: &str) -> Result<()> {
+    let profile_id = validate_profile_id(profile_id)?;
+    let home = codex_home_path(home_root, &profile_id);
+    let marker = home.join(NEW_MARKER);
+    if !marker.is_file() {
+        return Err(AppError::new(
+            "ACCOUNT_ROLLBACK_OWNERSHIP_CONFLICT",
+            "new-account ownership marker is unavailable",
+        ));
+    }
+    let sessions = home.join("sessions");
+    if sessions.exists() && fs::read_dir(&sessions)?.next().transpose()?.is_some() {
+        return Err(AppError::new(
+            "ACCOUNT_ROLLBACK_HAS_SESSIONS",
+            "account has session data and cannot be compensated",
+        ));
+    }
+    super::provider_api_v2::ensure_profile_has_no_provider_binding_service_v2(
+        home_root,
+        &profile_id,
+    )?;
+    remove_profile_home(&home)?;
+    let wrapper = wrapper_path(home_root, &profile_id);
+    if wrapper.exists() {
+        fs::remove_file(wrapper)?;
+    }
+    Ok(())
 }
 
 pub fn rename_account_plan(home_root: &Path, req: &RenameAccountRequest) -> Result<OperationPlan> {
@@ -422,6 +499,7 @@ pub fn rename_account_plan(home_root: &Path, req: &RenameAccountRequest) -> Resu
             "The main ~/.codex profile cannot be renamed",
         ));
     }
+    super::provider_api_v2::ensure_profile_has_no_provider_binding_service_v2(home_root, &from.id)?;
     let to_name = validate_profile_name(&req.to_name)?;
     if to_name == from.id {
         return Err(AppError::new(
@@ -488,6 +566,7 @@ pub fn execute_rename_account(
     let to_name = validate_profile_name(&req.to_name)?;
     let target_home = codex_home_path(home_root, &to_name);
     let target_wrapper = wrapper_path(home_root, &to_name);
+    let wrapper_contents = wrapper_script(&to_name)?;
     let source_wrapper = from
         .wrapper_path
         .clone()
@@ -509,7 +588,7 @@ pub fn execute_rename_account(
             .parent()
             .ok_or_else(|| AppError::new("WRAPPER_PATH_INVALID", "missing wrapper parent"))?,
     )?;
-    write_executable(&target_wrapper, &wrapper_script(&to_name))?;
+    write_executable(&target_wrapper, &wrapper_contents)?;
     if source_wrapper.exists() && source_wrapper != target_wrapper {
         fs::remove_file(&source_wrapper)?;
     }
@@ -544,6 +623,10 @@ pub fn delete_account(home_root: &Path, req: &DeleteAccountRequest) -> Result<De
             "The main ~/.codex profile cannot be deleted",
         ));
     }
+    super::provider_api_v2::ensure_profile_has_no_provider_binding_service_v2(
+        home_root,
+        &profile_id,
+    )?;
 
     let account = find_account(home_root, &profile_id)?;
     let removed_home_path = account.codex_home.clone();
@@ -740,6 +823,7 @@ pub fn execute_create_relay(home_root: &Path, req: &CreateRelayRequest) -> Resul
     let name = relay_name(req)?;
     let home = codex_home_path(home_root, &name);
     let wrapper = wrapper_path(home_root, &name);
+    let wrapper_contents = wrapper_script(&name)?;
     fs::create_dir_all(&home)?;
     set_dir_private(&home)?;
     fs::create_dir_all(home.join("sessions"))?;
@@ -759,7 +843,7 @@ pub fn execute_create_relay(home_root: &Path, req: &CreateRelayRequest) -> Resul
             .parent()
             .ok_or_else(|| AppError::new("WRAPPER_PATH_INVALID", "missing wrapper parent"))?,
     )?;
-    write_executable(&wrapper, &wrapper_script(&name))?;
+    write_executable(&wrapper, &wrapper_contents)?;
     Ok(CreateResult {
         profile_id: name,
         home_path: home,
@@ -867,23 +951,10 @@ fn relay_parts(id: &str) -> (bool, Option<String>, Option<String>) {
     }
 }
 
-fn wrapper_script(name: &str) -> String {
-    format!(
-        r#"#!/usr/bin/env bash
-set -euo pipefail
-export CODEX_HOME="$HOME/.codex-{name}"
-CODEX_BIN="${{CODEX_BIN:-}}"
-if [ -z "$CODEX_BIN" ]; then
-  if command -v codex >/dev/null 2>&1; then
-    CODEX_BIN="$(command -v codex)"
-  else
-    echo "codex command not found. Add codex to PATH or set CODEX_BIN=/path/to/codex." >&2
-    exit 127
-  fi
-fi
-exec "$CODEX_BIN" "$@"
-"#
-    )
+fn wrapper_script(name: &str) -> Result<String> {
+    let launcher = super::provider_runtime::resolve_launcher_executable()?;
+    super::gateway::launch_planner::CodexLaunchPlanner::new(launcher.to_string_lossy().into_owned())
+        .wrapper_script(name)
 }
 
 fn managed_account_json(
@@ -1281,6 +1352,7 @@ pub fn add_session_profile_account(
     }
 
     let wrapper = wrapper_path(home_root, &account_id);
+    let wrapper_contents = wrapper_script(&account_id)?;
     if wrapper.exists() && !req.overwrite_wrapper {
         return Err(AppError::new(
             "WRAPPER_ALREADY_EXISTS",
@@ -1310,7 +1382,7 @@ pub fn add_session_profile_account(
             .parent()
             .ok_or_else(|| AppError::new("WRAPPER_PATH_INVALID", "missing wrapper parent"))?,
     )?;
-    write_executable(&wrapper, &wrapper_script(&account_id))?;
+    write_executable(&wrapper, &wrapper_contents)?;
 
     Ok(CreateResult {
         profile_id: account_id,

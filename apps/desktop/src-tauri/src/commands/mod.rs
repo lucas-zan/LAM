@@ -52,10 +52,29 @@ use localagentmanager_core::{
     UsageQuotaSnapshot, UsageRateCardEntry, UsageRefreshResult, UsageScopesResponse, UsageSummary,
     UsageSummaryRequest, UsageThreadSummary,
 };
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tauri::Emitter;
 
 static PENDING_ROUTE: Mutex<Option<String>> = Mutex::new(None);
+static PROVIDER_API_V2_STATE: OnceLock<Mutex<localagentmanager_core::ProviderApiV2State>> =
+    OnceLock::new();
+
+fn provider_api_v2_state() -> &'static Mutex<localagentmanager_core::ProviderApiV2State> {
+    PROVIDER_API_V2_STATE
+        .get_or_init(|| Mutex::new(localagentmanager_core::ProviderApiV2State::default()))
+}
+
+async fn run_provider_api_v2<T, F>(
+    task: F,
+) -> Result<T, localagentmanager_core::StructuredErrorView>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, AppError> + Send + 'static,
+{
+    run_blocking(task)
+        .await
+        .map_err(localagentmanager_core::StructuredErrorView::from_error)
+}
 
 async fn run_blocking<T, F>(task: F) -> Result<T, AppError>
 where
@@ -695,6 +714,394 @@ pub fn execute_attach_provider_to_profile(
     req: AttachProviderRequest,
 ) -> Result<AttachProviderResult, AppError> {
     core_execute_attach_provider_to_profile(&home_root()?, &req)
+}
+
+#[tauri::command]
+pub async fn list_providers_v2() -> Result<
+    Vec<localagentmanager_core::ProviderProfileView>,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || localagentmanager_core::list_provider_views_service_v2(&home)).await
+}
+
+#[tauri::command]
+pub async fn discover_provider_models_v2(
+    req: localagentmanager_core::DiscoverProviderModelsRequestV2,
+) -> Result<
+    localagentmanager_core::DiscoverProviderModelsViewV2,
+    localagentmanager_core::StructuredErrorView,
+> {
+    run_provider_api_v2(move || localagentmanager_core::discover_provider_models_service_v2(req))
+        .await
+}
+
+#[tauri::command]
+pub async fn test_provider_upstream_v2(
+    provider_id: String,
+) -> Result<
+    localagentmanager_core::ProviderUpstreamTestViewV2,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        localagentmanager_core::test_provider_upstream_service_v2(&home, &provider_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn create_provider_v2(
+    req: localagentmanager_core::CreateProviderRequestV2,
+) -> Result<localagentmanager_core::ProviderProfileView, localagentmanager_core::StructuredErrorView>
+{
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        localagentmanager_core::create_provider_service_v2(
+            &home,
+            req,
+            &chrono::Utc::now().to_rfc3339(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn approve_provider_auth_command_v2(
+    req: localagentmanager_core::ApproveAuthCommandRequestV2,
+) -> Result<
+    localagentmanager_core::AuthCommandApprovalViewV2,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        localagentmanager_core::approve_auth_command_system_service_v2(&home, req)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_provider_auth_command_approvals_v2() -> Result<
+    localagentmanager_core::AuthCommandApprovalListV2,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        localagentmanager_core::list_auth_command_approvals_service_v2(&home)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn create_provider_with_keychain_v2(
+    req: localagentmanager_core::CreateProviderWithKeychainRequestV2,
+) -> Result<localagentmanager_core::ProviderProfileView, localagentmanager_core::StructuredErrorView>
+{
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        localagentmanager_core::create_provider_with_keychain_system_service_v2(
+            &home,
+            req,
+            &chrono::Utc::now().to_rfc3339(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn create_provider_legacy_compat_v2(
+    req: localagentmanager_core::LegacyCreateProviderRequest,
+    expected_revision: u64,
+) -> Result<
+    localagentmanager_core::LegacyCreateProviderResultV2,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_blocking(move || {
+        localagentmanager_core::create_legacy_provider_service_v2(
+            &home,
+            req,
+            expected_revision,
+            &chrono::Utc::now().to_rfc3339(),
+        )
+    })
+    .await
+    .map_err(localagentmanager_core::StructuredErrorView::from_error)
+}
+
+#[tauri::command]
+pub async fn update_provider_v2(
+    req: localagentmanager_core::UpdateProviderRequestV2,
+) -> Result<localagentmanager_core::ProviderProfileView, localagentmanager_core::StructuredErrorView>
+{
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        localagentmanager_core::update_provider_service_v2(
+            &home,
+            req,
+            &chrono::Utc::now().to_rfc3339(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn rotate_provider_credential_v2(
+    req: localagentmanager_core::RotateProviderCredentialRequestV2,
+) -> Result<
+    localagentmanager_core::CredentialRotationViewV2,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        localagentmanager_core::rotate_provider_credential_system_service_v2(
+            &home,
+            req,
+            &chrono::Utc::now().to_rfc3339(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_profile_provider_bindings_v2() -> Result<
+    Vec<localagentmanager_core::ProfileProviderBindingView>,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || localagentmanager_core::list_binding_views_service_v2(&home)).await
+}
+
+#[tauri::command]
+pub async fn plan_attach_provider_v2(
+    req: localagentmanager_core::PlanAttachRequestV2,
+) -> Result<
+    localagentmanager_core::ProfileAttachPlanView,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        let config_path = core_list_accounts(&home)?
+            .into_iter()
+            .find(|account| account.id == req.profile_id)
+            .map(|account| account.codex_home.join("config.toml"))
+            .ok_or_else(|| AppError::new("PROFILE_NOT_FOUND", &req.profile_id))?;
+        let mut state = provider_api_v2_state()
+            .lock()
+            .map_err(|_| AppError::new("PROVIDER_API_STATE_LOCK", "V2 API state lock poisoned"))?;
+        localagentmanager_core::plan_attach_service_v2(
+            &home,
+            &config_path,
+            req,
+            &mut state,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn execute_attach_provider_v2(
+    req: localagentmanager_core::ExecuteAttachRequestV2,
+) -> Result<localagentmanager_core::AttachExecutionView, localagentmanager_core::StructuredErrorView>
+{
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        let mut state = provider_api_v2_state()
+            .lock()
+            .map_err(|_| AppError::new("PROVIDER_API_STATE_LOCK", "V2 API state lock poisoned"))?;
+        localagentmanager_core::execute_attach_service_v2(
+            &home,
+            req,
+            &mut state,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn plan_detach_provider_v2(
+    profile_id: String,
+) -> Result<
+    localagentmanager_core::ProfileDetachPlanView,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        let mut state = provider_api_v2_state()
+            .lock()
+            .map_err(|_| AppError::new("PROVIDER_API_STATE_LOCK", "V2 API state lock poisoned"))?;
+        localagentmanager_core::plan_detach_service_v2(
+            &home,
+            &profile_id,
+            &mut state,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn execute_detach_provider_v2(
+    req: localagentmanager_core::ExecuteDetachRequestV2,
+) -> Result<localagentmanager_core::AttachExecutionView, localagentmanager_core::StructuredErrorView>
+{
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        let mut state = provider_api_v2_state()
+            .lock()
+            .map_err(|_| AppError::new("PROVIDER_API_STATE_LOCK", "V2 API state lock poisoned"))?;
+        localagentmanager_core::execute_detach_service_v2(
+            &home,
+            req,
+            &mut state,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn plan_api_account_v2(
+    req: localagentmanager_core::PlanApiAccountRequestV2,
+) -> Result<localagentmanager_core::ApiAccountPlanViewV2, localagentmanager_core::StructuredErrorView>
+{
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        let mut state = provider_api_v2_state()
+            .lock()
+            .map_err(|_| AppError::new("PROVIDER_API_STATE_LOCK", "V2 API state lock poisoned"))?;
+        localagentmanager_core::plan_api_account_service_v2(
+            &home,
+            req,
+            &mut state,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn execute_api_account_v2(
+    req: localagentmanager_core::ExecuteApiAccountRequestV2,
+) -> Result<
+    localagentmanager_core::ApiAccountExecutionViewV2,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        let mut state = provider_api_v2_state()
+            .lock()
+            .map_err(|_| AppError::new("PROVIDER_API_STATE_LOCK", "V2 API state lock poisoned"))?;
+        localagentmanager_core::execute_api_account_service_v2(
+            &home,
+            req,
+            &mut state,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn plan_api_account_model_switch_v2(
+    profile_id: String,
+    selected_model: String,
+) -> Result<
+    localagentmanager_core::ProfileAttachPlanView,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        let mut state = provider_api_v2_state()
+            .lock()
+            .map_err(|_| AppError::new("PROVIDER_API_STATE_LOCK", "V2 API state lock poisoned"))?;
+        localagentmanager_core::plan_api_account_model_switch_service_v2(
+            &home,
+            &profile_id,
+            &selected_model,
+            &mut state,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn execute_api_account_model_switch_v2(
+    plan_id: String,
+    fingerprint: String,
+) -> Result<localagentmanager_core::AttachExecutionView, localagentmanager_core::StructuredErrorView>
+{
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        let mut state = provider_api_v2_state()
+            .lock()
+            .map_err(|_| AppError::new("PROVIDER_API_STATE_LOCK", "V2 API state lock poisoned"))?;
+        localagentmanager_core::execute_api_account_model_switch_service_v2(
+            &home,
+            &plan_id,
+            &fingerprint,
+            &mut state,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_api_account_v2(
+    profile_id: String,
+) -> Result<localagentmanager_core::DeleteAccountResult, localagentmanager_core::StructuredErrorView>
+{
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        let mut state = provider_api_v2_state()
+            .lock()
+            .map_err(|_| AppError::new("PROVIDER_API_STATE_LOCK", "V2 API state lock poisoned"))?;
+        localagentmanager_core::delete_api_account_service_v2(
+            &home,
+            &profile_id,
+            &mut state,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn plan_gateway_port_migration_v2(
+    new_port: u16,
+) -> Result<
+    localagentmanager_core::gateway::sidecar::GatewayPortChangePlan,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        localagentmanager_core::plan_gateway_port_migration_service_v2(&home, new_port)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn execute_gateway_port_migration_v2(
+    plan: localagentmanager_core::gateway::sidecar::GatewayPortChangePlan,
+    fingerprint: String,
+) -> Result<
+    localagentmanager_core::GatewayPortMigrationOutcomeV2,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        localagentmanager_core::execute_gateway_port_migration_service_v2(
+            &home,
+            &plan,
+            &fingerprint,
+            &chrono::Utc::now().to_rfc3339(),
+        )
+    })
+    .await
 }
 
 #[tauri::command]

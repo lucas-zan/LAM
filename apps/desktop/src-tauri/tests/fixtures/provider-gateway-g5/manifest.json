@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "gate": "provider-gateway-g5",
+  "productInvariant": "one-account-one-profile-one-codex-home",
+  "scenarios": [
+    "add-exclusive-api-account",
+    "explicit-provider-reuse",
+    "same-home-model-switch",
+    "create-crash-recovery",
+    "delete-crash-recovery",
+    "provider-aware-relay-no-write",
+    "representation-loss-confirmation",
+    "structured-redacted-metrics",
+    "packaged-launcher-sidecar",
+    "app-dmg-integrity"
+  ],
+  "requiredRoutes": ["GET /v1/models", "POST /v1/responses"],
+  "artifacts": ["LAM.app", "LAM_0.2.1_aarch64.dmg"]
+}

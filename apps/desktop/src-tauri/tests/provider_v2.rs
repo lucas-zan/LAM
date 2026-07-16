@@ -1,7 +1,8 @@
+use localagentmanager_core::provider_credentials::{CredentialSource, UpstreamAuth};
 use localagentmanager_core::provider_v2::{
     build_provider, join_upstream_endpoint, migrate_legacy_provider_array, AdapterConfig,
-    CodexProviderOptions, CredentialReference, ProviderCollection, ProviderInput, ProviderModel,
-    ProviderProtocol, ProviderRepository, UpstreamAuthKind,
+    CodexProviderOptions, ProviderCollection, ProviderInput, ProviderModel, ProviderProtocol,
+    ProviderRepository,
 };
 use localagentmanager_core::storage::{InstallationLock, StoreOptions, VersionedFileStore};
 use std::fs;
@@ -22,10 +23,11 @@ fn responses_input(id: &str) -> ProviderInput {
             label: "Model A".into(),
             capabilities: None,
         }],
-        credential: CredentialReference::Env {
-            env_key: "EXAMPLE_API_KEY".into(),
+        upstream_auth: UpstreamAuth::Bearer {
+            source: CredentialSource::Env {
+                env_key: "EXAMPLE_API_KEY".into(),
+            },
         },
-        upstream_auth: UpstreamAuthKind::Bearer,
         adapter: AdapterConfig::None,
         compatibility_profile: None,
         codex: CodexProviderOptions::default(),
@@ -161,10 +163,10 @@ fn legacy_provider_arrays_migrate_purely_and_deterministically() {
             ProviderProtocol::Responses
         );
         assert_eq!(first.providers.providers[0].models.len(), 1);
-        assert_eq!(
+        assert!(matches!(
             first.providers.providers[0].upstream_auth,
-            UpstreamAuthKind::Bearer
-        );
+            UpstreamAuth::Bearer { .. }
+        ));
         assert_eq!(
             first.warnings.first().map(String::as_str),
             warning,

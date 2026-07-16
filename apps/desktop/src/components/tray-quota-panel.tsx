@@ -8,6 +8,7 @@ import {
   listAccounts,
   listCachedAccounts,
   listCachedQuotas,
+  listProfileProviderBindingsV2,
   listSessions,
   openTerminalWithCommand,
   openTerminalWithResume,
@@ -27,6 +28,7 @@ import {
   countAccountsWithQuotaData,
   mergeQuotaSnapshots,
   quotaDisplayWindows,
+  quotaRefreshProfileIds,
   quotaRemainingPercent,
   resetCreditDisplay,
 } from '../lib/quota';
@@ -759,6 +761,7 @@ interface TrayAccountListProps {
   activeSession?: CodexSession;
   relayingAccountId: string;
   refreshingQuotaIds: string[];
+  apiAccountIds: string[];
   onRefreshAccount: (account: CodexAccount) => void;
   onRelayTo: (account: CodexAccount) => void;
   onSwitchTo: (account: CodexAccount) => void;
@@ -775,6 +778,7 @@ function TrayAccountList({
   activeSession,
   relayingAccountId,
   refreshingQuotaIds,
+  apiAccountIds,
   onRefreshAccount,
   onRelayTo,
   onSwitchTo,
@@ -849,6 +853,7 @@ function TrayAccountList({
                   ? account.isActiveAuth === true
                   : activeSession?.accountId === account.id;
               const isRefreshingQuota = refreshingQuotaIds.includes(account.id);
+              const isApiAccount = apiAccountIds.includes(account.id);
               const authTag = authModeLabel(account.authMode);
 
               const accountTheme = getAccountTheme(account.id, index, isDark);
@@ -887,25 +892,32 @@ function TrayAccountList({
                       />
                       <div className="trayAccountNameWrap">
                         <strong title={title}>{title}</strong>
-                        {authTag ? (
+                        {isApiAccount ? (
+                          <span className="badge badge--auth" title="External API account">
+                            External API
+                          </span>
+                        ) : null}
+                        {!isApiAccount && authTag ? (
                           <span className="badge badge--authMode" title={`Auth mode: ${authTag}`}>
                             {authTag}
                           </span>
                         ) : null}
-                        <PlanTypeBadge planType={quota?.planType} />
+                        {!isApiAccount ? <PlanTypeBadge planType={quota?.planType} /> : null}
                       </div>
                     </div>
                     <div className="trayAccountActions">
-                      <button
-                        type="button"
-                        className={`trayAccountRefreshButton ${isRefreshingQuota ? 'isRefreshing' : ''}`}
-                        aria-label={`Refresh ${title} quota`}
-                        title={`Refresh ${title} quota`}
-                        disabled={isRefreshingQuota}
-                        onClick={() => onRefreshAccount(account)}
-                      >
-                        <IconRefresh size={12} />
-                      </button>
+                      {!isApiAccount ? (
+                        <button
+                          type="button"
+                          className={`trayAccountRefreshButton ${isRefreshingQuota ? 'isRefreshing' : ''}`}
+                          aria-label={`Refresh ${title} quota`}
+                          title={`Refresh ${title} quota`}
+                          disabled={isRefreshingQuota}
+                          onClick={() => onRefreshAccount(account)}
+                        >
+                          <IconRefresh size={12} />
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="trayRelayButton"
@@ -955,24 +967,28 @@ function TrayAccountList({
                     </div>
                   ) : null}
 
-                  <TrayQuotaRowContent
-                    primaryLabel={primaryWindow?.shortLabel ?? 'N/A'}
-                    primarySubLabel={
-                      primaryWindow
-                        ? formatResetCountdown(primaryWindow.resetAt, primaryWindow.variant)
-                        : 'unknown'
-                    }
-                    primaryRemaining={primaryRemaining}
-                    primaryTheme={primaryStateTheme}
-                    secondaryLabel={secondaryWindow?.shortLabel ?? null}
-                    secondaryRemaining={secondaryRemaining}
-                    secondarySubLabel={
-                      secondaryWindow?.resetAt
-                        ? formatResetCountdown(secondaryWindow.resetAt, secondaryWindow.variant)
-                        : null
-                    }
-                    secondaryTheme={secondaryStateTheme}
-                  />
+                  {isApiAccount ? (
+                    <p className="trayAccountApiNote">External API · no quota tracking</p>
+                  ) : (
+                    <TrayQuotaRowContent
+                      primaryLabel={primaryWindow?.shortLabel ?? 'N/A'}
+                      primarySubLabel={
+                        primaryWindow
+                          ? formatResetCountdown(primaryWindow.resetAt, primaryWindow.variant)
+                          : 'unknown'
+                      }
+                      primaryRemaining={primaryRemaining}
+                      primaryTheme={primaryStateTheme}
+                      secondaryLabel={secondaryWindow?.shortLabel ?? null}
+                      secondaryRemaining={secondaryRemaining}
+                      secondarySubLabel={
+                        secondaryWindow?.resetAt
+                          ? formatResetCountdown(secondaryWindow.resetAt, secondaryWindow.variant)
+                          : null
+                      }
+                      secondaryTheme={secondaryStateTheme}
+                    />
+                  )}
                 </div>
               );
             })}
@@ -991,6 +1007,7 @@ export function TrayQuotaPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshingQuotaIds, setRefreshingQuotaIds] = useState<string[]>([]);
   const [relayingAccountId, setRelayingAccountId] = useState<string>('');
+  const [apiAccountIds, setApiAccountIds] = useState<string[]>([]);
   const [activeProviderId, setActiveProviderId] = useState('codex');
   const [authMode, setAuthMode] = useState<'oauth' | 'pat'>('oauth');
   const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
@@ -1105,12 +1122,21 @@ export function TrayQuotaPanel() {
         setAuthMode(mode === 'pat' ? 'pat' : 'oauth');
         setAccounts(accountData);
         void loadActiveSession(accountData);
+        let apiIds: string[] = [];
+        try {
+          const bindings = await listProfileProviderBindingsV2();
+          apiIds = bindings.map((binding) => binding.profileId);
+          setApiAccountIds(apiIds);
+        } catch {
+          /* provider hub is optional; treat as no External API accounts */
+        }
         const ids = accountData.map((a) => a.id);
-        if (forceRefresh && ids.length) {
+        const quotaIds = quotaRefreshProfileIds(accountData, apiIds);
+        if (forceRefresh && quotaIds.length) {
           let completed = 0;
           let unavailable = 0;
           await Promise.all(
-            ids.map(async (profileId) => {
+            quotaIds.map(async (profileId) => {
               try {
                 const snapshot = await getProfileQuota(profileId, true);
                 setQuotas((current) => mergeQuotaSnapshots(current, snapshot));
@@ -1124,7 +1150,7 @@ export function TrayQuotaPanel() {
           );
           const suffix = unavailable ? ` · ${unavailable} unavailable` : '';
           setStatus(
-            `Updated ${completed}/${ids.length}${suffix} · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+            `Updated ${completed}/${quotaIds.length}${suffix} · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
           );
         } else {
           const cached = await listCachedQuotas(ids.length ? ids : undefined);
@@ -1186,6 +1212,7 @@ export function TrayQuotaPanel() {
   }
 
   async function refreshAccountQuota(account: CodexAccount) {
+    if (apiAccountIds.includes(account.id)) return;
     setRefreshingQuotaIds((ids) => Array.from(new Set([...ids, account.id])));
     setStatus(`Refreshing ${account.displayName}...`);
     try {
@@ -1369,6 +1396,7 @@ export function TrayQuotaPanel() {
         activeSession={activeSession}
         relayingAccountId={relayingAccountId}
         refreshingQuotaIds={refreshingQuotaIds}
+        apiAccountIds={apiAccountIds}
         onRefreshAccount={(account) => void refreshAccountQuota(account)}
         onRelayTo={(account) => void relayTo(account)}
         onSwitchTo={(account) => void switchTo(account)}

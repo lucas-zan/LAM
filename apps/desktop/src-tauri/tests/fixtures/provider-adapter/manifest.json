@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "adapterId": "responses-to-chat-completions",
+  "adapterVersion": "1.0.0",
+  "compatibilityProfiles": [
+    "generic-openai-compatible-v1",
+    "deepseek-chat-completions-v1"
+  ],
+  "officialSources": [
+    "https://developers.openai.com/api/docs/guides/streaming-responses",
+    "https://developers.openai.com/api/reference/resources/responses/methods/create",
+    "https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create",
+    "https://api-docs.deepseek.com/guides/thinking_mode/",
+    "https://api-docs.deepseek.com/api/create-chat-completion/"
+  ],
+  "limits": {
+    "requestBytes": 33554432,
+    "responseBytes": 33554432,
+    "sseFrameBytes": 262144,
+    "toolArgumentsBytes": 1048576,
+    "reasoningBytes": 1048576,
+    "eventCapacity": 64,
+    "eventBytes": 2097152,
+    "maxTools": 128
+  },
+  "artifacts": [
+    {
+      "path": "deepseek-thinking-nonstream.json",
+      "sha256": "24c086ac0b80badd35fa480c76bc349d8d31b073ef73377fcf396562c492a516"
+    },
+    {
+      "path": "deepseek-thinking-stream.sse",
+      "sha256": "a437ca1c8887d78bcdea58dae40530b06a9d4c22f472b73b72e7f3391a21eb85"
+    }
+  ]
+}

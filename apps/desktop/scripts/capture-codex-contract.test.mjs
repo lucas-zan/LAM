@@ -5,13 +5,50 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   assertDeterministicCapture,
+  assertNoModelMetadataFallback,
   assertSafeCapture,
+  fixtureCodexCatalog,
   normalizeCapture,
   redactHeaders,
   runProcess,
   sanitizeRequestForFixture,
   writeJsonArtifact,
 } from './capture-codex-contract.mjs';
+
+test('serves a non-empty exact-tested Codex model catalog', () => {
+  const catalog = fixtureCodexCatalog();
+  assert.equal(catalog.models.length, 1);
+  assert.equal(catalog.models[0].slug, 'fixture-model');
+  assert.equal('id' in catalog.models[0], false);
+  for (const field of [
+    'display_name',
+    'supported_reasoning_levels',
+    'shell_type',
+    'visibility',
+    'supported_in_api',
+    'priority',
+    'base_instructions',
+    'supports_reasoning_summaries',
+    'support_verbosity',
+    'truncation_policy',
+    'supports_parallel_tool_calls',
+    'experimental_supported_tools',
+  ]) {
+    assert.equal(field in catalog.models[0], true, `missing ${field}`);
+  }
+});
+
+test('fails a capture that falls back to inferred model metadata', () => {
+  assert.doesNotThrow(() => assertNoModelMetadataFallback({ stdout: '', stderr: '' }));
+  assert.throws(
+    () =>
+      assertNoModelMetadataFallback({
+        stdout: '',
+        stderr: 'Model metadata for `fixture-model` not found. Defaulting to fallback metadata',
+      }),
+    /fallback model metadata/,
+  );
+});
 
 test('normalizes declared volatile values and object ordering', () => {
   const input = {
