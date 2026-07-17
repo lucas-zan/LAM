@@ -10,7 +10,7 @@ use localagentmanager_core::{
     execute_attach_provider_to_profile as core_execute_attach_provider_to_profile,
     execute_create_account as core_execute_create_account,
     execute_create_relay as core_execute_create_relay,
-    execute_rename_account as core_execute_rename_account, execute_sync as core_execute_sync,
+    execute_rename_account as core_execute_rename_account,
     export_cpa_credentials as core_export_cpa_credentials,
     get_profile_quota as core_get_profile_quota, get_usage_activity as core_get_usage_activity,
     get_usage_calls as core_get_usage_calls, get_usage_dashboard as core_get_usage_dashboard,
@@ -35,8 +35,7 @@ use localagentmanager_core::{
     reset_profile_quota as core_reset_profile_quota, reset_usage_index as core_reset_usage_index,
     resolve_home_root, selected_terminal_target_id as core_selected_terminal_target_id,
     set_selected_terminal_target_id as core_set_selected_terminal_target_id,
-    switch_to_pat_account as core_switch_to_pat_account, sync_plan as core_sync_plan,
-    test_provider as core_test_provider,
+    switch_to_pat_account as core_switch_to_pat_account, test_provider as core_test_provider,
     try_refresh_usage_index_with_options as core_try_refresh_usage_index,
     update_pat_session_auth as core_update_pat_session_auth,
     update_provider as core_update_provider, AccountNoteUpdate, AddPatAccountRequest,
@@ -45,12 +44,11 @@ use localagentmanager_core::{
     CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, CreateResult,
     DeleteAccountRequest, DeleteAccountResult, OperationPlan, ProviderProfile, QuotaRefreshResult,
     RelayResumeRequest, RelayResumeResult, RenameAccountRequest, RenameAccountResult,
-    ResetQuotaResult, ResumeCommand, ResumeCommandRequest, SyncPlan, SyncRequest, SyncResult,
-    TerminalTarget, TokenExpirationStatus, UpdateProviderRequest, UploadedCredentials,
-    UsageActivityBucket, UsageCallRow, UsageDashboard, UsageDashboardRequest,
-    UsageDashboardResponse, UsageDiagnostics, UsageInsights, UsagePagedResponse,
-    UsageQuotaSnapshot, UsageRateCardEntry, UsageRefreshResult, UsageScopesResponse, UsageSummary,
-    UsageSummaryRequest, UsageThreadSummary,
+    ResetQuotaResult, ResumeCommand, ResumeCommandRequest, TerminalTarget, TokenExpirationStatus,
+    UpdateProviderRequest, UploadedCredentials, UsageActivityBucket, UsageCallRow, UsageDashboard,
+    UsageDashboardRequest, UsageDashboardResponse, UsageDiagnostics, UsageInsights,
+    UsagePagedResponse, UsageQuotaSnapshot, UsageRateCardEntry, UsageRefreshResult,
+    UsageScopesResponse, UsageSummary, UsageSummaryRequest, UsageThreadSummary,
 };
 use std::sync::{Mutex, OnceLock};
 use tauri::Emitter;
@@ -310,16 +308,6 @@ pub fn plan_create_relay(req: CreateRelayRequest) -> Result<OperationPlan, AppEr
 #[tauri::command]
 pub fn execute_create_relay(req: CreateRelayRequest) -> Result<CreateResult, AppError> {
     core_execute_create_relay(&home_root()?, &req)
-}
-
-#[tauri::command]
-pub fn build_sync_plan(req: SyncRequest) -> Result<SyncPlan, AppError> {
-    core_sync_plan(&home_root()?, &req)
-}
-
-#[tauri::command]
-pub fn execute_sync(req: SyncRequest) -> Result<SyncResult, AppError> {
-    core_execute_sync(&home_root()?, &req)
 }
 
 #[tauri::command]
@@ -1042,6 +1030,42 @@ pub async fn execute_api_account_model_switch_v2(
             &home,
             &plan_id,
             &fingerprint,
+            &mut state,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_api_account_connection_v2(
+    profile_id: String,
+) -> Result<
+    localagentmanager_core::ApiAccountConnectionViewV2,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        localagentmanager_core::get_api_account_connection_service_v2(&home, &profile_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn update_api_account_connection_v2(
+    req: localagentmanager_core::UpdateApiAccountConnectionRequestV2,
+) -> Result<
+    localagentmanager_core::ApiAccountConnectionViewV2,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        let mut state = provider_api_v2_state()
+            .lock()
+            .map_err(|_| AppError::new("PROVIDER_API_STATE_LOCK", "V2 API state lock poisoned"))?;
+        localagentmanager_core::update_api_account_connection_service_v2(
+            &home,
+            req,
             &mut state,
             chrono::Utc::now().timestamp_millis().max(0) as u64,
         )

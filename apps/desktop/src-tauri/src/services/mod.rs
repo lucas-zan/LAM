@@ -4,6 +4,7 @@ pub mod types;
 pub mod account;
 pub mod adapters;
 pub mod antigravity;
+pub mod codex_api_key_auth;
 pub mod gateway;
 pub mod provider;
 pub mod provider_api_v2;
@@ -24,11 +25,11 @@ pub mod relay;
 pub mod runtime;
 pub mod session;
 pub mod storage;
-pub mod sync;
 pub mod usage;
 
 pub use account::*;
 pub use antigravity::*;
+pub use codex_api_key_auth::*;
 pub use error::*;
 pub use provider::*;
 pub use provider_api_v2::*;
@@ -49,7 +50,6 @@ pub use relay::*;
 pub use runtime::*;
 pub use session::*;
 pub use storage::*;
-pub use sync::*;
 pub use types::{
     gateway_first_response_timeout_seconds, get_auth_mode, selected_terminal_target_id,
     set_auth_mode, set_gateway_first_response_timeout_seconds, set_selected_terminal_target_id,

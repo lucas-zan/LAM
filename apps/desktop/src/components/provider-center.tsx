@@ -1,10 +1,12 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import type {
+  ApiAccountConnectionViewV2,
   CredentialReferenceV2,
   ProfileProviderBindingViewV2,
   ProviderDefinitionV2,
   ProviderProfileViewV2,
   UpstreamAuthV2,
+  UpdateApiAccountConnectionRequestV2,
 } from '../lib/types';
 import { UIButton } from './ui-button';
 import { Modal } from './shell';
@@ -24,6 +26,9 @@ function credentialLabel(auth: UpstreamAuthV2): string {
   }
   if (credential.kind === 'auth_command') {
     return `Auth command · ${credential.approvalId}`;
+  }
+  if (credential.kind === 'codex_profile') {
+    return `Codex login · ${credential.profileId}`;
   }
   return 'Missing credential';
 }
@@ -534,8 +539,100 @@ export function ProviderEditor({
   );
 }
 
+export function ApiAccountConnectionEditor({
+  connection,
+  onSave,
+  onCancel,
+}: {
+  connection: ApiAccountConnectionViewV2;
+  onSave: (request: UpdateApiAccountConnectionRequestV2) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [baseUrl, setBaseUrl] = useState(connection.baseUrl);
+  const [apiKey, setApiKey] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError('');
+    let normalizedUrl: string;
+    try {
+      const url = new URL(baseUrl.trim());
+      if (url.protocol !== 'https:' || url.username || url.password) throw new Error('invalid');
+      normalizedUrl = url.toString().replace(/\/$/, '');
+    } catch {
+      setError('Enter a valid HTTPS Provider URL');
+      return;
+    }
+    if (apiKey.length > 0 && !apiKey.trim()) {
+      setError('New API key cannot be blank');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave({
+        profileId: connection.profileId,
+        expectedProviderStoreRevision: connection.providerStoreRevision,
+        baseUrl: normalizedUrl,
+        ...(apiKey ? { apiKey } : {}),
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'API account update failed');
+    } finally {
+      setApiKey('');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form noValidate onSubmit={submit}>
+      <div className="kv apiAccountConnectionSummary">
+        <span>Account</span>
+        <strong>{connection.profileId}</strong>
+        <span>Protocol</span>
+        <strong>Responses</strong>
+        <span>Model</span>
+        <strong>{connection.selectedModel}</strong>
+        <span>Credential</span>
+        <strong>{connection.apiKeyConfigured ? 'API key configured' : 'API key missing'}</strong>
+      </div>
+      <div className="formGrid">
+        <label>
+          Base URL
+          <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
+        </label>
+        <label>
+          New API key
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={apiKey}
+            placeholder="Leave empty to keep the current key"
+            onChange={(event) => setApiKey(event.target.value)}
+          />
+        </label>
+      </div>
+      {error ? (
+        <div className="notice" role="alert">
+          {error}
+        </div>
+      ) : null}
+      <div className="modalFoot">
+        <UIButton type="button" variant="ghost" onClick={onCancel}>
+          Cancel
+        </UIButton>
+        <UIButton type="submit" variant="primary" disabled={saving}>
+          Save API account
+        </UIButton>
+      </div>
+    </form>
+  );
+}
+
 type CenterDialog =
   | { kind: 'editor'; provider: ProviderProfileViewV2 }
+  | { kind: 'account-editor'; profileId: string }
   | { kind: 'attach'; provider: ProviderProfileViewV2 }
   | {
       kind: 'detach';
@@ -562,6 +659,7 @@ export function ProviderCenter({
     detachPlan,
     loading,
     recoveryMessage,
+    apiAccountConnection,
     saveProvider,
     approveAuthCommand,
     rotateKeychainCredential,
@@ -571,12 +669,29 @@ export function ProviderCenter({
     previewDetach,
     executeDetach,
     clearPlans,
+    loadApiAccountConnection,
+    updateApiAccountConnection,
+    clearApiAccountConnection,
   } = useProviderStore();
   const [dialog, setDialog] = useState<CenterDialog>(null);
 
   function closeDialog() {
     clearPlans();
+    clearApiAccountConnection();
     setDialog(null);
+  }
+
+  function editProvider(provider: ProviderProfileViewV2) {
+    const binding = bindings.find(
+      (item) => item.providerId === provider.id && provider.id === `account-${item.profileId}`,
+    );
+    const credential = authCredential(provider.upstreamAuth);
+    if (binding && credential.kind === 'codex_profile') {
+      setDialog({ kind: 'account-editor', profileId: binding.profileId });
+      void loadApiAccountConnection(binding.profileId);
+      return;
+    }
+    setDialog({ kind: 'editor', provider });
   }
 
   async function save(
@@ -629,7 +744,7 @@ export function ProviderCenter({
         <ProviderCards
           providers={providers}
           bindings={bindings}
-          onEdit={(provider) => setDialog({ kind: 'editor', provider })}
+          onEdit={editProvider}
           onAttach={(provider) => {
             clearPlans();
             setDialog({ kind: 'attach', provider });
@@ -650,6 +765,23 @@ export function ProviderCenter({
       {dialog?.kind === 'editor' ? (
         <Modal title="Edit Provider" close={closeDialog} wide>
           <ProviderEditor provider={dialog.provider} onSave={save} onCancel={closeDialog} />
+        </Modal>
+      ) : null}
+
+      {dialog?.kind === 'account-editor' ? (
+        <Modal title="Edit API Account" close={closeDialog} wide>
+          {apiAccountConnection?.profileId === dialog.profileId ? (
+            <ApiAccountConnectionEditor
+              connection={apiAccountConnection}
+              onSave={async (request) => {
+                await updateApiAccountConnection(request);
+                closeDialog();
+              }}
+              onCancel={closeDialog}
+            />
+          ) : (
+            <div className="emptyBox">Loading API account…</div>
+          )}
         </Modal>
       ) : null}
 

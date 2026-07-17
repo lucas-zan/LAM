@@ -246,7 +246,11 @@ pub fn build_provider(input: ProviderInput, now: &str) -> Result<ProviderProfile
     let adapter = validate_adapter(input.protocol, input.adapter)?;
     let compatibility_profile = validate_compatibility(input.compatibility_profile)?;
     validate_upstream_auth(&input.upstream_auth)?;
-    validate_codex_options(&input.codex)?;
+    let mut codex = input.codex;
+    if input.protocol == ProviderProtocol::Responses {
+        codex.route_via_gateway = false;
+    }
+    validate_codex_options(&codex)?;
     Ok(ProviderProfileV2 {
         id,
         name,
@@ -258,7 +262,7 @@ pub fn build_provider(input: ProviderInput, now: &str) -> Result<ProviderProfile
         capabilities: CapabilityDeclaration::default(),
         adapter,
         compatibility_profile,
-        codex: input.codex,
+        codex,
         created_at: now.to_string(),
         updated_at: now.to_string(),
     })

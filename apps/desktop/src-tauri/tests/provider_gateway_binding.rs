@@ -1,5 +1,5 @@
 use localagentmanager_core::gateway::binding::{
-    GatewayBindingCollection, GatewayBindingService, GatewayTokenRequest,
+    binding_requires_gateway, GatewayBindingCollection, GatewayBindingService, GatewayTokenRequest,
 };
 use localagentmanager_core::provider_credentials::{CredentialSource, SecretValue, UpstreamAuth};
 use localagentmanager_core::provider_keychain::{
@@ -156,6 +156,21 @@ fn provision_persists_only_hash_and_reference_and_helper_reads_token() {
     assert!(body.contains("tokenHash"));
     assert!(body.contains("credentialReference"));
     assert!(!format!("{provisioned:?}").contains(&token));
+}
+
+#[test]
+fn only_active_chat_completions_bindings_require_gateway() {
+    let root = tempfile::tempdir().unwrap();
+    let service = service(root.path(), Arc::new(FakeKeychain::default()));
+    provision(&service, "profile-a");
+    let mut binding = service.load().unwrap().value.bindings.remove(0);
+
+    assert!(binding_requires_gateway(&binding));
+    binding.provider.protocol = ProviderProtocol::Responses;
+    assert!(!binding_requires_gateway(&binding));
+    binding.provider.protocol = ProviderProtocol::ChatCompletions;
+    binding.revoked_at = Some("2026-07-17T00:00:00Z".into());
+    assert!(!binding_requires_gateway(&binding));
 }
 
 #[test]

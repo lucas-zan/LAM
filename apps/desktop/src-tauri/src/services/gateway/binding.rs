@@ -7,6 +7,7 @@ use crate::services::provider_keychain::{
 };
 use crate::services::provider_planner::ProfileAttachPlan;
 use crate::services::provider_v2::ProviderProfileV2;
+use crate::services::provider_v2::ProviderProtocol;
 use crate::services::storage::{InstallationLockGuard, StoreSnapshot, VersionedFileStore};
 use chrono::{DateTime, Utc};
 use rand::RngCore;
@@ -17,6 +18,10 @@ use uuid::Uuid;
 pub const GATEWAY_BINDING_SCHEMA_REVISION: u32 = 1;
 const TOKEN_PREFIX: &str = "lam_gw_";
 const TOKEN_RANDOM_BYTES: usize = 32;
+
+pub fn binding_requires_gateway(binding: &GatewayBinding) -> bool {
+    binding.revoked_at.is_none() && binding.provider.protocol == ProviderProtocol::ChatCompletions
+}
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

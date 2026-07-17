@@ -1,4 +1,4 @@
-use super::binding::{GatewayBindingCollection, GatewayBindingService};
+use super::binding::{binding_requires_gateway, GatewayBindingCollection, GatewayBindingService};
 use super::identity::load_or_create_system_install_identity;
 use super::launcher::{
     InstallManifest, InstallManifestVerifier, MacCodeSignIdentityVerifier, VerifiedInstallation,
@@ -643,7 +643,7 @@ impl PackagedGatewaySupervisor {
             .value
             .bindings
             .into_iter()
-            .filter(|binding| binding.revoked_at.is_none())
+            .filter(|binding| binding_requires_gateway(binding))
             .collect())
     }
 

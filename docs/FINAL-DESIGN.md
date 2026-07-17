@@ -1,5 +1,10 @@
 # LocalAgentManager (Lam) — 最终设计与分阶段实施方案
 
+> **2026-07-17 产品修订（优先级高于本文旧章节）：** 整帐号 `sessions/` 批量 Sync
+> 已从产品、前端契约、Tauri command 与 Rust 服务中完整下线。当前跨账号续接只支持
+> `Relay Latest` / `Handoff` 的单 session 流程。本文中的 Sync 页面、`SyncPlan`、
+> `build_sync_plan`、`execute_sync` 和 sync manifest 仅保留为历史设计记录，不再是现行规格。
+
 版本：1.2  
 日期：2026-06-01  
 状态：综合定稿（基于 `DESIGN_GOAL.md`、`codex-manager/`、`anotherdesign/` 与现有 `docs/`；v1.2 收敛 Phase 1 范围、额度采集、Provider 分期与 Lam 命名）
@@ -22,7 +27,7 @@
 ```text
 本地优先 · 不上传 session/代码/prompt
 Account / Provider / Session 边界清晰
-默认只同步 sessions/ · 不复制 auth.json · 不默认合并 history
+单次只接力一个 session · 不复制 auth.json · 不合并 history
 所有写操作可 dry-run · 可审计 · 可追踪
 底层模型从第一天起为多 Agent 预留，实现路径 Codex-first
 ```

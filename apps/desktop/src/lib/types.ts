@@ -118,36 +118,6 @@ export type CpaExport = {
   content: Record<string, unknown>;
 };
 
-export type SyncRequest = {
-  fromProfileId: string;
-  toProfileId: string;
-  syncSessions: boolean;
-  backupTargetSessions: boolean;
-  sidecarBackupHistory: boolean;
-};
-
-export type SyncPlan = {
-  fromProfileId: string;
-  toProfileId: string;
-  operations: Array<{
-    kind: string;
-    from?: string | null;
-    to?: string | null;
-    rel?: string | null;
-  }>;
-  warnings: string[];
-  blockedFiles: string[];
-  policyBlockedFiles: string[];
-};
-
-export type SyncResult = {
-  copied: number;
-  skipped: number;
-  backupPath?: string | null;
-  manifestPath: string;
-  warnings: string[];
-};
-
 export type ResumeCommandRequest = {
   profileId: string;
   sessionId?: string | null;
@@ -566,6 +536,7 @@ export type CredentialReferenceV2 =
   | { kind: 'env'; envKey: string }
   | { kind: 'keychain'; service: 'lam.remote-provider'; account: string; version: number }
   | { kind: 'auth_command'; approvalId: string }
+  | { kind: 'codex_profile'; profileId: string }
   | { kind: 'none' };
 
 export type UpstreamAuthV2 =
@@ -724,7 +695,7 @@ export type ApiAccountPlanViewV2 = {
 export type ExecuteApiAccountRequestV2 = {
   planId: string;
   fingerprint: string;
-  keychainSecret?: string | null;
+  apiKey?: string | null;
 };
 
 export type ApiAccountExecutionViewV2 = {
@@ -732,6 +703,23 @@ export type ApiAccountExecutionViewV2 = {
   provider: ProviderProfileViewV2;
   binding: ProfileProviderBindingViewV2;
   attach: AttachExecutionViewV2;
+};
+
+export type ApiAccountConnectionViewV2 = {
+  profileId: string;
+  providerId: string;
+  protocol: 'responses';
+  baseUrl: string;
+  selectedModel: string;
+  providerStoreRevision: number;
+  apiKeyConfigured: boolean;
+};
+
+export type UpdateApiAccountConnectionRequestV2 = {
+  profileId: string;
+  expectedProviderStoreRevision: number;
+  baseUrl: string;
+  apiKey?: string;
 };
 
 export type ProfileAttachPlanViewV2 = {

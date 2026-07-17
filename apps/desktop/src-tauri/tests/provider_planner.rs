@@ -92,7 +92,7 @@ fn routes_responses_direct_and_chat_through_registered_gateway() {
 }
 
 #[test]
-fn explicit_responses_gateway_route_uses_gateway_auth_without_an_adapter() {
+fn legacy_responses_gateway_flag_is_normalized_to_direct() {
     let mut responses = provider(ProviderProtocol::Responses);
     responses.codex.route_via_gateway = true;
 
@@ -102,8 +102,13 @@ fn explicit_responses_gateway_route_uses_gateway_auth_without_an_adapter() {
         adapters: AdapterCatalog::standard(),
     });
 
-    assert_eq!(route.route_kind, RouteKind::Gateway);
-    assert_eq!(route.codex_auth, DirectCodexAuth::Gateway);
+    assert_eq!(route.route_kind, RouteKind::Direct);
+    assert_eq!(
+        route.codex_auth,
+        DirectCodexAuth::EnvKey {
+            env_key: "REMOTE_TOKEN".into()
+        }
+    );
     assert_eq!(route.upstream_protocol, ProviderProtocol::Responses);
     assert_eq!(route.adapter_id, None);
     assert_eq!(route.adapter_version, None);
@@ -112,9 +117,8 @@ fn explicit_responses_gateway_route_uses_gateway_auth_without_an_adapter() {
 
 #[test]
 fn gateway_projection_uses_a_custom_provider_identity_for_local_compact() {
-    let mut gateway_provider = provider(ProviderProtocol::Responses);
+    let mut gateway_provider = provider(ProviderProtocol::ChatCompletions);
     gateway_provider.name = "OpenAI".into();
-    gateway_provider.codex.route_via_gateway = true;
     let gateway_route = plan_provider_route(RoutePlanInput {
         provider: gateway_provider,
         selected_model: "model-a".into(),

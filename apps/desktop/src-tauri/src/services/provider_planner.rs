@@ -101,9 +101,6 @@ pub fn plan_provider_route(input: RoutePlanInput) -> ProviderRoutePlan {
     }
     let (route_kind, adapter_id, adapter_version) =
         match (&input.provider.protocol, &input.provider.adapter) {
-            (ProviderProtocol::Responses, _) if input.provider.codex.route_via_gateway => {
-                (RouteKind::Gateway, None, None)
-            }
             (ProviderProtocol::Responses, _) => (RouteKind::Direct, None, None),
             (ProviderProtocol::ChatCompletions, AdapterConfig::None) => {
                 blockers.push(PlanBlocker::AdapterRequired);

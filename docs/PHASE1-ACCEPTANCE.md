@@ -15,26 +15,24 @@ macOS：`make start` 后应出现**菜单栏托盘**；主窗口默认隐藏，�
 
 状态：`[ ]` 未测 `[x]` 通过 `[!]` 失败
 
-## §9.1 八条
+## 当前核心验收
 
 | # | 验收项 | App 内可观察 | 磁盘/其它验证 | 结果 | 备注 |
 |---|--------|--------------|---------------|------|------|
 | 1 | 1 分钟内创建受管账号 + wrapper | New Account → Dry Run → Create | `~/.codex-{name}`、`~/bin/codex-{name}` | [ ] | |
-| 2 | A → `b-relay-a` sync 后可 resume，不覆盖 B history | Sync modal dry-run → execute；Sessions resume | B 的 `history.jsonl` 未被动 | [ ] | |
-| 3 | 从不复制 `auth.json` | Sync dry-run blocked 列表 | 目标目录无新 auth；`cargo test` | [ ] | |
-| 4 | 任意 sync 可先 dry-run，见将改动文件 | 无 plan 时 Execute 禁用 | | [ ] | |
-| 5 | Overview 见所有 `~/.codex*` 与 session 计数 | Accounts + Overview metrics | | [ ] | 跨账号 Sessions 见 TODO-119 |
-| 6 | Provider Phase 1 只读（规格） / 当前实现含 1.5 CRUD | Providers 页行为 | 不写明文 key | [ ] | |
-| 7 | 额度来自 Codex app-server（5h/weekly）；不可用显示 N/A | Overview + 托盘浮层 | 无假剩余额度/伪造重置倒计时；`cargo test` quota 路径 | [ ] | 非 session token 估算 |
-| 8 | README 5 分钟内跑起 App | `make start` → 托盘可用；可打开主窗口 | | [ ] | 主窗口非必须首屏 |
+| 2 | Handoff 指定 session 后可在目标账号 resume | Handoff 选择源、session、目标 | 只复制所选 session，不改目标 history/auth | [ ] | |
+| 3 | Relay Latest 接力最近活跃 session | 目标账号卡 Relay Latest | 打开目标 `CODEX_HOME` 的 resume 命令 | [ ] | |
+| 4 | Overview 见所有 `~/.codex*` 与 session 计数 | Accounts + Overview metrics | | [ ] | 跨账号 Sessions 见 TODO-119 |
+| 5 | Provider/API Account 密钥保持 write-only | Providers/API Account 编辑行为 | 不写明文 key | [ ] | |
+| 6 | 额度来自 Codex app-server（5h/weekly）；不可用显示 N/A | Overview + 托盘浮层 | 无假剩余额度/伪造重置倒计时；`cargo test` quota 路径 | [ ] | 非 session token 估算 |
+| 7 | README 5 分钟内跑起 App | `make start` → 托盘可用；可打开主窗口 | | [ ] | 主窗口非必须首屏 |
 
 ## 安全抽查
 
 | 项 | 结果 | 备注 |
 |----|------|------|
 | relay 未复制 source auth | [ ] | |
-| runtime profile sessions 未被 sync 改动 | [ ] | |
-| execute sync 后有 backup + manifest | [ ] | |
+| Handoff 只写入所选目标 session | [ ] | |
 | resume 命令无 API key 明文 | [ ] | Inspector |
 | 托盘 Close / 点浮层外不收起误开主窗口 | [ ] | 仅 **Open** 或菜单打开主窗口 |
 | `relay_resume_session` 不覆盖未确认的目标 session | [ ] | diverged 策略与 backup |

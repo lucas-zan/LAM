@@ -4,6 +4,9 @@
 日期：2026-06-01
 用途：实施推进清单
 
+> **历史实施记录：** 本文中已完成的 SyncPlan / execute_sync / Sync UI 条目记录过去的
+> 开发过程。整帐号 Sessions Sync 已于 2026-07-17 完整下线，现行接力只处理单条 session。
+
 本文基于 `docs/FINAL-DESIGN.md` 和 `docs/IMPLEMENTATION-ISSUES.md`，用于逐步推进开发。每个任务完成后应更新状态，并补充实际实现偏差。
 
 状态标记：

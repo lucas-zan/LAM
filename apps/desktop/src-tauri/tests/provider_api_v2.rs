@@ -382,6 +382,8 @@ fn service_v2_commands_are_registered_and_keep_legacy_commands() {
         "execute_detach_provider_v2",
         "rotate_provider_credential_v2",
         "create_provider_legacy_compat_v2",
+        "get_api_account_connection_v2",
+        "update_api_account_connection_v2",
     ] {
         assert!(
             main.contains(&format!("commands::{name}")),
@@ -543,7 +545,7 @@ fn service_upstream_test_validates_only_responses_and_returns_redacted_metadata(
 }
 
 #[test]
-fn service_upstream_test_reports_the_configured_responses_gateway_route() {
+fn service_upstream_test_normalizes_legacy_responses_gateway_flag_to_direct() {
     let (base_url, requests, handle) =
         model_server(r#"{"object":"list","data":[{"id":"model-a"}]}"#);
     let root = tempfile::tempdir().unwrap();
@@ -555,8 +557,8 @@ fn service_upstream_test_reports_the_configured_responses_gateway_route() {
     let view = test_provider_upstream_service_v2(root.path(), "service-provider").unwrap();
     let wire = requests.recv_timeout(Duration::from_secs(2)).unwrap();
     handle.join().unwrap();
-    assert_eq!(view.route_kind, RouteKindDto::Gateway);
-    assert!(!view.redacted_summary.contains("Direct"));
+    assert_eq!(view.route_kind, RouteKindDto::Direct);
+    assert!(view.redacted_summary.contains("Responses Provider"));
     assert!(wire.starts_with("GET /v1/models HTTP/1.1"));
 }
 

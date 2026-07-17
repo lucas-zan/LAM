@@ -306,6 +306,7 @@ impl GatewayRouteComposer {
             auth: request.binding.provider.upstream_auth.clone(),
             body,
             content_type: "application/json".into(),
+            codex_headers: request.upstream_headers.clone(),
             cancellation: cancellation.clone(),
         };
         if parsed.stream {
@@ -377,6 +378,7 @@ impl GatewayRouteComposer {
             auth: request.binding.provider.upstream_auth,
             body: request.body,
             content_type: "application/json".into(),
+            codex_headers: request.upstream_headers,
             cancellation: cancellation.clone(),
         };
         if stream {

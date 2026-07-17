@@ -1,7 +1,10 @@
 # 🎯 PAT Mode 完整测试指南
 
 **日期：** 2026-06-24  
-**状态：** ✅ 所有功能已实现，等待测试
+**状态：** 历史测试指南；整帐号 Sessions Sync 已于 2026-07-17 完整下线
+
+> 本文旧截图/矩阵中的 `Sync Sessions` 预期已作废。OAuth、PAT 和 API Account 模式均不再
+> 展示该按钮；跨账号续接统一使用单 session 的 `Relay Latest` 或 `Handoff`。
 
 ---
 
@@ -198,7 +201,6 @@ cat ~/.codex-test-main/config.toml
    |------|------|---------|
    | Relay Latest | ❌ 灰色 | "Not available for active account in PAT mode" |
    | Handoff | ❌ 灰色 | "Not available for active account in PAT mode" |
-   | Sync Sessions | ❌ 灰色 | "Not available for active account in PAT mode" |
    | Rename | ❌ 灰色 | "Not available for active account in PAT mode" |
    | Login | ❌ 灰色 | "Not available for active account in PAT mode" |
    | Switch | ❌ 灰色 | "Already active in PAT mode" |
@@ -211,7 +213,6 @@ cat ~/.codex-test-main/config.toml
    |------|------|---------|
    | Relay Latest | ❌ 灰色 | "Not available for active account in PAT mode" |
    | Handoff | ❌ 灰色 | "Not available for active account in PAT mode" |
-   | Sync Sessions | ❌ 灰色 | "Not available for active account in PAT mode" |
    | Rename | ❌ 灰色 | "Not available for active account in PAT mode" |
    | Login | ❌ 灰色 | "Not available for active account in PAT mode" |
    | **Switch** | ✅ **蓝色** | "Switch to this account" |
@@ -230,7 +231,6 @@ cat ~/.codex-test-main/config.toml
 │                                     │
 │ [灰] Relay Latest                   │
 │ [灰] Handoff                        │
-│ [灰] Sync Sessions                  │
 │ [灰] Rename                         │
 │ [灰] Login                          │
 │ [灰] Switch                         │
@@ -242,7 +242,6 @@ cat ~/.codex-test-main/config.toml
 │                                     │
 │ [灰] Relay Latest                   │
 │ [灰] Handoff                        │
-│ [灰] Sync Sessions                  │
 │ [灰] Rename                         │
 │ [灰] Login                          │
 │ [蓝] 🔄 Switch  ← 只有这个可用！     │
@@ -366,14 +365,12 @@ cat ~/.codex-test-main/config.toml
 | **激活账号** | | |
 | - Relay Latest | ✅ 可用 | ❌ 禁用 |
 | - Handoff | ✅ 可用 | ❌ 禁用 |
-| - Sync Sessions | ✅ 可用 | ❌ 禁用 |
 | - Rename | ✅ 可用 | ❌ 禁用 |
 | - Login | ✅ 可用 | ❌ 禁用 |
 | - Switch | ✅ 可用 | ❌ 禁用 |
 | **非激活账号** | | |
 | - Relay Latest | ✅ 可用 | ❌ 禁用 |
 | - Handoff | ✅ 可用 | ❌ 禁用 |
-| - Sync Sessions | ✅ 可用 | ❌ 禁用 |
 | - Rename | ✅ 可用 | ❌ 禁用 |
 | - Login | ✅ 可用 | ❌ 禁用 |
 | - **Switch** | ✅ 可用 | ✅ **可用** |
@@ -507,7 +504,6 @@ cat ~/.codex-test-main/config.toml
 |------|------|------|
 | Relay Latest | ❌ 灰色 | 不支持 |
 | Handoff | ❌ 灰色 | 不支持 |
-| Sync Sessions | ❌ 灰色 | 不支持 |
 | Rename | ❌ 灰色 | 不支持 |
 | **Login** | ✅ **蓝色** | **可用！用于刷新 token** |
 | Switch | ❌ 灰色 | 已经激活 |
@@ -518,7 +514,6 @@ cat ~/.codex-test-main/config.toml
 |------|------|------|
 | Relay Latest | ❌ 灰色 | 不支持 |
 | Handoff | ❌ 灰色 | 不支持 |
-| Sync Sessions | ❌ 灰色 | 不支持 |
 | Rename | ❌ 灰色 | 不支持 |
 | Login | ❌ 灰色 | 必须先 Switch |
 | **Switch** | ✅ **蓝色** | **可用！切换账号** |
@@ -543,4 +538,3 @@ cat ~/.codex-test-main/config.toml
 **非激活账号 (test-main):**
 - Login: ❌ 灰色（"Use Switch to activate this account first"）
 - Switch: ✅ 蓝色（可用）
-

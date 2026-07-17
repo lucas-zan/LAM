@@ -1,17 +1,16 @@
 use localagentmanager_core::{
     attach_provider_to_profile, build_resume_command, create_account_plan, create_provider,
     create_relay_plan, delete_provider, execute_attach_provider_to_profile, execute_create_account,
-    execute_create_relay, execute_rename_account, execute_sync,
-    gateway_first_response_timeout_seconds, get_profile_quota, list_accounts, list_cached_accounts,
-    list_cached_quotas, list_providers, list_sessions, list_terminal_targets,
-    plan_attach_provider_to_profile, refresh_all_quotas, relay_resume_session, rename_account_plan,
-    repair_managed_wrappers, reset_profile_quota, resolve_home_root, selected_terminal_target_id,
-    set_gateway_first_response_timeout_seconds, set_selected_terminal_target_id, sync_plan,
-    terminal_applescript, update_account_note, AccountNoteUpdate, AttachProviderRequest,
-    CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, InstallationLock,
-    ManagedConfigProjection, ProfileBindingCollection, ProfileProviderBinding, ProjectionOwnership,
-    ProviderHubPaths, RelayResumeRequest, RenameAccountRequest, ResumeCommandRequest, SecretInput,
-    StoreOptions, SyncRequest, VersionedFileStore,
+    execute_create_relay, execute_rename_account, gateway_first_response_timeout_seconds,
+    get_profile_quota, list_accounts, list_cached_accounts, list_cached_quotas, list_providers,
+    list_sessions, list_terminal_targets, plan_attach_provider_to_profile, refresh_all_quotas,
+    relay_resume_session, rename_account_plan, repair_managed_wrappers, reset_profile_quota,
+    resolve_home_root, selected_terminal_target_id, set_gateway_first_response_timeout_seconds,
+    set_selected_terminal_target_id, terminal_applescript, update_account_note, AccountNoteUpdate,
+    AttachProviderRequest, CreateAccountRequest, CreateProviderRequest, CreateRelayRequest,
+    InstallationLock, ManagedConfigProjection, ProfileBindingCollection, ProfileProviderBinding,
+    ProjectionOwnership, ProviderHubPaths, RelayResumeRequest, RenameAccountRequest,
+    ResumeCommandRequest, SecretInput, StoreOptions, VersionedFileStore,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -182,20 +181,6 @@ fn static_fake_home_fixture_scans_expected_profiles() {
     assert!(sessions.iter().any(|s| s.id == "sid-a"));
     assert!(sessions.iter().any(|s| s.id == "broken"));
     assert!(sessions.iter().any(|s| s.id == "empty"));
-
-    let plan = sync_plan(
-        &fixture,
-        &SyncRequest {
-            from_profile_id: "a".into(),
-            to_profile_id: "b-relay-a".into(),
-            sync_sessions: true,
-            backup_target_sessions: true,
-            sidecar_backup_history: false,
-        },
-    )
-    .unwrap();
-    assert!(plan.blocked_files.iter().any(|p| p == "auth.json"));
-    assert!(plan.policy_blocked_files.iter().any(|p| p == "*.sqlite*"));
 }
 
 #[test]
@@ -572,68 +557,6 @@ fn creates_relay_without_touching_runtime_profile() {
         fs::read_to_string(runtime.join("history.jsonl")).unwrap(),
         before
     );
-}
-
-#[test]
-fn sync_plan_is_dry_run_and_execute_blocks_sensitive_files() {
-    let home = temp_home("sync");
-    let source = seed_codex_home(&home, "a");
-    let target = seed_codex_home(&home, "b-relay-a");
-    write(
-        &target.join("config.toml"),
-        "model = \"gpt-5.4\"\nmodel_provider = \"company-proxy\"\n",
-    );
-    write(
-        &source.join("sessions/2026/06/01/extra.jsonl"),
-        "{\"session_id\":\"extra\"}\n",
-    );
-
-    let req = SyncRequest {
-        from_profile_id: "a".into(),
-        to_profile_id: "b-relay-a".into(),
-        sync_sessions: true,
-        backup_target_sessions: true,
-        sidecar_backup_history: false,
-    };
-    let plan = sync_plan(&home, &req).unwrap();
-    assert!(plan.operations.iter().any(|op| op.kind == "backup_dir"));
-    assert!(plan.operations.iter().any(|op| op.kind == "copy_file"));
-    assert!(plan.blocked_files.iter().any(|p| p == "auth.json"));
-    assert!(plan.blocked_files.iter().any(|p| p == "config.toml"));
-    assert!(plan.blocked_files.iter().any(|p| p == "state_5.sqlite"));
-    assert!(plan.blocked_files.iter().any(|p| p == "installation_id"));
-    assert!(plan.policy_blocked_files.iter().any(|p| p == "*.sqlite*"));
-    assert!(plan
-        .warnings
-        .iter()
-        .any(|w| w.contains("Provider mismatch")));
-    assert!(!home
-        .join(".codex-b-relay-a/sessions/2026/06/01/extra.jsonl")
-        .exists());
-
-    let result = execute_sync(&home, &req).unwrap();
-    assert!(result.manifest_path.exists());
-    let backup_path = result.backup_path.unwrap();
-    assert!(backup_path.exists());
-    let backup_name = backup_path.file_name().unwrap().to_string_lossy();
-    assert!(backup_name.starts_with("sessions.backup."));
-    assert_eq!("sessions.backup.YYYYMMDD-HHMMSS".len(), backup_name.len());
-    let manifest_name = result.manifest_path.file_name().unwrap().to_string_lossy();
-    assert!(manifest_name.ends_with(".json"));
-    assert_ne!(manifest_name.as_ref(), "0.json");
-    let manifest = fs::read_to_string(&result.manifest_path).unwrap();
-    assert!(manifest.contains("\"operations\""));
-    assert!(manifest.contains("\"policyBlockedFiles\""));
-    assert!(home
-        .join(".codex-b-relay-a/sessions/2026/06/01/extra.jsonl")
-        .exists());
-    assert!(
-        !home.join(".codex-b-relay-a/auth.json").exists()
-            || fs::read_to_string(home.join(".codex-b-relay-a/auth.json"))
-                .unwrap()
-                .contains("secret")
-    );
-    assert!(!home.join(".codex-b-relay-a/history.from-a.jsonl").exists());
 }
 
 #[test]

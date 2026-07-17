@@ -1,6 +1,8 @@
 # 产品设计文档：Codex Relay / Codex Session Manager
 
-> **历史草稿 / 已被替代：** 本文保留 Codex relay 的早期产品细节作为参考。当前唯一主规格是 `docs/FINAL-DESIGN.md`；如本文与 `FINAL-DESIGN.md` 冲突，以 `FINAL-DESIGN.md` 为准。产品命名、阶段范围、Provider、额度与多 Agent 抽象均已在最终设计中收敛为 **LocalAgentManager (Lam)**。
+> **历史草稿 / 已被替代：** 本文保留 Codex relay 的早期产品细节作为参考。整帐号
+> Sessions Sync 已于 2026-07-17 下线；下文相关 user story 不代表现行能力。当前行为以
+> 源码、README 与 `docs/FINAL-DESIGN.md` 顶部修订说明为准。
 
 版本：0.1 draft  
 目标平台：macOS first  

@@ -11,7 +11,6 @@ type Modal =
   | 'renameAccount'
   | 'updatePatSession'
   | 'handoff'
-  | 'sync'
   | 'sessionDetail'
   | null;
 

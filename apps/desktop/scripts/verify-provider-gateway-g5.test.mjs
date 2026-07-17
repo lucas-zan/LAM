@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateG5Manifest, verifyG5 } from './verify-provider-gateway-g5.mjs';
+import {
+  resolveArtifactName,
+  validateG5Manifest,
+  verifyG5,
+} from './verify-provider-gateway-g5.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -21,5 +25,15 @@ test('G5 rejects an incomplete scenario set', () => {
         requiredRoutes: ['GET /v1/models', 'POST /v1/responses'],
       }),
     /missing G5 scenario/,
+  );
+});
+
+test('G5 resolves versioned artifact templates from release metadata', () => {
+  assert.equal(
+    resolveArtifactName('LAM_{version}_{architecture}.dmg', {
+      version: '0.3.0',
+      architecture: 'aarch64',
+    }),
+    'LAM_0.3.0_aarch64.dmg',
   );
 });

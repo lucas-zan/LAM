@@ -22,6 +22,8 @@ vi.mock('../lib/api', () => ({
   executeAttachProviderV2: vi.fn(),
   planDetachProviderV2: vi.fn(),
   executeDetachProviderV2: vi.fn(),
+  getApiAccountConnectionV2: vi.fn(),
+  updateApiAccountConnectionV2: vi.fn(),
 }));
 
 const definition: ProviderDefinitionV2 = {
@@ -114,9 +116,46 @@ beforeEach(() => {
     state: 'completed',
     idempotent: false,
   });
+  vi.mocked(api.getApiAccountConnectionV2).mockResolvedValue({
+    profileId: 'work-api',
+    providerId: 'account-work-api',
+    protocol: 'responses',
+    baseUrl: 'https://api.example.test/v1',
+    selectedModel: 'model-a',
+    providerStoreRevision: 4,
+    apiKeyConfigured: true,
+  });
+  vi.mocked(api.updateApiAccountConnectionV2).mockResolvedValue({
+    profileId: 'work-api',
+    providerId: 'account-work-api',
+    protocol: 'responses',
+    baseUrl: 'https://new.example.test/v1',
+    selectedModel: 'model-a',
+    providerStoreRevision: 5,
+    apiKeyConfigured: true,
+  });
 });
 
 describe('useProviderStore V2', () => {
+  it('loads and updates a redacted API account connection then refreshes', async () => {
+    const detail = await useProviderStore.getState().loadApiAccountConnection('work-api');
+    expect(detail.apiKeyConfigured).toBe(true);
+    await useProviderStore.getState().updateApiAccountConnection({
+      profileId: 'work-api',
+      expectedProviderStoreRevision: 4,
+      baseUrl: 'https://new.example.test/v1',
+      apiKey: 'sk-write-only',
+    });
+    expect(api.updateApiAccountConnectionV2).toHaveBeenCalledWith({
+      profileId: 'work-api',
+      expectedProviderStoreRevision: 4,
+      baseUrl: 'https://new.example.test/v1',
+      apiKey: 'sk-write-only',
+    });
+    expect(api.listProvidersV2).toHaveBeenCalledOnce();
+    expect(useProviderStore.getState().apiAccountConnection?.providerStoreRevision).toBe(5);
+  });
+
   it('does not enter the Tauri SDK while the native bridge is unavailable', async () => {
     vi.mocked(api.inTauri).mockReturnValue(false);
     useProviderStore.setState({ providers: [provider], loading: true });

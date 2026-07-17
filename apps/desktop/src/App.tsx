@@ -17,8 +17,7 @@ import {
   IconTrash,
   IconInfo,
 } from './components/icons';
-import { SyncModal } from './components/sync-modal';
-import { ProviderCenter } from './components/provider-center';
+import { ApiAccountConnectionEditor, ProviderCenter } from './components/provider-center';
 import { ApiAccountFlow } from './components/api-account-flow';
 import { ThemeToggle } from './components/theme-toggle';
 import { UIButton } from './components/ui-button';
@@ -34,10 +33,7 @@ import type {
   UsageWindowPreset,
   OperationPlan,
   RenameAccountRequest,
-  SyncPlan,
   ProfileAttachPlanViewV2,
-  SyncRequest,
-  SyncResult,
   AntigravityQuotaResponse,
   CodexAccount,
 } from './lib/types';
@@ -173,7 +169,14 @@ export function App() {
     refreshUsage,
     selectUsageScope,
   } = useUsageStore();
-  const { providers, bindings } = useProviderStore();
+  const {
+    providers,
+    bindings,
+    apiAccountConnection,
+    loadApiAccountConnection,
+    updateApiAccountConnection,
+    clearApiAccountConnection,
+  } = useProviderStore();
 
   const selectedAccount = useAccountStore((s) => s.selectedAccount());
   const selectedSession = useSessionStore((s) => s.selectedSession());
@@ -186,9 +189,7 @@ export function App() {
   // Modal form state (local — only needed while modal is open)
   const [accountReq, setAccountReq] = useState(emptyAccountReq);
   const [renameReq, setRenameReq] = useState(emptyRenameReq);
-  const [plan, setPlan] = useState<OperationPlan | SyncPlan | null>(null);
-  const [syncReq, setSyncReq] = useState<SyncRequest | null>(null);
-  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+  const [plan, setPlan] = useState<OperationPlan | null>(null);
   const [handoffSourceId, setHandoffSourceId] = useState('');
   const [handoffTargetId, setHandoffTargetId] = useState('');
   const [handoffSessionId, setHandoffSessionId] = useState('');
@@ -207,6 +208,7 @@ export function App() {
   const [modelSwitchTarget, setModelSwitchTarget] = useState<CodexAccount | null>(null);
   const [modelSwitchValue, setModelSwitchValue] = useState('');
   const [modelSwitchPlan, setModelSwitchPlan] = useState<ProfileAttachPlanViewV2 | null>(null);
+  const [editingApiAccountId, setEditingApiAccountId] = useState<string | null>(null);
   const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
   const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
@@ -225,6 +227,17 @@ export function App() {
   const antigravityRefreshInFlightRef = useRef(false);
   const loadedUsageSummaryKeyRef = useRef<string | null>(null);
   const defaultScopeUsageSummaryBaseKeyRef = useRef<string | null>(null);
+
+  function closeApiAccountEditor() {
+    clearApiAccountConnection();
+    setEditingApiAccountId(null);
+  }
+
+  function openApiAccountEditor(account: CodexAccount) {
+    clearApiAccountConnection();
+    setEditingApiAccountId(account.id);
+    void loadApiAccountConnection(account.id).catch(() => setEditingApiAccountId(null));
+  }
 
   // Load auth mode and settings on mount
   useEffect(() => {
@@ -517,19 +530,6 @@ export function App() {
     closeModal();
   }
 
-  async function openSyncModal(from = selectedAccount?.id) {
-    const target = accounts.find((a) => a.id !== from)?.id ?? '';
-    setSyncReq({
-      fromProfileId: from ?? '',
-      toProfileId: target,
-      syncSessions: true,
-      backupTargetSessions: true,
-      sidecarBackupHistory: false,
-    });
-    setPlan(null);
-    setSyncResult(null);
-    openModal('sync');
-  }
   function openRenameAccountModal(account: (typeof accounts)[number]) {
     setRenameReq({
       fromProfileId: account.id,
@@ -880,9 +880,9 @@ export function App() {
             quotas={quotas}
             providers={providers}
             select={setSelectedAccountId}
-            openSync={openSyncModal}
             rename={openRenameAccountModal}
             deleteAccount={deleteProfileAccount}
+            editApiAccount={openApiAccountEditor}
             apiAccountIds={bindings.map((binding) => binding.profileId)}
             switchModel={(account) => {
               const provider = providers.find((item) => item.id === account.providerId);
@@ -910,6 +910,7 @@ export function App() {
             onSaveAccountNote={saveAccountNote}
             authMode={authMode}
             compactButtons={compactButtons}
+            setCompactButtons={setCompactButtons}
           />
         ) : null}
         {appReady && route === 'sessions' ? (
@@ -953,9 +954,6 @@ export function App() {
             profiles={accounts.map((account) => account.id)}
             onAddExternalApi={openExternalApiModal}
           />
-        ) : null}
-        {appReady && route === 'sync' ? (
-          <Views.SyncHome accounts={accounts} openSync={openSyncModal} />
         ) : null}
         {appReady && route === 'settings' ? (
           <Views.Settings
@@ -1051,6 +1049,23 @@ export function App() {
             onCancel={closeModal}
             onCreated={handleApiAccountCreated}
           />
+        </Shell.Modal>
+      ) : null}
+
+      {editingApiAccountId ? (
+        <Shell.Modal title="API Account Configuration" close={closeApiAccountEditor} wide>
+          {apiAccountConnection?.profileId === editingApiAccountId ? (
+            <ApiAccountConnectionEditor
+              connection={apiAccountConnection}
+              onSave={async (request) => {
+                await updateApiAccountConnection(request);
+                closeApiAccountEditor();
+              }}
+              onCancel={closeApiAccountEditor}
+            />
+          ) : (
+            <div className="emptyBox">Loading API account…</div>
+          )}
         </Shell.Modal>
       ) : null}
 
@@ -1702,32 +1717,6 @@ export function App() {
               </UIButton>
             </div>
           </div>
-        </Shell.Modal>
-      ) : null}
-
-      {modal === 'sync' && syncReq ? (
-        <Shell.Modal title="Sync Sessions Safely" wide close={closeModal}>
-          <SyncModal
-            accounts={accounts}
-            syncReq={syncReq}
-            setSyncReq={(req) => {
-              setSyncReq(req);
-              setPlan(null);
-              setSyncResult(null);
-            }}
-            plan={plan}
-            syncResult={syncResult}
-            onDryRun={async () => {
-              if (syncReq) setPlan(await api.buildSyncPlan(syncReq));
-            }}
-            onExecute={async () => {
-              if (syncReq && plan) {
-                setSyncResult(await api.executeSync(syncReq));
-                await refresh();
-              }
-            }}
-            onClose={closeModal}
-          />
         </Shell.Modal>
       ) : null}
 

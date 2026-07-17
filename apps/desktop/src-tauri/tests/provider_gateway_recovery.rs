@@ -1,11 +1,17 @@
 use localagentmanager_core::gateway::recovery::{
     recover_verified_gateway_process, GatewayProcessControl, GatewayProcessIdentity,
-    RecoveryOutcome,
+    RecoveryOutcome, SystemGatewayProcessControl,
 };
 use localagentmanager_core::{AppError, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
+
+#[cfg(target_os = "macos")]
+use std::process::Command;
+
+#[cfg(target_os = "macos")]
+use std::thread;
 
 struct FakeProcessControl {
     identity: Result<Option<GatewayProcessIdentity>>,
@@ -73,6 +79,18 @@ fn verified_gateway_missing_process_needs_no_signal() {
 
     assert_eq!(outcome, RecoveryOutcome::NotRunning);
     assert!(control.terminated.lock().unwrap().is_empty());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn exited_unreaped_process_is_not_reported_as_running() {
+    let mut child = Command::new("/usr/bin/true").spawn().unwrap();
+    thread::sleep(Duration::from_millis(100));
+
+    let inspected = GatewayProcessControl::inspect(&SystemGatewayProcessControl, child.id());
+    child.wait().unwrap();
+
+    assert_eq!(inspected.unwrap(), None);
 }
 
 #[test]

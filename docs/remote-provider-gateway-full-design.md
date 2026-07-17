@@ -1,6 +1,6 @@
 # LAM Remote Provider Gateway Full Design
 
-状态：Phase 0 / G1、Phase 1 / G2、Phase 2 / G3、Phase 3 / G4 与 Phase 4 / G5 已实现；Codex 0.144.1 严格模型目录、上游模型发现与 Responses Gateway 透传已实现；验证证据见 `docs/todo-strict-codex-provider-models.md`
+状态：Phase 0 / G1、Phase 1 / G2、Phase 2 / G3、Phase 3 / G4 与 Phase 4 / G5 已实现；Codex 0.144.1 严格模型目录、上游模型发现已实现；原生 Responses API 已收敛为 Codex 直连，Gateway 只承担 Chat Completions 协议适配；验证证据见 `docs/todo-strict-codex-provider-models.md` 与 `docs/todo-native-responses-direct-routing.md`
 目标：通过可独立验收的纵向切片，完整交付外部 API Provider 接入、协议适配、本地统一网关、Codex profile 绑定、自动化测试和验收闭环。
 
 ## 1. 目标
@@ -8,9 +8,9 @@
 LAM 要从“Codex 账号/session 管理工具”扩展为本地 Provider Hub：
 
 - 管理外部模型 Provider、模型列表、密钥引用、健康状态和能力矩阵。
-- 支持原生 `/v1/responses` Provider 直连，也支持显式通过 Gateway 以获得 LAM 管理的 Codex 模型目录。
+- 原生 `/v1/responses` Provider 始终由 Codex 直连，保持与 Codex 原生 Provider 配置一致。
 - 支持 `/chat/completions` Provider 通过用户显式启用的本地适配器接入 Codex。
-- Chat Completions Provider 通过 adapter 走 Gateway；新建 External API Account 也显式走 Gateway，Responses Provider 在 Gateway 内保持原协议透传。
+- Chat Completions Provider 通过 adapter 走 Gateway；External API Account 根据协议选择直连或适配路径。
 - API profile 与 ChatGPT auth/session profile 同等参与 session 浏览、sync、relay、resume。
 - 本地网关可作为统一外部接口管理层，后续可开放给其他本机客户端复用。
 
@@ -20,7 +20,7 @@ LAM 要从“Codex 账号/session 管理工具”扩展为本地 Provider Hub：
 
 - Codex 边界只输出 `wire_api = "responses"`；旧 `wireApi = "openai"` 只是迁移输入，不得写回 Codex 配置。
 - Responses Provider 默认直连；Chat Completions Provider 只能通过显式启用的本地 adapter 接入 Codex。
-- `codex.route_via_gateway` 是显式路由契约；新建 External API Account 由后端强制设为 `true`，既有 Responses Provider 缺省为 `false` 以保持向后兼容。
+- `codex.route_via_gateway` 只作为旧数据兼容输入；Responses Provider 在构建和启动迁移时统一规范为 `false`。Chat Completions Provider 的协议类型本身决定必须走 Gateway。
 - 上游 OpenAI `GET /models` 的 `{ data: [{ id }] }` 只用于发现；Codex 0.144.1 使用顶层 `models` 和受控 metadata 字段。两种 DTO 不复用。
 - Provider metadata、secret reference、运行时状态和测试观测结果分开存储，不用一个字段同时表示配置、健康和能力。
 - `ProfileProviderBinding` 是 profile 与 provider/model 关系的唯一权威来源；Codex config 和 Gateway binding 只是它的可重建投影。
@@ -183,15 +183,15 @@ CodexProviderOptions
   stream_idle_timeout_ms?: integer       # 1_000..=900_000
   direct_request_max_retries?: integer   # 0..=3，仅 direct
   direct_stream_max_retries?: integer    # 0..=3，仅 direct
-  route_via_gateway: boolean             # Responses 显式选择 Gateway，缺省 false
+  route_via_gateway: boolean             # 旧数据兼容字段；Responses 永远规范为 false
   query_params: map<string, string>      # 键值长度受限，禁止控制字符
   env_http_headers: map<string, EnvVarName>
 ```
 
 `wire_api` 不是用户字段，planner 固定输出 `responses`。MVP 不接受持久化的
 `http_headers`，因为静态 header 可能携带 secret；只允许引用环境变量的
-`env_http_headers`。`query_params` 不允许认证材料、URL/userinfo、重复 key 或覆盖
-Gateway 路由。Gateway route 无条件把两种 retry 写成 `0`；direct route 使用上述
+`env_http_headers`。`query_params` 不允许认证材料、URL/userinfo 或重复 key。
+Gateway route 无条件把两种 retry 写成 `0`；direct route 使用上述
 显式值，未配置时由 exact-tested Codex 默认负责，UI 必须标明 retry owner。
 
 认证拆成“凭据从哪里来”和“如何放到上游请求”两层：
@@ -454,11 +454,12 @@ Secret 到运行时认证的映射必须是单一、可预测的：
 | SecretReference | Responses 直连                 | Gateway 访问上游                     | Codex 访问 Gateway                      |
 | --------------- | ------------------------------ | ------------------------------------ | --------------------------------------- |
 | `env`           | 写 Codex `env_key`             | sidecar 从明确允许的环境变量读取     | 不用于共享 Gateway token                |
-| `keychain`      | 写 LAM auth helper             | sidecar 通过 `SecretStore` 读取      | 写 profile-specific gateway auth helper |
+| `codex_profile` | 写 profile `auth.json` 并启用 `requires_openai_auth` | 不允许进入 Gateway | 不用于 Gateway token |
+| `keychain`      | 仅作为 Responses legacy 迁移输入 | sidecar 通过 `SecretStore` 读取    | 写 profile-specific gateway auth helper |
 | `auth_command`  | 写 Codex provider `auth` table | sidecar 通过受限 command runner 调用 | 不复用上游 helper                       |
 | `none`          | 仅允许无认证上游               | 仅允许无认证上游                     | 禁止；Gateway 必须鉴权                  |
 
-`env_key`、provider `auth`、`experimental_bearer_token` 和 `requires_openai_auth` 是互斥认证模式，planner 必须在写配置前阻止冲突。Auth command 只允许结构化参数，禁止 shell 展开；必须定义 timeout、最大 stdout 大小、退出码、token 缓存/刷新和 stderr 脱敏规则。前端不展示 auth command 的运行结果。
+`env_key`、provider `auth`、`experimental_bearer_token` 和 `requires_openai_auth` 是互斥认证模式，planner 必须在写配置前阻止冲突。`codex_profile` 是 `requires_openai_auth` 的唯一受管来源。Auth command 只允许结构化参数，禁止 shell 展开；必须定义 timeout、最大 stdout 大小、退出码、token 缓存/刷新和 stderr 脱敏规则。前端不展示 auth command 的运行结果。
 
 Provider create/update 的 secret 变更使用窄化补偿：先验证 metadata 并准备带 expected store revision 的写入，再写入新 secret，最后 CAS commit metadata。commit 失败时只删除本操作新建且仍可安全识别的 secret；update 在 metadata commit 成功前保留旧 secret，成功后再清理旧版本。不与 profile attach 共享一个通用事务协调器。
 
@@ -615,10 +616,11 @@ ProfileAttachPlan
 规则：
 
 - Responses Provider：
-  - `route_via_gateway = false` 时 route plan 选择 direct，`codex_base_url = provider.base_url`。
-  - `route_via_gateway = true` 时 route plan 选择 gateway，但不选 adapter；Gateway 校验 model/store/history 后保留原 Responses 请求、status、content-type 和 body/SSE 字节。
+  - route plan 始终选择 direct，`codex_base_url = provider.base_url`。
+  - 读取到旧的 `route_via_gateway = true` 时先规范为 `false`，并将已有 binding、配置和 wrapper 幂等迁移为 direct。
   - `adapter_required = false`
-  - 新建 External API Account 由后端强制选择 gateway，并将 Codex request/stream retry 设为 0。
+  - API 帐号凭据写入该 profile 私有的 Codex `auth.json`，配置使用
+    `requires_openai_auth = true`，运行时不调用 LAM helper 或 Keychain。
 - Chat Completions + adapter：
   - route plan 选择 gateway；attach plan 从显式 context 读取 `local_gateway_url`。
   - `adapter_required = true`
@@ -650,9 +652,14 @@ model_provider = "<provider_id>"
 [model_providers.<provider_id>]
 name = "<display_name>"
 base_url = "<provider_base_url>"
-env_key = "<ENV_KEY>"
 wire_api = "responses"
+requires_openai_auth = true
 ```
+
+对应 profile 顶层固定写 `cli_auth_credentials_store = "file"`；API key 只存在于
+mode 0600 的 `auth.json`（`auth_mode = "apikey"`），Provider store、plan、日志和
+前端 view 均不保存或返回 secret。环境变量型的通用直连 Provider 仍可选择
+`env_key`，但不得与 `requires_openai_auth` 同时出现。
 
 Codex 还支持以下可选字段：
 
@@ -663,8 +670,9 @@ query_params = { version = "2024" }
 ```
 
 `CodexConfigEditor` 首版只写受控 `env_http_headers` 和 `query_params`。MVP 不接受
-静态 `http_headers` 或 `experimental_bearer_token`，也不为自定义 Provider 写
-`requires_openai_auth`；新增认证模式必须先扩展 6.0 的闭集和威胁测试。
+静态 `http_headers` 或 `experimental_bearer_token`。只有 profile-owned
+`codex_profile` 凭据写 `requires_openai_auth`；新增认证模式必须先扩展 6.0 的
+闭集和威胁测试。
 
 ### 8.2 Chat Completions 适配
 
@@ -1015,7 +1023,7 @@ POST /v1/chat/completions
 
 Codex profile 接入的最小必需入口是 `/v1/models` 与 `/v1/responses`。`/v1/models` 必须返回非空的顶级 `models` 数组；每项必须包含 6.1.1 定义的 13 个 exact-tested metadata 字段。标准 OpenAI `{ data: [...] }` 只用于上游发现，不是 Codex 目录响应。空目录、缺字段或 Codex fallback metadata warning 都是 release blocker。Gateway 从 authenticated immutable binding 对应 Provider 的完整 model allowlist 生成确定性目录；请求中的未知 model 在任何上游 I/O 前拒绝。
 
-对于 `codex.route_via_gateway = true` 的 Responses Provider，Gateway 完成 bearer、model allowlist、response-store/history 与 body 上限校验后，将请求体和上游 status、content-type、body/SSE 字节原样透传；它不选择协议 adapter，也不做应用层重试。Chat Completions Provider 仍通过受控 adapter 转换。
+Responses Provider 不经过 Gateway；Codex 直接请求 Provider 的 `/responses` 接口。Chat Completions Provider 通过受控 adapter 转换。只有存在未撤销的 Chat Completions binding 时 Supervisor 才允许启动 Gateway，sidecar 的空闲计数也使用同一判定契约。
 
 ### 9.4 Provider 选择
 
@@ -1658,7 +1666,8 @@ Secret store：
 - env mode 只检查变量存在，不返回 secret。
 - keychain 空 secret 不写 metadata。
 - auth command 和 env_key 互斥。
-- keychain Responses 直连会生成可用的 Codex auth helper 配置。
+- Responses API 帐号生成私有 Codex `auth.json`，不生成 auth helper；旧
+  Keychain 帐号仅在一次性迁移时读取，成功后 Provider 引用改为 `codex_profile`。
 - gateway binding 每 profile 独立，detach 后 token 失效，轮换后旧 token 失效。
 - auth helper timeout、超大 stdout、非零退出和多余输出均返回结构化错误。
 - debug format 不包含 secret。

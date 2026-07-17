@@ -116,6 +116,7 @@ fn request_at(address: SocketAddr, body: serde_json::Value) -> GatewayHttpReques
         body: serde_json::to_vec(&body).unwrap(),
         binding: snapshot_at(address),
         request_id: "request-route-1".into(),
+        upstream_headers: Default::default(),
     }
 }
 
@@ -130,6 +131,7 @@ fn responses_request_at(address: SocketAddr, body: &[u8]) -> GatewayHttpRequest 
         body: body.to_vec(),
         binding,
         request_id: "request-responses-1".into(),
+        upstream_headers: Default::default(),
     }
 }
 

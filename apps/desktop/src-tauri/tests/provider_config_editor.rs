@@ -190,3 +190,23 @@ fn file_apply_creates_private_unique_backups_and_pre_rename_failure_preserves_so
     let second = apply_projection_file(&path, &config_hash(&next), &changed, None).unwrap();
     assert_ne!(first.backup_path, second.backup_path);
 }
+
+#[test]
+fn native_api_key_projection_uses_codex_login_without_an_auth_helper() {
+    let mut value = spec();
+    value.auth = DirectCodexAuth::NativeApiKey;
+    let applied = apply_projection("", &config_hash(b""), &value).unwrap();
+
+    assert!(applied
+        .contents
+        .contains("cli_auth_credentials_store = \"file\""));
+    assert!(applied.contents.contains("requires_openai_auth = true"));
+    assert!(!applied
+        .contents
+        .contains("[model_providers.\"company.proxy\".auth]"));
+    assert!(!applied.contents.contains("lam-auth-helper"));
+
+    let detached = detach_projection(&applied.contents, &applied.projection).unwrap();
+    assert!(!detached.contains("cli_auth_credentials_store"));
+    assert!(!detached.contains("requires_openai_auth"));
+}

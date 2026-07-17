@@ -1,6 +1,8 @@
 import { access, readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { readReleaseMetadata } from './release-metadata.mjs';
 
 const requiredScenarios = [
   'add-exclusive-api-account',
@@ -21,7 +23,11 @@ const sourceRequirements = [
   ['src-tauri/src/main.rs', ['recover_provider_transactions_service_v2', 'plan_api_account_v2']],
   [
     'src-tauri/src/services/provider_api_v2.rs',
-    ['api-account-journal.json', 'CrashAfterDeleteDetach', 'recover_api_account_transactions_at_root_service_v2'],
+    [
+      'api-account-journal.json',
+      'CrashAfterDeleteDetach',
+      'recover_api_account_transactions_at_root_service_v2',
+    ],
   ],
   [
     'src-tauri/src/services/provider_relay_compatibility.rs',
@@ -43,9 +49,25 @@ export function validateG5Manifest(manifest) {
   if (manifest.productInvariant !== 'one-account-one-profile-one-codex-home')
     throw new Error('G5 product invariant mismatch');
   for (const scenario of requiredScenarios)
-    if (!manifest.scenarios?.includes(scenario)) throw new Error(`missing G5 scenario: ${scenario}`);
-  if (JSON.stringify(manifest.requiredRoutes) !== JSON.stringify(['GET /v1/models', 'POST /v1/responses']))
+    if (!manifest.scenarios?.includes(scenario))
+      throw new Error(`missing G5 scenario: ${scenario}`);
+  if (
+    JSON.stringify(manifest.requiredRoutes) !==
+    JSON.stringify(['GET /v1/models', 'POST /v1/responses'])
+  )
     throw new Error('G5 route contract mismatch');
+}
+
+export function resolveArtifactName(template, metadata) {
+  return template
+    .replaceAll('{version}', metadata.version)
+    .replaceAll('{architecture}', metadata.architecture);
+}
+
+function currentMacHostTriple() {
+  if (process.arch === 'arm64') return 'aarch64-apple-darwin';
+  if (process.arch === 'x64') return 'x86_64-apple-darwin';
+  throw new Error(`unsupported packaging host architecture: ${process.arch}`);
 }
 
 export async function verifyG5({ desktopRoot, requireArtifacts = false }) {
@@ -60,14 +82,22 @@ export async function verifyG5({ desktopRoot, requireArtifacts = false }) {
     for (const marker of markers)
       if (!body.includes(marker)) throw new Error(`${relative} is missing G5 marker: ${marker}`);
   }
-  const weeklyUi = await readFile(path.join(desktopRoot, 'src/components/tray-quota-panel.tsx'), 'utf8');
+  const weeklyUi = await readFile(
+    path.join(desktopRoot, 'src/components/tray-quota-panel.tsx'),
+    'utf8',
+  );
   if (!weeklyUi.includes('scheduleTrayPopoverWindowSize'))
     throw new Error('weekly/tray popover implementation is missing');
 
   const artifactRoot = path.join(desktopRoot, 'src-tauri/target/release/bundle');
   if (requireArtifacts) {
+    const metadata = await readReleaseMetadata(desktopRoot, currentMacHostTriple());
     const app = path.join(artifactRoot, 'macos', manifest.artifacts[0]);
-    const dmg = path.join(artifactRoot, 'dmg', manifest.artifacts[1]);
+    const dmg = path.join(
+      artifactRoot,
+      'dmg',
+      resolveArtifactName(manifest.artifacts[1], metadata),
+    );
     await access(app);
     await access(dmg);
     if (!(await stat(dmg)).size) throw new Error('G5 DMG is empty');
@@ -85,5 +115,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === thisFile) {
     desktopRoot,
     requireArtifacts: process.argv.includes('--require-artifacts'),
   });
-  process.stdout.write(`G5 verified: ${result.scenarios} scenarios, ${result.sourceChecks} source checks\n`);
+  process.stdout.write(
+    `G5 verified: ${result.scenarios} scenarios, ${result.sourceChecks} source checks\n`,
+  );
 }

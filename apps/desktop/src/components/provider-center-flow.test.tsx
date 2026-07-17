@@ -18,6 +18,8 @@ vi.mock('../lib/api', () => ({
   planDetachProviderV2: vi.fn(),
   executeDetachProviderV2: vi.fn(),
   testProviderUpstreamV2: vi.fn(),
+  getApiAccountConnectionV2: vi.fn(),
+  updateApiAccountConnectionV2: vi.fn(),
 }));
 
 const provider: ProviderProfileViewV2 = {
@@ -73,6 +75,15 @@ beforeEach(() => {
       },
     },
   });
+  vi.mocked(api.getApiAccountConnectionV2).mockResolvedValue({
+    profileId: 'work-api',
+    providerId: 'account-work-api',
+    protocol: 'responses',
+    baseUrl: 'https://api.example.test/v1',
+    selectedModel: 'model-a',
+    providerStoreRevision: 4,
+    apiKeyConfigured: true,
+  });
 });
 
 describe('ProviderCenter integrated flow', () => {
@@ -104,6 +115,39 @@ describe('ProviderCenter integrated flow', () => {
       'Direct Responses route and credential reference validated',
     );
     expect(useAppStore.getState().status).not.toContain('token');
+  });
+
+  it('routes an exclusive native Responses connection to the API account editor', async () => {
+    useProviderStore.setState({
+      providers: [
+        {
+          ...provider,
+          id: 'account-work-api',
+          upstreamAuth: {
+            kind: 'bearer',
+            credential: { kind: 'codex_profile', profileId: 'work-api' },
+          },
+        },
+      ],
+      bindings: [
+        {
+          profileId: 'work-api',
+          providerId: 'account-work-api',
+          selectedModel: 'model-a',
+          routeKind: 'direct',
+          revision: 1,
+          providerRevision: 1,
+        },
+      ],
+    });
+    render(<ProviderCenter profiles={['work-api']} onAddExternalApi={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+    expect(screen.getByRole('heading', { name: 'Edit API Account' })).toBeTruthy();
+    await waitFor(() => expect(api.getApiAccountConnectionV2).toHaveBeenCalledWith('work-api'));
+    expect(await screen.findByDisplayValue('https://api.example.test/v1')).toBeTruthy();
+    expect(screen.getByText('API key configured')).toBeTruthy();
   });
 
   it('does not expose standalone Provider creation even when the list is empty', () => {

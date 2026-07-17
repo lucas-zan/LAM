@@ -177,7 +177,7 @@ export function ApiAccountFlow({
       const result = await api.executeApiAccountV2({
         planId: plan.planId,
         fingerprint: plan.fingerprint,
-        keychainSecret: reuse ? null : apiKey,
+        apiKey: reuse ? null : apiKey,
       });
       setApiKey('');
       setPlan(null);

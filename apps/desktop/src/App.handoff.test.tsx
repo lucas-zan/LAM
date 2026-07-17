@@ -8,7 +8,13 @@ import { useProviderStore } from './stores/providers';
 import { useQuotaStore } from './stores/quota';
 import { useUsageStore } from './stores/usage';
 import { useSessionStore } from './stores/sessions';
-import type { CodexAccount, CodexSession, UsageDashboard } from './lib/types';
+import type {
+  CodexAccount,
+  CodexSession,
+  ProfileProviderBindingViewV2,
+  ProviderProfileViewV2,
+  UsageDashboard,
+} from './lib/types';
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(() => Promise.resolve(vi.fn())),
@@ -21,6 +27,8 @@ vi.mock('./lib/api', () => ({
   listAccounts: vi.fn(),
   listProvidersV2: vi.fn(),
   listProfileProviderBindingsV2: vi.fn(),
+  getApiAccountConnectionV2: vi.fn(),
+  updateApiAccountConnectionV2: vi.fn(),
   listSessions: vi.fn(),
   getProfileQuota: vi.fn(),
   resetProfileQuota: vi.fn(),
@@ -135,6 +143,39 @@ const accounts: CodexAccount[] = [
     authMode: 'config',
   },
 ];
+
+const externalApiProvider: ProviderProfileViewV2 = {
+  id: 'account-codex-c',
+  name: 'codex-c API',
+  protocol: 'responses',
+  baseUrl: 'https://api.example.test/v1',
+  defaultModel: 'gpt-5',
+  models: [{ id: 'gpt-5', label: 'GPT-5' }],
+  upstreamAuth: {
+    kind: 'bearer',
+    credential: { kind: 'codex_profile', profileId: 'codex-c' },
+  },
+  adapter: { kind: 'none' },
+  codex: {
+    streamIdleTimeoutMs: 300_000,
+    directRequestMaxRetries: 0,
+    directStreamMaxRetries: 0,
+    queryParams: {},
+    envHttpHeaders: {},
+  },
+  storeRevision: 4,
+  usedBy: ['codex-c'],
+  readinessBlockers: [],
+};
+
+const externalApiBinding: ProfileProviderBindingViewV2 = {
+  profileId: 'codex-c',
+  providerId: 'account-codex-c',
+  selectedModel: 'gpt-5',
+  routeKind: 'direct',
+  revision: 1,
+  providerRevision: 4,
+};
 
 const usageSummary: UsageDashboard = {
   refreshedAt: '2026-06-28T06:22:00Z',
@@ -303,8 +344,9 @@ beforeEach(() => {
       diagnostics: false,
     },
   });
-  useProviderStore.setState({ providers: [] });
+  useProviderStore.setState({ providers: [], bindings: [], apiAccountConnection: null });
   vi.mocked(api.listCachedAccounts).mockResolvedValue([]);
+  vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
   vi.mocked(api.healthCheck).mockResolvedValue({
     ok: true,
     version: 'test',
@@ -584,6 +626,64 @@ describe('App handoff modal', () => {
     expect(screen.queryByRole('button', { name: 'PAT Account' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'API Account' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Review API Account' })).toBeTruthy();
+  });
+
+  it('opens and updates API configuration from the account-card View&Edit action', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    vi.mocked(api.listProvidersV2).mockResolvedValue({
+      revision: 4,
+      providers: [externalApiProvider],
+    });
+    vi.mocked(api.listProfileProviderBindingsV2).mockResolvedValue([externalApiBinding]);
+    vi.mocked(api.getApiAccountConnectionV2).mockResolvedValue({
+      profileId: 'codex-c',
+      providerId: 'account-codex-c',
+      protocol: 'responses',
+      baseUrl: 'https://api.example.test/v1',
+      selectedModel: 'gpt-5',
+      providerStoreRevision: 4,
+      apiKeyConfigured: true,
+    });
+    vi.mocked(api.updateApiAccountConnectionV2).mockResolvedValue({
+      profileId: 'codex-c',
+      providerId: 'account-codex-c',
+      protocol: 'responses',
+      baseUrl: 'https://new.example.test/v1',
+      selectedModel: 'gpt-5',
+      providerStoreRevision: 5,
+      apiKeyConfigured: true,
+    });
+
+    render(<App />);
+    const card = (await screen.findByText('codex-c')).closest('article');
+    fireEvent.click(await within(card!).findByRole('button', { name: 'More options' }));
+    fireEvent.click(
+      await within(card!).findByRole('button', {
+        name: 'View&Edit',
+      }),
+    );
+
+    await waitFor(() => expect(api.getApiAccountConnectionV2).toHaveBeenCalledWith('codex-c'));
+    expect(screen.getByRole('heading', { name: 'API Account Configuration' })).toBeTruthy();
+    expect(await screen.findByDisplayValue('https://api.example.test/v1')).toBeTruthy();
+    expect(screen.getByText('Responses')).toBeTruthy();
+    expect(screen.getByText('API key configured')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://new.example.test/v1/' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save API account' }));
+
+    await waitFor(() =>
+      expect(api.updateApiAccountConnectionV2).toHaveBeenCalledWith({
+        profileId: 'codex-c',
+        expectedProviderStoreRevision: 4,
+        baseUrl: 'https://new.example.test/v1',
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'API Account Configuration' })).toBeNull(),
+    );
   });
 
   it('keeps API Account out of the New Account chooser', async () => {
@@ -1347,6 +1447,7 @@ describe('App handoff modal', () => {
     useAppStore.setState({ route: 'settings' });
 
     render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
 
     const input = (await screen.findByLabelText(
       /gateway first response timeout/i,

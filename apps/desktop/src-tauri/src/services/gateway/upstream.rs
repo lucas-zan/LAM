@@ -5,7 +5,7 @@ use crate::services::provider_credentials::{
 use crate::services::provider_keychain::{
     KeychainBackend, KeychainCredentialReference, KeychainCredentialService,
 };
-use axum::http::{header, HeaderName, HeaderValue};
+use axum::http::{header, HeaderMap, HeaderName, HeaderValue};
 use serde_json::json;
 use std::fmt;
 use std::future::Future;
@@ -18,6 +18,73 @@ use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::{Notify, Semaphore};
 use tokio::time::Instant;
 use url::{Host, Url};
+
+const CODEX_UPSTREAM_HEADER_NAMES: [&str; 6] = [
+    "accept",
+    "originator",
+    "session-id",
+    "thread-id",
+    "user-agent",
+    "x-client-request-id",
+];
+const MAX_CODEX_UPSTREAM_HEADER_COUNT: usize = 32;
+const MAX_CODEX_UPSTREAM_HEADER_VALUE_BYTES: usize = 16 * 1024;
+const MAX_CODEX_UPSTREAM_HEADERS_BYTES: usize = 32 * 1024;
+
+#[derive(Clone, Default)]
+pub struct CodexUpstreamHeaders(HeaderMap);
+
+impl CodexUpstreamHeaders {
+    pub fn capture(source: &HeaderMap) -> Self {
+        let mut captured = HeaderMap::new();
+        let mut total = 0_usize;
+        for (name, value) in source {
+            if captured.len() >= MAX_CODEX_UPSTREAM_HEADER_COUNT
+                || !codex_header_allowed(name.as_str())
+            {
+                continue;
+            }
+            let bytes = name.as_str().len().saturating_add(value.as_bytes().len());
+            if value.as_bytes().len() > MAX_CODEX_UPSTREAM_HEADER_VALUE_BYTES
+                || total.saturating_add(bytes) > MAX_CODEX_UPSTREAM_HEADERS_BYTES
+            {
+                continue;
+            }
+            captured.insert(name.clone(), value.clone());
+            total += bytes;
+        }
+        Self(captured)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.0.get(name).and_then(|value| value.to_str().ok())
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&HeaderName, &HeaderValue)> {
+        self.0.iter()
+    }
+}
+
+fn codex_header_allowed(name: &str) -> bool {
+    CODEX_UPSTREAM_HEADER_NAMES.contains(&name) || name.starts_with("x-codex-")
+}
+
+impl fmt::Debug for CodexUpstreamHeaders {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CodexUpstreamHeaders")
+            .field("count", &self.len())
+            .finish()
+    }
+}
 
 pub trait NetworkTargetPolicy: Send + Sync {
     fn validate_and_resolve<'a>(
@@ -107,6 +174,10 @@ impl<B: KeychainBackend> UpstreamCredentialResolver
                 "PROVIDER_CREDENTIAL_SOURCE_UNSUPPORTED",
                 "auth-command credentials cannot cross the Gateway process boundary",
             )),
+            CredentialSource::CodexProfile { .. } => Err(AppError::new(
+                "PROVIDER_CREDENTIAL_SOURCE_UNSUPPORTED",
+                "profile-owned Codex credentials cannot cross the Gateway process boundary",
+            )),
         }
     }
 }
@@ -174,6 +245,7 @@ pub struct UpstreamRequest {
     pub auth: UpstreamAuth,
     pub body: Vec<u8>,
     pub content_type: String,
+    pub codex_headers: CodexUpstreamHeaders,
     pub cancellation: GatewayCancellation,
 }
 
@@ -329,10 +401,11 @@ impl SecureUpstreamClient {
         let mut attempts = 0_u8;
         let response = loop {
             attempts += 1;
-            let mut builder = client
-                .post(url.clone())
-                .header(header::CONTENT_TYPE, request.content_type.clone())
-                .body(request.body.clone());
+            let mut builder = client.post(url.clone()).body(request.body.clone());
+            for (name, value) in request.codex_headers.iter() {
+                builder = builder.header(name, value);
+            }
+            builder = builder.header(header::CONTENT_TYPE, request.content_type.clone());
             if let Some((name, value)) = &auth {
                 builder = builder.header(name, value);
             }

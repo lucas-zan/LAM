@@ -22,9 +22,6 @@ import type {
   RenameAccountResult,
   ResumeCommand,
   ResumeCommandRequest,
-  SyncPlan,
-  SyncRequest,
-  SyncResult,
   TerminalTarget,
   UpdateProviderRequest,
   UsageQuotaSnapshot,
@@ -76,6 +73,8 @@ import type {
   ApiAccountPlanViewV2,
   ExecuteApiAccountRequestV2,
   ApiAccountExecutionViewV2,
+  ApiAccountConnectionViewV2,
+  UpdateApiAccountConnectionRequestV2,
   DiscoverProviderModelsRequestV2,
   DiscoverProviderModelsViewV2,
 } from './types';
@@ -146,14 +145,6 @@ export async function planCreateRelay(req: CreateRelayRequest): Promise<Operatio
 
 export async function executeCreateRelay(req: CreateRelayRequest): Promise<CreateResult> {
   return invoke<CreateResult>('execute_create_relay', { req });
-}
-
-export async function buildSyncPlan(req: SyncRequest): Promise<SyncPlan> {
-  return invoke<SyncPlan>('build_sync_plan', { req });
-}
-
-export async function executeSync(req: SyncRequest): Promise<SyncResult> {
-  return invoke<SyncResult>('execute_sync', { req });
 }
 
 export async function buildResumeCommand(req: ResumeCommandRequest): Promise<ResumeCommand> {
@@ -598,6 +589,18 @@ export async function executeApiAccountModelSwitchV2(
     planId,
     fingerprint,
   });
+}
+
+export async function getApiAccountConnectionV2(
+  profileId: string,
+): Promise<ApiAccountConnectionViewV2> {
+  return invoke<ApiAccountConnectionViewV2>('get_api_account_connection_v2', { profileId });
+}
+
+export async function updateApiAccountConnectionV2(
+  req: UpdateApiAccountConnectionRequestV2,
+): Promise<ApiAccountConnectionViewV2> {
+  return invoke<ApiAccountConnectionViewV2>('update_api_account_connection_v2', { req });
 }
 
 export async function deleteApiAccountV2(profileId: string): Promise<DeleteAccountResult> {

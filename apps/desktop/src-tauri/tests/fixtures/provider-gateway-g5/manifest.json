@@ -15,5 +15,5 @@
     "app-dmg-integrity"
   ],
   "requiredRoutes": ["GET /v1/models", "POST /v1/responses"],
-  "artifacts": ["LAM.app", "LAM_0.2.1_aarch64.dmg"]
+  "artifacts": ["LAM.app", "LAM_{version}_{architecture}.dmg"]
 }

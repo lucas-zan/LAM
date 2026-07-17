@@ -1,5 +1,6 @@
+use axum::http::HeaderMap;
 use localagentmanager_core::gateway::upstream::{
-    upstream_ip_is_forbidden, validate_upstream_url, GatewayCancellation,
+    upstream_ip_is_forbidden, validate_upstream_url, CodexUpstreamHeaders, GatewayCancellation,
     KeychainAndEnvironmentCredentialResolver, NetworkTargetPolicy, SecureUpstreamClient,
     UpstreamClientConfig, UpstreamCredentialResolver, UpstreamRequest,
 };
@@ -18,6 +19,57 @@ use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 struct TestPolicy(SocketAddr);
+
+#[test]
+fn codex_header_contract_forwards_only_bounded_safe_metadata() {
+    let mut source = HeaderMap::new();
+    for (name, value) in [
+        ("accept", "text/event-stream"),
+        ("originator", "codex_exec"),
+        ("session-id", "session-a"),
+        ("thread-id", "thread-a"),
+        (
+            "user-agent",
+            "codex_exec/0.144.5 (Mac OS 15.6.0; arm64) unknown (codex_exec; 0.144.5)",
+        ),
+        ("x-client-request-id", "request-a"),
+        ("x-codex-beta-features", "remote_compaction_v2"),
+        ("x-codex-turn-metadata", r#"{"request_kind":"turn"}"#),
+        ("x-codex-window-id", "window-a:0"),
+        ("x-codex-future-contract", "future-a"),
+    ] {
+        source.insert(name, value.parse().unwrap());
+    }
+    source.insert("authorization", "Bearer local-secret".parse().unwrap());
+    source.insert("cookie", "private-cookie".parse().unwrap());
+    source.insert("x-unapproved", "unapproved".parse().unwrap());
+
+    let captured = CodexUpstreamHeaders::capture(&source);
+
+    assert_eq!(captured.len(), 10);
+    assert_eq!(captured.get("originator"), Some("codex_exec"));
+    assert!(captured
+        .get("user-agent")
+        .unwrap()
+        .starts_with("codex_exec/"));
+    assert_eq!(captured.get("x-codex-future-contract"), Some("future-a"));
+    assert!(!format!("{captured:?}").contains("codex_exec"));
+    for forbidden in [
+        "authorization",
+        "cookie",
+        "host",
+        "content-length",
+        "x-unapproved",
+    ] {
+        assert_eq!(captured.get(forbidden), None);
+    }
+
+    source.insert("user-agent", "x".repeat(20_000).parse().unwrap());
+    let bounded = CodexUpstreamHeaders::capture(&source);
+    assert_eq!(bounded.get("user-agent"), None);
+    assert_eq!(bounded.get("originator"), Some("codex_exec"));
+    assert!(CodexUpstreamHeaders::default().is_empty());
+}
 
 impl NetworkTargetPolicy for TestPolicy {
     fn validate_and_resolve<'a>(
@@ -94,6 +146,7 @@ fn request(server: &MockServer, auth: UpstreamAuth) -> UpstreamRequest {
         auth,
         body: br#"{"model":"deepseek-chat","messages":[]}"#.to_vec(),
         content_type: "application/json".into(),
+        codex_headers: Default::default(),
         cancellation: GatewayCancellation::new(),
     }
 }
@@ -129,6 +182,8 @@ async fn controlled_join_preserves_prefix_and_injects_bearer_only_at_send() {
     Mock::given(method("POST"))
         .and(path("/api/v1/chat/completions"))
         .and(header("authorization", "Bearer LAM_TEST_UPSTREAM_SECRET"))
+        .and(header("user-agent", "codex_exec/0.144.5"))
+        .and(header("originator", "codex_exec"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
         .expect(1)
         .mount(&server)
@@ -137,17 +192,20 @@ async fn controlled_join_preserves_prefix_and_injects_bearer_only_at_send() {
         "DEEPSEEK_API_KEY".into(),
         "LAM_TEST_UPSTREAM_SECRET".into(),
     )]));
-    let response = client(&server, credentials)
-        .send(request(
-            &server,
-            UpstreamAuth::Bearer {
-                source: CredentialSource::Env {
-                    env_key: "DEEPSEEK_API_KEY".into(),
-                },
+    let mut source = HeaderMap::new();
+    source.insert("user-agent", "codex_exec/0.144.5".parse().unwrap());
+    source.insert("originator", "codex_exec".parse().unwrap());
+    source.insert("authorization", "Bearer local-secret".parse().unwrap());
+    let mut request = request(
+        &server,
+        UpstreamAuth::Bearer {
+            source: CredentialSource::Env {
+                env_key: "DEEPSEEK_API_KEY".into(),
             },
-        ))
-        .await
-        .unwrap();
+        },
+    );
+    request.codex_headers = CodexUpstreamHeaders::capture(&source);
+    let response = client(&server, credentials).send(request).await.unwrap();
     assert_eq!(response.status, 200);
     assert_eq!(response.attempts, 1);
     assert_eq!(
@@ -295,6 +353,7 @@ async fn proven_connect_failure_uses_exactly_one_bounded_retry() {
             auth: UpstreamAuth::None,
             body: b"{}".to_vec(),
             content_type: "application/json".into(),
+            codex_headers: Default::default(),
             cancellation: GatewayCancellation::new(),
         })
         .await

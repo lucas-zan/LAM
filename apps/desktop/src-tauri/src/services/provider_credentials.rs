@@ -29,6 +29,9 @@ pub enum CredentialSource {
     AuthCommand {
         approval_id: String,
     },
+    CodexProfile {
+        profile_id: String,
+    },
     None,
 }
 
@@ -68,6 +71,7 @@ pub enum DirectCodexAuth {
     ApprovedCommand {
         approval_id: String,
     },
+    NativeApiKey,
     Gateway,
     None,
 }
@@ -192,6 +196,9 @@ pub fn direct_codex_auth(auth: &UpstreamAuth) -> Result<DirectCodexAuth> {
         } => Ok(DirectCodexAuth::ApprovedCommand {
             approval_id: approval_id.clone(),
         }),
+        UpstreamAuth::Bearer {
+            source: CredentialSource::CodexProfile { .. },
+        } => Ok(DirectCodexAuth::NativeApiKey),
         _ => Err(AppError::new(
             "PROVIDER_AUTH_ROUTE_UNSUPPORTED",
             "credential source requires a Codex auth helper for this route",
@@ -232,11 +239,22 @@ fn validate_source(source: &CredentialSource) -> Result<()> {
             version,
         } if !service.trim().is_empty() && !account.trim().is_empty() && *version > 0 => Ok(()),
         CredentialSource::AuthCommand { approval_id } if !approval_id.trim().is_empty() => Ok(()),
+        CredentialSource::CodexProfile { profile_id } if valid_profile_id(profile_id) => Ok(()),
         _ => Err(AppError::new(
             "PROVIDER_CREDENTIAL_INVALID",
             "credential reference is incomplete",
         )),
     }
+}
+
+fn valid_profile_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value != "."
+        && value != ".."
+        && value
+            .chars()
+            .all(|item| item.is_ascii_alphanumeric() || matches!(item, '-' | '_' | '.'))
 }
 
 fn validate_header_name(name: &str, code_prefix: &str) -> Result<()> {

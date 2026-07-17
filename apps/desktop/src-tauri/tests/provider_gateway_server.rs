@@ -59,6 +59,10 @@ impl GatewayRouteHandler for FakeHandler {
                     "profile": request.binding.profile_id,
                     "bodyBytes": request.body.len(),
                     "requestId": request.request_id,
+                    "originator": request.upstream_headers.get("originator"),
+                    "userAgent": request.upstream_headers.get("user-agent"),
+                    "hasAuthorization": request.upstream_headers.get("authorization").is_some(),
+                    "hasUnapproved": request.upstream_headers.get("x-unapproved").is_some(),
                 }),
             ))
         })
@@ -280,6 +284,10 @@ async fn routes_request_ids_cors_and_redacted_observer_are_deterministic() {
         .post(format!("{base}/v1/responses"))
         .header("authorization", "Bearer valid")
         .header("x-request-id", "bad LAM_TEST_SECRET")
+        .header("user-agent", "codex_exec/0.144.5 (Mac OS; arm64)")
+        .header("originator", "codex_exec")
+        .header("x-codex-beta-features", "remote_compaction_v2")
+        .header("x-unapproved", "must-not-forward")
         .body("synthetic prompt and tool args")
         .send()
         .await
@@ -294,6 +302,14 @@ async fn routes_request_ids_cors_and_redacted_observer_are_deterministic() {
         .unwrap()
         .to_owned();
     assert!(!request_id.contains("bad"));
+    let body = response.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(body["originator"], "codex_exec");
+    assert!(body["userAgent"]
+        .as_str()
+        .unwrap()
+        .starts_with("codex_exec/"));
+    assert_eq!(body["hasAuthorization"], false);
+    assert_eq!(body["hasUnapproved"], false);
 
     let missing = client
         .get(format!("{base}/unknown"))

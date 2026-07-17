@@ -214,7 +214,7 @@ describe('ApiAccountFlow', () => {
     expect(vi.mocked(api.executeApiAccountV2).mock.calls[0][0]).toEqual({
       planId: 'plan-1',
       fingerprint: 'fingerprint-1',
-      keychainSecret: 'write-only-synthetic-secret',
+      apiKey: 'write-only-synthetic-secret',
     });
     await waitFor(() => expect(created).toHaveBeenCalledWith('work-api'));
     expect(screen.queryByDisplayValue('write-only-synthetic-secret')).toBeNull();

@@ -58,13 +58,6 @@ const checks = [
     app.includes('rowActions') && app.includes('Terminal') && app.includes('IconCopy'),
   ],
   [
-    'sync requires dry-run',
-    (app.includes('Dry-run first') || app.includes('Run dry-run')) &&
-      (app.includes('disabled={!canExecute}') || app.includes('disabled={!plan}')),
-  ],
-  ['sync route layout', app.includes('syncRoute') && app.includes('routeBox')],
-  ['grouped sync plan', app.includes('planGrouped') && app.includes('Will copy')],
-  [
     'quota status states',
     app.includes('Quota usable') &&
       app.includes("'N/A'") &&
@@ -296,7 +289,7 @@ const checks = [
   [
     'tauri invokes',
     api.includes("invoke<HealthCheck>('health_check')") &&
-      api.includes('execute_sync') &&
+      !api.includes('execute_sync') &&
       api.includes('relay_resume_session') &&
       api.includes('open_terminal_with_command') &&
       api.includes('create_provider') &&

@@ -53,7 +53,7 @@ fn add_api_account(home: &Path, name: &str, provider_suffix: &str) {
         ExecuteApiAccountRequestV2 {
             plan_id: plan.plan_id,
             fingerprint: plan.fingerprint,
-            keychain_secret: None,
+            api_key: None,
         },
         &mut state,
         1_100,
@@ -119,12 +119,9 @@ fn provider_mismatch_text_history_copies_and_resumes_through_launcher() {
     );
     assert!(result.compatibility_fingerprint.is_some());
     assert!(
-        result
-            .resume
-            .command
-            .contains("'lam' codex --profile 'target' -- resume relay-sid"),
-        "unexpected Gateway resume command: {}",
+        result.resume.command.contains("CODEX_HOME="),
+        "unexpected direct resume command: {}",
         result.resume.command
     );
-    assert!(!result.resume.command.contains("CODEX_HOME="));
+    assert!(result.resume.command.contains("codex resume relay-sid"));
 }

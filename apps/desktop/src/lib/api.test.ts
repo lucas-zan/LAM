@@ -4,6 +4,8 @@ import {
   uploadPatCredentials,
   getPatMetadata,
   checkProfileTokenExpiration,
+  getApiAccountConnectionV2,
+  updateApiAccountConnectionV2,
 } from './api';
 import type { UploadedCredentials, AuthMetadata, TokenExpirationStatus } from './types';
 
@@ -23,6 +25,24 @@ beforeEach(() => {
 });
 
 describe('PAT API functions', () => {
+  it('uses exact API account detail and update command payloads', async () => {
+    mockInvoke.mockResolvedValue({ profileId: 'work-api' });
+    await getApiAccountConnectionV2('work-api');
+    expect(mockInvoke).toHaveBeenLastCalledWith('get_api_account_connection_v2', {
+      profileId: 'work-api',
+    });
+    const request = {
+      profileId: 'work-api',
+      expectedProviderStoreRevision: 7,
+      baseUrl: 'https://new.example.test/v1',
+      apiKey: 'sk-write-only',
+    };
+    await updateApiAccountConnectionV2(request);
+    expect(mockInvoke).toHaveBeenLastCalledWith('update_api_account_connection_v2', {
+      req: request,
+    });
+  });
+
   describe('addPatAccount', () => {
     it('passes the uploaded auth.json without transforming it', async () => {
       const authJson = {

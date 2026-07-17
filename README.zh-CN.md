@@ -30,7 +30,6 @@ LAM 全部在**本机**完成：扫描 profile、读取真实额度（5h / weekl
 | **菜单栏托盘** | 左键看额度；有最近 session 时可快捷 Relay / Resume |
 | **Overview** | 所有 Codex 账号、额度条、续费备注、账号操作按钮 |
 | **Sessions** | 浏览、搜索、复制 resume 命令、开终端、接力单条 session |
-| **Sync** | 在两个 profile 之间**批量**同步 `sessions/`（须先 dry-run） |
 | **Providers** | 管理 API 端点元数据并挂到账号（密钥在 Keychain / 环境变量） |
 | **Settings** | 主题、Home 根目录、两边都改过同一会话时的处理策略 |
 
@@ -86,17 +85,19 @@ LAM_HOME="$(pwd)/examples/fake-home" LAM_ALLOW_FAKE_HOME=1 make start
 
 ### 主窗口
 
-底部导航：**Overview · Sessions · Providers · Sync · Settings**
+底部导航：**Overview · Usage · Sessions · Providers · Settings**
 
 顶栏：**Refresh**、**New Account**、**New Provider**
 
-在 **Overview → Codex** 中，每个账号卡上有额度、备注和四个核心操作按钮，含义见下一节。
+在 **Overview → Codex** 中，每个账号卡上有额度、备注和三个核心操作，含义见下一节。
+**Accounts** 标题旁的展示按钮可在“主要操作 + 三点菜单”和“全部操作平铺”之间切换；
+选择会保存在本机。API Account 不需要 Login，配置入口统一显示为 **View&Edit**。
 
 ---
 
-## 账号上的四个按钮：Relay Latest、Handoff、Sync Sessions、Rename
+## 账号上的三个操作：Relay Latest、Handoff、Rename
 
-这四个按钮解决**不同**问题，请按需求选择。
+这三个操作解决**不同**问题，请按需求选择。
 
 ### Relay Latest —「用**最近那条**会话，在这个账号上继续」
 
@@ -114,7 +115,6 @@ LAM_HOME="$(pwd)/examples/fake-home" LAM_ALLOW_FAKE_HOME=1 make start
 **什么时候不用**
 
 - 要续的是**更早的某一条** session → 用 **Handoff**。
-- 要一次性搬**很多** session → 用 **Sync Sessions**。
 - 找不到任何 session 时按钮会禁用。
 
 ---
@@ -138,34 +138,6 @@ LAM_HOME="$(pwd)/examples/fake-home" LAM_ALLOW_FAKE_HOME=1 make start
 - 复制前想先看清楚源、目标、会话再确认。
 
 **若两边都已改过同一条 session**，按 **Settings → Diverged session strategy** 处理（备份、分叉或中止），不会无声覆盖。
-
----
-
-### Sync Sessions —「把 A 的**全部** session 文件批量拷到 B」
-
-**做什么**
-
-1. 打开 **Sync** 对话框，选源 profile 与目标 profile。
-2. 必须先 **Dry Run** — 列出 `sessions/` 下将要复制、跳过或阻止的每个文件。
-3. 确认后**整棵 `sessions/` 目录**按文件复制到目标。
-4. 覆盖前会备份目标原有的 `sessions/`。
-5. 生成变更 manifest。
-
-**绝不会复制**
-
-- `auth.json`、`config.toml`、sqlite、`cache/`、`tmp/`、`logs/` 等。
-
-**什么时候用**
-
-- 给 **relay 工作区**或第二个账号**一次性**搬很多（或全部）会话，再在其中 resume。
-- **一次性迁移** session 资产。
-
-**什么时候不用**
-
-- 只要**一条**对话并立刻开终端 → 用 **Relay Latest** 或 **Handoff**。
-- Sync **不会**替你执行 `codex resume`；同步完成后到 Sessions 或 Relay Latest 再续聊。
-
-**说明：** 同步到**主 profile**（非 relay 类目录）可以做，但 LAM 会警告 — 更推荐用独立 relay 目录，避免混用运行时状态。
 
 ---
 
@@ -198,7 +170,6 @@ Rename **不会**把 session 迁到别的账号，只是**同一个**账号改�
 |------|----------|----------|------------|------------------|
 | **Relay Latest** | 单文件 | 全库最新一条 session | 是（`codex resume`） | 否（自动） |
 | **Handoff** | 单文件 | 你指定的一条 session | 是（`codex resume`） | 是 |
-| **Sync Sessions** | 多文件 | 整个 `sessions/` 树 | 否 | 不适用（全部 session） |
 | **Rename** | — | 重命名一个 profile 目录 | 否 | 不适用 |
 
 ---
@@ -224,7 +195,7 @@ React 界面  →  Tauri (macOS)  →  Rust 核心  →  ~/.codex*  +  终端
 ```
 
 - **界面：** `apps/desktop/src` — 托盘浮层 + 主窗口。
-- **核心：** `apps/desktop/src-tauri` — 扫描、同步、app-server 额度、命令生成。
+- **核心：** `apps/desktop/src-tauri` — 扫描、单会话接力、app-server 额度、命令生成。
 - **LAM 元数据：** `~/.config/agent-workspace/` — 账号缓存、备注、Provider 登记。
 - **Codex 数据：** 仍在 `~/.codex*`；LAM 不上传云端。
 

@@ -11,7 +11,8 @@ use super::provider_capability::{
     EffectiveCapabilities,
 };
 use super::provider_config_editor::{
-    config_hash, detach_projection, replace_config_file, ConfigManagedProjection,
+    config_hash, detach_projection, replace_config_file, validate_managed_projection,
+    ConfigManagedProjection,
 };
 use super::provider_credentials::{
     resolve_credential, CredentialSource, ProcessEnvironment, SecretValue, UpstreamAuth,
@@ -33,8 +34,8 @@ use super::provider_v2::{
 use super::storage::{InstallationLock, StoreOptions, StoreSnapshot, VersionedFileStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
 use std::collections::VecDeque;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
@@ -112,6 +113,12 @@ impl ProviderCredentialResolver for ProductionCredentialResolver<'_> {
                 let approved = repository.resolve(approval_id, &identity_key)?;
                 super::provider_auth_command::run_approved_auth_command(&approved)
             }
+            CredentialSource::CodexProfile { profile_id } => {
+                super::codex_api_key_auth::read_codex_api_key(&super::account::codex_home_path(
+                    self.home_root,
+                    profile_id,
+                ))
+            }
             CredentialSource::None => Err(AppError::new(
                 "PROVIDER_CREDENTIAL_MISSING",
                 "authenticated Provider has no credential",
@@ -179,6 +186,10 @@ pub enum CredentialReferenceDto {
     AuthCommand {
         #[serde(rename = "approvalId")]
         approval_id: String,
+    },
+    CodexProfile {
+        #[serde(rename = "profileId")]
+        profile_id: String,
     },
     None,
 }
@@ -348,6 +359,9 @@ impl CredentialReferenceDto {
             Self::AuthCommand { approval_id } => CredentialSource::AuthCommand {
                 approval_id: approval_id.clone(),
             },
+            Self::CodexProfile { profile_id } => CredentialSource::CodexProfile {
+                profile_id: profile_id.clone(),
+            },
             Self::None => CredentialSource::None,
         })
     }
@@ -368,6 +382,9 @@ impl CredentialReferenceDto {
             },
             CredentialSource::AuthCommand { approval_id } => Self::AuthCommand {
                 approval_id: approval_id.clone(),
+            },
+            CredentialSource::CodexProfile { profile_id } => Self::CodexProfile {
+                profile_id: profile_id.clone(),
             },
             CredentialSource::None => Self::None,
         }
@@ -724,8 +741,8 @@ pub struct PlanApiAccountRequestV2 {
 pub struct ExecuteApiAccountRequestV2 {
     pub plan_id: String,
     pub fingerprint: String,
-    #[serde(default)]
-    pub keychain_secret: Option<String>,
+    #[serde(default, alias = "keychainSecret")]
+    pub api_key: Option<String>,
 }
 
 impl std::fmt::Debug for ExecuteApiAccountRequestV2 {
@@ -734,10 +751,7 @@ impl std::fmt::Debug for ExecuteApiAccountRequestV2 {
             .debug_struct("ExecuteApiAccountRequestV2")
             .field("plan_id", &self.plan_id)
             .field("fingerprint", &self.fingerprint)
-            .field(
-                "keychain_secret",
-                &self.keychain_secret.as_ref().map(|_| "[REDACTED]"),
-            )
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .finish()
     }
 }
@@ -764,6 +778,43 @@ pub struct ApiAccountExecutionViewV2 {
     pub provider: ProviderProfileView,
     pub binding: ProfileProviderBindingView,
     pub attach: AttachExecutionView,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiAccountConnectionViewV2 {
+    pub profile_id: String,
+    pub provider_id: String,
+    pub protocol: ProviderProtocolDto,
+    pub base_url: String,
+    pub selected_model: String,
+    pub provider_store_revision: u64,
+    pub api_key_configured: bool,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateApiAccountConnectionRequestV2 {
+    pub profile_id: String,
+    pub expected_provider_store_revision: u64,
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
+impl std::fmt::Debug for UpdateApiAccountConnectionRequestV2 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("UpdateApiAccountConnectionRequestV2")
+            .field("profile_id", &self.profile_id)
+            .field(
+                "expected_provider_store_revision",
+                &self.expected_provider_store_revision,
+            )
+            .field("base_url", &self.base_url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1076,6 +1127,281 @@ pub fn recover_provider_transactions_service_v2(
     let root =
         super::provider_runtime::ProviderHubPaths::for_home(home_root).ensure_canonical_root()?;
     recover_provider_transactions_at_root_service_v2(&root, now_ms)
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeResponsesMigrationReportV2 {
+    pub migrated_profiles: Vec<String>,
+}
+
+pub fn migrate_native_responses_bindings_service_v2(
+    home_root: &Path,
+    now_ms: u64,
+) -> Result<NativeResponsesMigrationReportV2> {
+    migrate_native_responses_bindings_with_keychain_service_v2(
+        home_root,
+        now_ms,
+        Arc::new(SystemKeychainBackend),
+    )
+}
+
+pub fn migrate_native_responses_bindings_with_keychain_service_v2<B: KeychainBackend>(
+    home_root: &Path,
+    now_ms: u64,
+    keychain: Arc<B>,
+) -> Result<NativeResponsesMigrationReportV2> {
+    canonicalize_native_responses_providers(home_root)?;
+    let native_provider_ids = native_responses_provider_ids(home_root)?;
+    refresh_native_responses_projection_hashes(home_root, &native_provider_ids, now_ms)?;
+    let mut migrated_profiles =
+        migrate_legacy_responses_credentials(home_root, now_ms, keychain, &native_provider_ids)?;
+    let legacy = list_binding_views_service_v2(home_root)?
+        .into_iter()
+        .filter(|binding| binding.route_kind == RouteKindDto::Gateway)
+        .filter(|binding| native_provider_ids.contains(&binding.provider_id))
+        .collect::<Vec<_>>();
+    let mut state = ProviderApiV2State::default();
+    for binding in legacy {
+        let plan = plan_api_account_model_switch_service_v2(
+            home_root,
+            &binding.profile_id,
+            &binding.selected_model,
+            &mut state,
+            now_ms,
+        )?;
+        execute_api_account_model_switch_service_v2(
+            home_root,
+            &plan.plan_id,
+            &plan.fingerprint,
+            &mut state,
+            now_ms,
+        )?;
+        migrated_profiles.push(binding.profile_id);
+    }
+    super::account::repair_managed_wrappers(home_root)?;
+    migrated_profiles.sort();
+    migrated_profiles.dedup();
+    Ok(NativeResponsesMigrationReportV2 { migrated_profiles })
+}
+
+#[derive(Clone)]
+struct LegacyResponsesCredential {
+    profile_id: String,
+    provider_id: String,
+    source: CredentialSource,
+}
+
+fn migrate_legacy_responses_credentials<B: KeychainBackend>(
+    home_root: &Path,
+    now_ms: u64,
+    keychain: Arc<B>,
+    provider_ids: &BTreeSet<String>,
+) -> Result<Vec<String>> {
+    let candidates = legacy_responses_credentials(home_root, provider_ids)?;
+    let mut migrated = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        migrate_legacy_responses_credential(home_root, now_ms, keychain.as_ref(), &candidate)?;
+        migrated.push(candidate.profile_id);
+    }
+    Ok(migrated)
+}
+
+fn legacy_responses_credentials(
+    home_root: &Path,
+    provider_ids: &BTreeSet<String>,
+) -> Result<Vec<LegacyResponsesCredential>> {
+    let stores = provider_hub_stores(home_root)?;
+    let providers = stores.providers.load_or_default()?.value.providers;
+    let bindings = stores.bindings.load_or_default()?.value.bindings;
+    Ok(bindings
+        .into_iter()
+        .filter(|binding| provider_ids.contains(&binding.provider_id))
+        .filter_map(|binding| {
+            let provider = providers
+                .iter()
+                .find(|provider| provider.id == binding.provider_id)?;
+            let source = match &provider.upstream_auth {
+                UpstreamAuth::Bearer {
+                    source: CredentialSource::Keychain { .. },
+                } => match &provider.upstream_auth {
+                    UpstreamAuth::Bearer { source } => source.clone(),
+                    _ => unreachable!(),
+                },
+                _ => return None,
+            };
+            (provider.id == format!("account-{}", binding.profile_id)).then_some(
+                LegacyResponsesCredential {
+                    profile_id: binding.profile_id,
+                    provider_id: binding.provider_id,
+                    source,
+                },
+            )
+        })
+        .collect())
+}
+
+fn migrate_legacy_responses_credential<B: KeychainBackend>(
+    home_root: &Path,
+    now_ms: u64,
+    keychain: &B,
+    candidate: &LegacyResponsesCredential,
+) -> Result<()> {
+    let reference = KeychainCredentialReference::try_from(&candidate.source)?;
+    let secret = keychain.read(&reference)?;
+    let codex_home = super::account::codex_home_path(home_root, &candidate.profile_id);
+    stage_legacy_native_auth(keychain, &reference, &secret, &codex_home)?;
+    let replacement = CredentialSource::CodexProfile {
+        profile_id: candidate.profile_id.clone(),
+    };
+    migrate_legacy_provider_reference(home_root, now_ms, candidate, &replacement, || {
+        restore_legacy_keychain(keychain, &reference, &secret, &codex_home)
+    })?;
+    let mut state = ProviderApiV2State::default();
+    if let Err(error) = rebind_api_account(home_root, &candidate.profile_id, &mut state, now_ms) {
+        replace_provider_credential(
+            home_root,
+            &candidate.provider_id,
+            &replacement,
+            candidate.source.clone(),
+            now_ms,
+        )?;
+        restore_legacy_keychain(keychain, &reference, &secret, &codex_home)?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn stage_legacy_native_auth<B: KeychainBackend>(
+    keychain: &B,
+    reference: &KeychainCredentialReference,
+    secret: &SecretValue,
+    codex_home: &Path,
+) -> Result<()> {
+    super::codex_api_key_auth::write_codex_api_key(codex_home, secret)?;
+    if let Err(error) = keychain.delete(reference) {
+        super::codex_api_key_auth::remove_codex_api_key(codex_home)?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn migrate_legacy_provider_reference(
+    home_root: &Path,
+    now_ms: u64,
+    candidate: &LegacyResponsesCredential,
+    replacement: &CredentialSource,
+    restore_auth: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    replace_provider_credential(
+        home_root,
+        &candidate.provider_id,
+        &candidate.source,
+        replacement.clone(),
+        now_ms,
+    )
+    .or_else(|error| {
+        restore_auth()?;
+        Err(error)
+    })
+}
+
+fn replace_provider_credential(
+    home_root: &Path,
+    provider_id: &str,
+    expected: &CredentialSource,
+    replacement: CredentialSource,
+    now_ms: u64,
+) -> Result<()> {
+    let stores = provider_hub_stores(home_root)?;
+    let repository = ProviderRepository::new(stores.providers);
+    let snapshot = repository.load()?;
+    repository.replace_credential_source(
+        snapshot.revision,
+        provider_id,
+        expected,
+        replacement,
+        &timestamp_from_ms(now_ms),
+    )?;
+    Ok(())
+}
+
+fn restore_legacy_keychain<B: KeychainBackend>(
+    keychain: &B,
+    reference: &KeychainCredentialReference,
+    secret: &SecretValue,
+    codex_home: &Path,
+) -> Result<()> {
+    keychain.write(reference, secret)?;
+    super::codex_api_key_auth::remove_codex_api_key(codex_home)
+}
+
+fn canonicalize_native_responses_providers(home_root: &Path) -> Result<()> {
+    let stores = provider_hub_stores(home_root)?;
+    let mut snapshot = stores.providers.load_or_default()?;
+    let mut changed = false;
+    for provider in &mut snapshot.value.providers {
+        if provider.protocol == ProviderProtocol::Responses && provider.codex.route_via_gateway {
+            provider.codex.route_via_gateway = false;
+            changed = true;
+        }
+    }
+    if changed {
+        stores
+            .providers
+            .compare_and_swap(snapshot.revision, &snapshot.value)?;
+    }
+    Ok(())
+}
+
+fn native_responses_provider_ids(home_root: &Path) -> Result<BTreeSet<String>> {
+    let providers = provider_hub_stores(home_root)?
+        .providers
+        .load_or_default()?
+        .value
+        .providers;
+    Ok(providers
+        .into_iter()
+        .filter(|provider| provider.protocol == ProviderProtocol::Responses)
+        .map(|provider| provider.id)
+        .collect())
+}
+
+fn refresh_native_responses_projection_hashes(
+    home_root: &Path,
+    provider_ids: &BTreeSet<String>,
+    now_ms: u64,
+) -> Result<()> {
+    let stores = provider_hub_stores(home_root)?;
+    let mut snapshot = stores.bindings.load_or_default()?;
+    let mut changed = false;
+    for binding in snapshot
+        .value
+        .bindings
+        .iter_mut()
+        .filter(|binding| provider_ids.contains(&binding.provider_id))
+    {
+        let source = fs::read_to_string(&binding.config_projection.config_path)?;
+        validate_managed_projection(
+            &source,
+            &binding.provider_id,
+            &binding.config_projection.managed_values,
+        )?;
+        let observed_hash = config_hash(source.as_bytes());
+        if observed_hash == binding.config_projection.applied_hash {
+            continue;
+        }
+        binding.config_projection.applied_hash = observed_hash;
+        binding.revision += 1;
+        binding.updated_at = timestamp_from_ms(now_ms);
+        changed = true;
+    }
+    if changed {
+        stores
+            .bindings
+            .compare_and_swap(snapshot.revision, &snapshot.value)?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -1750,10 +2076,7 @@ fn provider_readiness_blockers(
         && matches!(provider.adapter, AdapterConfig::None)
     {
         blockers.push("PROVIDER_ADAPTER_REQUIRED".into());
-    } else if (provider.protocol == ProviderProtocol::ChatCompletions
-        || provider.codex.route_via_gateway)
-        && !gateway_available
-    {
+    } else if provider.protocol == ProviderProtocol::ChatCompletions && !gateway_available {
         blockers.push("GATEWAY_UNAVAILABLE".into());
     }
     blockers.sort();
@@ -1943,7 +2266,7 @@ fn probe_provider_upstream_service_v2(
     Ok(ProviderUpstreamTestViewV2 {
         provider_id: provider.id.clone(),
         ok: true,
-        route_kind: if provider.codex.route_via_gateway {
+        route_kind: if provider.protocol == ProviderProtocol::ChatCompletions {
             RouteKindDto::Gateway
         } else {
             RouteKindDto::Direct
@@ -2219,9 +2542,18 @@ fn normalize_new_api_account_route(request: &mut PlanApiAccountRequestV2) {
     let ApiAccountProviderSelectionV2::New { provider } = &mut request.provider else {
         return;
     };
-    provider.codex.route_via_gateway = true;
+    provider.codex.route_via_gateway = false;
     provider.codex.direct_request_max_retries = Some(0);
     provider.codex.direct_stream_max_retries = Some(0);
+    if provider.protocol == ProviderProtocolDto::Responses {
+        if let UpstreamAuthDto::Bearer { credential } = &mut provider.upstream_auth {
+            if matches!(credential, CredentialReferenceDto::None) {
+                *credential = CredentialReferenceDto::CodexProfile {
+                    profile_id: request.account_name.clone(),
+                };
+            }
+        }
+    }
 }
 
 pub fn execute_api_account_service_v2(
@@ -2310,18 +2642,45 @@ pub fn execute_api_account_service_v2_with_fault(
         return Err(api_account_fault());
     }
 
+    if let ApiAccountProviderSelectionV2::New { provider } = &plan.request.provider {
+        if provider_uses_native_codex_auth(provider) {
+            let secret = request.api_key.as_ref().ok_or_else(|| {
+                AppError::new(
+                    "API_ACCOUNT_SECRET_REQUIRED",
+                    "Responses API Account requires a write-only API key",
+                )
+            })?;
+            if let Err(error) = super::codex_api_key_auth::write_codex_api_key(
+                &account.home_path,
+                &SecretValue::from_sensitive(secret.clone()),
+            ) {
+                compensate_api_account_creation(home_root, &request.plan_id, &plan, None)?;
+                return Err(error);
+            }
+        }
+    }
+
     let mut created_provider = false;
     let provider_result = (|| -> Result<ProviderProfileView> {
         match &plan.request.provider {
             ApiAccountProviderSelectionV2::New { provider } => {
                 created_provider = true;
-                if request.keychain_secret.is_some() {
+                if provider_uses_native_codex_auth(provider) {
+                    create_provider_service_v2(
+                        home_root,
+                        CreateProviderRequestV2 {
+                            expected_revision: plan.expected_provider_store_revision,
+                            provider: provider.as_ref().clone(),
+                        },
+                        &timestamp_from_ms(now_ms),
+                    )
+                } else if request.api_key.is_some() {
                     create_provider_with_keychain_system_service_v2(
                         home_root,
                         CreateProviderWithKeychainRequestV2 {
                             expected_revision: plan.expected_provider_store_revision,
                             provider: provider.as_ref().clone(),
-                            secret: request.keychain_secret.clone().unwrap_or_default(),
+                            secret: request.api_key.clone().unwrap_or_default(),
                         },
                         &timestamp_from_ms(now_ms),
                     )
@@ -2343,7 +2702,7 @@ pub fn execute_api_account_service_v2_with_fault(
                 }
             }
             ApiAccountProviderSelectionV2::Existing { provider_id } => {
-                if request.keychain_secret.is_some() {
+                if request.api_key.is_some() {
                     return Err(AppError::new(
                         "API_ACCOUNT_SHARED_SECRET_REJECTED",
                         "existing Provider credentials cannot be changed by Account creation",
@@ -2496,6 +2855,241 @@ pub fn execute_api_account_model_switch_service_v2(
         state,
         now_ms,
     )
+}
+
+struct ApiAccountConnectionContext {
+    provider: ProviderProfileV2,
+    binding: ProfileProviderBinding,
+    provider_snapshot: StoreSnapshot<ProviderCollection>,
+    codex_home: PathBuf,
+}
+
+pub fn get_api_account_connection_service_v2(
+    home_root: &Path,
+    profile_id: &str,
+) -> Result<ApiAccountConnectionViewV2> {
+    let context = load_api_account_connection(home_root, profile_id)?;
+    api_account_connection_view(&context)
+}
+
+pub fn update_api_account_connection_service_v2(
+    home_root: &Path,
+    request: UpdateApiAccountConnectionRequestV2,
+    state: &mut ProviderApiV2State,
+    now_ms: u64,
+) -> Result<ApiAccountConnectionViewV2> {
+    let context = load_api_account_connection(home_root, &request.profile_id)?;
+    validate_api_account_update(&context, &request)?;
+    refresh_native_responses_projection_hashes(
+        home_root,
+        &BTreeSet::from([context.provider.id.clone()]),
+        now_ms,
+    )?;
+    let old_secret = stage_api_key_update(&context.codex_home, request.api_key.as_deref())?;
+    let committed = update_api_account_provider(home_root, &context, &request, now_ms);
+    let committed = match committed {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            restore_api_key(&context.codex_home, old_secret.as_ref())?;
+            return Err(error);
+        }
+    };
+    if let Err(error) = rebind_api_account(home_root, &request.profile_id, state, now_ms) {
+        rollback_api_account_provider(home_root, committed.revision, &context.provider_snapshot)?;
+        restore_api_key(&context.codex_home, old_secret.as_ref())?;
+        return Err(error);
+    }
+    get_api_account_connection_service_v2(home_root, &request.profile_id)
+}
+
+fn load_api_account_connection(
+    home_root: &Path,
+    profile_id: &str,
+) -> Result<ApiAccountConnectionContext> {
+    let account = super::account::list_accounts(home_root)?
+        .into_iter()
+        .find(|account| account.id == profile_id)
+        .ok_or_else(|| AppError::new("ACCOUNT_NOT_FOUND", profile_id))?;
+    let stores = provider_hub_stores(home_root)?;
+    let binding = stores
+        .bindings
+        .load_or_default()?
+        .value
+        .bindings
+        .into_iter()
+        .find(|binding| binding.profile_id == profile_id)
+        .ok_or_else(|| AppError::new("PROFILE_BINDING_NOT_FOUND", profile_id))?;
+    let provider_snapshot = stores.providers.load_or_default()?;
+    let provider = provider_snapshot
+        .value
+        .providers
+        .iter()
+        .find(|provider| provider.id == binding.provider_id)
+        .cloned()
+        .ok_or_else(|| AppError::new("PROVIDER_NOT_FOUND", &binding.provider_id))?;
+    validate_api_account_connection(profile_id, &provider, &binding)?;
+    Ok(ApiAccountConnectionContext {
+        provider,
+        binding,
+        provider_snapshot,
+        codex_home: account.codex_home,
+    })
+}
+
+fn validate_api_account_connection(
+    profile_id: &str,
+    provider: &ProviderProfileV2,
+    binding: &ProfileProviderBinding,
+) -> Result<()> {
+    let native_source = matches!(
+        &provider.upstream_auth,
+        UpstreamAuth::Bearer {
+            source: CredentialSource::CodexProfile { profile_id: owner }
+        } if owner == profile_id
+    );
+    if provider.id != format!("account-{profile_id}")
+        || provider.protocol != ProviderProtocol::Responses
+        || binding.route_kind != super::provider_binding::RouteKind::Direct
+        || !native_source
+    {
+        return Err(AppError::new(
+            "API_ACCOUNT_CONNECTION_UNSUPPORTED",
+            "only exclusive native Responses API accounts can be edited",
+        ));
+    }
+    Ok(())
+}
+
+fn api_account_connection_view(
+    context: &ApiAccountConnectionContext,
+) -> Result<ApiAccountConnectionViewV2> {
+    Ok(ApiAccountConnectionViewV2 {
+        profile_id: context.binding.profile_id.clone(),
+        provider_id: context.provider.id.clone(),
+        protocol: ProviderProtocolDto::Responses,
+        base_url: context.provider.base_url.clone(),
+        selected_model: context.binding.selected_model.clone(),
+        provider_store_revision: context.provider_snapshot.revision,
+        api_key_configured: super::codex_api_key_auth::inspect_codex_api_key(&context.codex_home)?,
+    })
+}
+
+fn validate_api_account_update(
+    context: &ApiAccountConnectionContext,
+    request: &UpdateApiAccountConnectionRequestV2,
+) -> Result<()> {
+    if context.provider_snapshot.revision != request.expected_provider_store_revision {
+        return Err(AppError::new(
+            "STORE_REVISION_CONFLICT",
+            "Provider store revision changed",
+        ));
+    }
+    if request
+        .api_key
+        .as_ref()
+        .is_some_and(|key| key.trim().is_empty())
+    {
+        return Err(AppError::new("CODEX_API_KEY_EMPTY", "API key is empty"));
+    }
+    build_provider(
+        provider_input_with_url(&context.provider, &request.base_url),
+        &context.provider.updated_at,
+    )?;
+    let source = fs::read_to_string(&context.binding.config_projection.config_path)?;
+    validate_managed_projection(
+        &source,
+        &context.provider.id,
+        &context.binding.config_projection.managed_values,
+    )
+}
+
+fn provider_input_with_url(provider: &ProviderProfileV2, base_url: &str) -> ProviderInput {
+    ProviderInput {
+        id: provider.id.clone(),
+        name: provider.name.clone(),
+        protocol: provider.protocol,
+        base_url: base_url.into(),
+        default_model: provider.default_model.clone(),
+        models: provider.models.clone(),
+        upstream_auth: provider.upstream_auth.clone(),
+        adapter: provider.adapter.clone(),
+        compatibility_profile: provider.compatibility_profile.clone(),
+        codex: provider.codex.clone(),
+    }
+}
+
+fn stage_api_key_update(
+    codex_home: &Path,
+    replacement: Option<&str>,
+) -> Result<Option<SecretValue>> {
+    let Some(replacement) = replacement else {
+        return Ok(None);
+    };
+    let previous = super::codex_api_key_auth::read_codex_api_key(codex_home)?;
+    super::codex_api_key_auth::write_codex_api_key(
+        codex_home,
+        &SecretValue::from_sensitive(replacement.into()),
+    )?;
+    Ok(Some(previous))
+}
+
+fn update_api_account_provider(
+    home_root: &Path,
+    context: &ApiAccountConnectionContext,
+    request: &UpdateApiAccountConnectionRequestV2,
+    now_ms: u64,
+) -> Result<StoreSnapshot<ProviderCollection>> {
+    let stores = provider_hub_stores(home_root)?;
+    ProviderRepository::new(stores.providers).update(
+        request.expected_provider_store_revision,
+        provider_input_with_url(&context.provider, &request.base_url),
+        &timestamp_from_ms(now_ms),
+    )
+}
+
+fn rebind_api_account(
+    home_root: &Path,
+    profile_id: &str,
+    state: &mut ProviderApiV2State,
+    now_ms: u64,
+) -> Result<()> {
+    let binding = list_binding_views_service_v2(home_root)?
+        .into_iter()
+        .find(|binding| binding.profile_id == profile_id)
+        .ok_or_else(|| AppError::new("PROFILE_BINDING_NOT_FOUND", profile_id))?;
+    let plan = plan_api_account_model_switch_service_v2(
+        home_root,
+        profile_id,
+        &binding.selected_model,
+        state,
+        now_ms,
+    )?;
+    execute_api_account_model_switch_service_v2(
+        home_root,
+        &plan.plan_id,
+        &plan.fingerprint,
+        state,
+        now_ms,
+    )?;
+    Ok(())
+}
+
+fn rollback_api_account_provider(
+    home_root: &Path,
+    committed_revision: u64,
+    previous: &StoreSnapshot<ProviderCollection>,
+) -> Result<()> {
+    provider_hub_stores(home_root)?
+        .providers
+        .compare_and_swap(committed_revision, &previous.value)?;
+    Ok(())
+}
+
+fn restore_api_key(codex_home: &Path, previous: Option<&SecretValue>) -> Result<()> {
+    let Some(previous) = previous else {
+        return Ok(());
+    };
+    super::codex_api_key_auth::write_codex_api_key(codex_home, previous)
 }
 
 pub fn delete_api_account_service_v2(
@@ -2872,6 +3466,15 @@ fn provider_requires_keychain_secret(provider: &ProviderDefinitionDto) -> bool {
         } | UpstreamAuthDto::Header {
             credential: CredentialReferenceDto::None,
             ..
+        }
+    )
+}
+
+fn provider_uses_native_codex_auth(provider: &ProviderDefinitionDto) -> bool {
+    matches!(
+        &provider.upstream_auth,
+        UpstreamAuthDto::Bearer {
+            credential: CredentialReferenceDto::CodexProfile { .. }
         }
     )
 }
@@ -3332,7 +3935,7 @@ mod strict_codex_readiness_tests {
     use super::*;
 
     #[test]
-    fn responses_gateway_route_requires_gateway_readiness() {
+    fn responses_direct_route_does_not_require_gateway_readiness() {
         let provider = build_provider(
             ProviderInput {
                 id: "strict-codex-provider".into(),
@@ -3360,9 +3963,6 @@ mod strict_codex_readiness_tests {
             home_root: Path::new("/nonexistent"),
         };
 
-        assert_eq!(
-            provider_readiness_blockers(&provider, &resolver, false),
-            ["GATEWAY_UNAVAILABLE"]
-        );
+        assert!(provider_readiness_blockers(&provider, &resolver, false).is_empty());
     }
 }

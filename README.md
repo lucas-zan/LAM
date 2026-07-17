@@ -16,9 +16,9 @@ Common pain points when using Codex CLI day to day:
 - **Sessions do not follow account switches** — Codex stores conversation state under a specific `CODEX_HOME`. If you change account (or quota runs out on A and you open B) **without moving the session assets**, the new account does not inherit the prior thread. You often re-open the repo, re-explain context, and **re-read code — wasting tokens**.
 - **Unsafe session copy** — Copying account A’s tree into B can drag along `auth.json`, sqlite state, or cache and corrupt the target profile.
 - **Provider vs runtime drift** — A transcript may still `resume`, but model/proxy/cost/tool behavior may differ; that should be visible, not silent.
-- **No unified desktop surface** — The CLI is powerful but there is no single place to see accounts, sessions, quota, and sync plans.
+- **No unified desktop surface** — The CLI is powerful but there is no single place to see accounts, sessions, quota, and handoffs.
 
-Lam addresses this **without uploading sessions, code, or prompts**: account boundaries, provider references, session assets, relay, and sync live in a local Rust core + desktop UI, and **every write path is dry-run first**.
+Lam addresses this **without uploading sessions, code, or prompts**: account boundaries, provider references, session assets, and handoff live in a local Rust core + desktop UI.
 
 Authoritative design: [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md). Task tracking: [`docs/TODO.md`](docs/TODO.md), [`docs/IMPLEMENTATION-ISSUES.md`](docs/IMPLEMENTATION-ISSUES.md).
 
@@ -30,9 +30,9 @@ Authoritative design: [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md). Task track
 |------|--------|
 | **Local-first** | Data stays on disk; no cloud session sync. |
 | **Clear boundaries** | Account (`CODEX_HOME`) · Provider (metadata + secret refs) · Session (`sessions/` assets). |
-| **Safe defaults** | Sync **`sessions/` only** by default; **never copy `auth.json`**; do not merge `history.jsonl` by default. |
-| **Auditable writes** | Create account, relay, sync, attach provider: **plan → confirm → execute**. |
-| **Codex-first delivery** | Scan, resume, safe sync, provider center (Phase 1.5 basics shipped); `AgentAdapter` hook for Phase 2. |
+| **Safe defaults** | Handoff copies only the selected session asset; **never copy `auth.json`**. |
+| **Auditable writes** | Create account and attach-provider mutations use **plan → confirm → execute**. |
+| **Codex-first delivery** | Scan, resume, single-session handoff, and provider center; `AgentAdapter` hook for Phase 2. |
 | **Native desktop** | **Tauri v2 + Rust + React** on **macOS** (not Electron; other OSes not planned yet). See [`docs/DESKTOP-RUNTIME.md`](docs/DESKTOP-RUNTIME.md). |
 
 ---
@@ -57,7 +57,7 @@ Each profile is an isolated home directory:
 | Step | Feature in app | What it does |
 |------|----------------|--------------|
 | 1 | **Create Relay** (`Relay` route / “+ New Relay”) | Creates a dedicated relay profile (e.g. `~/.codex-b-relay-a`) with **B’s login**, separate from source A. |
-| 2 | **Sync To…** (account card or Sync) | **Safe Sync** copies **`sessions/` only** from source → relay (dry-run required). Blocks `auth.json`, sqlite, cache, etc. |
+| 2 | **Handoff** (account card or Sessions) | Copies one selected session asset to the target profile when needed. It never copies account credentials. |
 | 3 | **Login** on relay | Opens Terminal with `CODEX_HOME=<relay> codex login` so B’s auth lives in the relay home — not copied from A. |
 | 4 | **Resume** (Sessions → Copy / Terminal / Details) | Builds `CODEX_HOME=<profile> codex resume <id>` and opens Terminal or clipboard. |
 | 5 | **Relay / Continue** (Overview account card, tray popover) | With an active session selected, copies the session asset to the target profile when needed (`relay_resume_session`), then opens Terminal with `codex resume` (diverged-session strategies in Settings). |
@@ -65,7 +65,7 @@ Each profile is an isolated home directory:
 End-to-end relay flow (documented in [`docs/FINAL-DESIGN.md`](docs/FINAL-DESIGN.md) §4.3–4.5):
 
 ```text
-Account A (quota low)  --[Safe Sync sessions/]-->  Relay home (B’s auth)
+Account A (quota low)  --[Handoff one session]-->  Relay home (B’s auth)
                                                       |
                                                       v
                                             codex resume <session-id>
@@ -75,7 +75,7 @@ Account A (quota low)  --[Safe Sync sessions/]-->  Relay home (B’s auth)
 ### Deliberate limits
 
 - **No in-app Codex process** — Lam does not embed the CLI; it prepares commands and opens **Terminal.app**.
-- **No automatic sync on account switch** — switching the Sessions filter only changes which directory is listed; it does not move files.
+- **No automatic session copy on account switch** — switching the Sessions filter only changes which directory is listed.
 - **`history.jsonl` merge** — intentionally out of scope for Phase 1.
 
 Planned improvements: guided relay wizard, cross-profile session browsing, clearer handoff from Overview when quota is low (see **Future roadmap**).
@@ -88,7 +88,6 @@ Planned improvements: guided relay wizard, cross-profile session browsing, clear
 
 - Scan `~/.codex` and `~/.codex-*` and parse session metadata.
 - Managed account / relay workspace plan & execute.
-- Safe sync (`sessions/` only, target backup, manifest).
 - Resume command builder (shell-escaped) + Terminal launch.
 - **`relay_resume_session`:** copy/merge a single session into a target profile (with diverged strategies) and return a resume command.
 - Account-first external API lifecycle: atomic create, same-home model switch, delete, and startup recovery.
@@ -101,11 +100,11 @@ Planned improvements: guided relay wizard, cross-profile session browsing, clear
 
 **Desktop UI (`apps/desktop`)**
 
-- Routes: **Overview** (accounts + quota), **Sessions**, **Relay**, **Providers** (advanced connection management), **Sync**, **Settings**.
+- Routes: **Overview** (accounts + quota), **Usage**, **Sessions**, **Providers** (advanced connection management), **Settings**.
+- The Accounts heading toggles compact overflow menus or fully expanded card actions; API Accounts use **View&Edit** instead of Login.
 - **Add Account → API Account** is the normal external API entry point; model switching is available on that Account.
 - Quota via Codex app-server (5h / weekly); shows **N/A** when unavailable (no fake percentages).
 - **Menu bar tray (macOS):** **left-click** opens a compact **quota popover** (5h / weekly meters, per-account **Relay** or **Resume** when a latest session exists). **Right-click** for Refresh / Open app. Click outside the panel or **Close** dismisses it (main window stays hidden unless you choose **Open**). Background refresh every 5 minutes (startup also loads cached accounts/quota first, then refreshes per account in parallel).
-- Sync modal: dry-run required before execute.
 
 **Explicitly out of Phase 1**
 
@@ -120,10 +119,10 @@ See [`docs/PHASE1-ACCEPTANCE.md`](docs/PHASE1-ACCEPTANCE.md), [`docs/CORRECTION-
 
 ## Safety defaults
 
-- **Never** copy `auth.json` in sync.
+- **Never** copy `auth.json` during a handoff.
 - **Block** `config.toml`, sqlite, `cache/`, `tmp/`, `logs/`, `installation_id` by default.
 - Prefer relay profiles (e.g. `~/.codex-b-relay-a`) so source accounts are not polluted.
-- UI sync / create flows require **dry-run first**.
+- Account creation and provider-binding write flows require a reviewed plan.
 
 ---
 
@@ -133,7 +132,7 @@ See [`docs/PHASE1-ACCEPTANCE.md`](docs/PHASE1-ACCEPTANCE.md), [`docs/CORRECTION-
 
 | Area | Delivered |
 |------|-----------|
-| **Accounts & relay** | Scan `~/.codex*`; create managed accounts; **relay workspaces**; safe `sessions/` sync (dry-run → execute). |
+| **Accounts & relay** | Scan `~/.codex*`; create managed accounts and relay workspaces; hand off one session at a time. |
 | **Quota** | Codex app-server **5h / weekly** in Overview; **menu bar tray popover**; disk cache; **per-account parallel refresh**; N/A when unavailable. |
 | **Handoff** | `codex resume` commands; **`relay_resume_session`** (copy/merge session → target profile) from Overview **Relay/Continue** and tray **Relay/Resume**; diverged-session strategies in Settings. |
 | **External API accounts** | Account-first Direct Responses / Gateway setup, Keychain credentials, atomic lifecycle, same-home model switch, startup recovery. |
@@ -148,7 +147,7 @@ See [`docs/PHASE1-ACCEPTANCE.md`](docs/PHASE1-ACCEPTANCE.md), [`docs/CORRECTION-
 | Theme | Direction |
 |-------|-----------|
 | **Product & UI** | Activity timeline; **unified cross-profile Sessions** list; settings polish; [`docs/PHASE1-ACCEPTANCE.md`](docs/PHASE1-ACCEPTANCE.md) sign-off. |
-| **Handoff UX** | **Guided wizard** when quota is low (single flow: relay → sync → login → resume), not only separate buttons. |
+| **Handoff UX** | **Guided wizard** when quota is low (single flow: choose session → target → resume). |
 | **Quota & relay tuning** | Edge cases, staleness UX, docs/tests alignment for provider + quota paths. |
 | **macOS polish** | Menu bar tray UX, popover focus/dismiss, app-server quota reliability, signed bundle readiness. |
 

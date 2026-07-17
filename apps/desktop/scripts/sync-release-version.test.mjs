@@ -18,6 +18,22 @@ async function createFixtureRoot() {
     `${JSON.stringify({ name: '@localagentmanager/desktop', version: '0.2.0' }, null, 2)}\n`,
   );
   await writeFile(
+    path.join(desktopDir, 'package-lock.json'),
+    `${JSON.stringify(
+      {
+        name: '@localagentmanager/desktop',
+        version: '0.2.0',
+        lockfileVersion: 3,
+        packages: {
+          '': { name: '@localagentmanager/desktop', version: '0.2.0' },
+          'node_modules/example': { version: '9.8.7' },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  await writeFile(
     path.join(tauriDir, 'tauri.conf.json'),
     `${JSON.stringify({ productName: 'LAM', version: '0.2.0' }, null, 2)}\n`,
   );
@@ -52,6 +68,10 @@ test('updates package, tauri, and cargo versions under a root', async () => {
     (await readJson(path.join(root, 'apps', 'desktop', 'package.json'))).version,
     '1.2.3-beta.1',
   );
+  const packageLock = await readJson(path.join(root, 'apps', 'desktop', 'package-lock.json'));
+  assert.equal(packageLock.version, '1.2.3-beta.1');
+  assert.equal(packageLock.packages[''].version, '1.2.3-beta.1');
+  assert.equal(packageLock.packages['node_modules/example'].version, '9.8.7');
   assert.equal(
     (await readJson(path.join(root, 'apps', 'desktop', 'src-tauri', 'tauri.conf.json'))).version,
     '1.2.3-beta.1',
@@ -71,4 +91,17 @@ test('rejects invalid version strings', async () => {
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Invalid version/);
+});
+
+test('is idempotent when the requested version is already synchronized', async () => {
+  const root = await createFixtureRoot();
+  const first = spawnSync(process.execPath, [scriptPath, '--root', root, '0.2.0'], {
+    encoding: 'utf8',
+  });
+  const second = spawnSync(process.execPath, [scriptPath, '--root', root, '0.2.0'], {
+    encoding: 'utf8',
+  });
+
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(second.status, 0, second.stderr);
 });

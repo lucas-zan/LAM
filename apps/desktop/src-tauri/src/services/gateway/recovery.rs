@@ -55,18 +55,21 @@ pub struct SystemGatewayProcessControl;
 #[cfg(target_os = "macos")]
 impl GatewayProcessControl for SystemGatewayProcessControl {
     fn inspect(&self, pid: u32) -> Result<Option<GatewayProcessIdentity>> {
-        if !process_exists(pid) {
+        if !process_is_running(pid)? {
             return Ok(None);
         }
+        let Some(uid) = process_uid(pid)? else {
+            return Ok(None);
+        };
         Ok(Some(GatewayProcessIdentity {
             executable: process_executable(pid)?,
-            uid: process_uid(pid)?,
+            uid,
         }))
     }
 
     fn terminate(&self, pid: u32, timeout: Duration) -> Result<bool> {
         if unsafe { libc::kill(pid as i32, libc::SIGTERM) } != 0 {
-            return if !process_exists(pid) {
+            return if !process_is_running(pid)? {
                 Ok(true)
             } else {
                 Err(process_error("GATEWAY_PROCESS_TERMINATION_FAILED"))
@@ -74,12 +77,12 @@ impl GatewayProcessControl for SystemGatewayProcessControl {
         }
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if !process_exists(pid) {
+            if !process_is_running(pid)? {
                 return Ok(true);
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        Ok(!process_exists(pid))
+        Ok(!process_is_running(pid)?)
     }
 }
 
@@ -107,7 +110,7 @@ fn process_executable(pid: u32) -> Result<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn process_uid(pid: u32) -> Result<u32> {
+fn process_uid(pid: u32) -> Result<Option<u32>> {
     let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
     let expected = std::mem::size_of::<libc::proc_bsdinfo>();
     let length = unsafe {
@@ -120,9 +123,71 @@ fn process_uid(pid: u32) -> Result<u32> {
         )
     };
     if length != expected as i32 {
+        if !process_exists(pid) {
+            return Ok(None);
+        }
         return Err(process_error("GATEWAY_PROCESS_INSPECTION_FAILED"));
     }
-    Ok(unsafe { info.assume_init() }.pbi_uid)
+    Ok(Some(unsafe { info.assume_init() }.pbi_uid))
+}
+
+#[cfg(target_os = "macos")]
+fn process_is_running(pid: u32) -> Result<bool> {
+    Ok(process_status(pid)?.is_some_and(|status| status != libc::SZOMB))
+}
+
+#[cfg(target_os = "macos")]
+fn process_status(pid: u32) -> Result<Option<u32>> {
+    let mut mib = [
+        libc::CTL_KERN,
+        libc::KERN_PROC,
+        libc::KERN_PROC_PID,
+        pid as i32,
+    ];
+    let mut buffer = [0_usize; 512];
+    let mut length = std::mem::size_of_val(&buffer);
+    let result = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            buffer.as_mut_ptr().cast(),
+            &mut length,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if result != 0 {
+        return if !process_exists(pid) {
+            Ok(None)
+        } else {
+            Err(process_error("GATEWAY_PROCESS_INSPECTION_FAILED"))
+        };
+    }
+    if length == 0 {
+        return Ok(None);
+    }
+    if length < std::mem::size_of::<MacProcessPrefix>() {
+        return Err(process_error("GATEWAY_PROCESS_INSPECTION_FAILED"));
+    }
+    let process = unsafe { &*buffer.as_ptr().cast::<MacProcessPrefix>() };
+    Ok(Some(process.status as u32))
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+union MacProcessStart {
+    links: [*mut libc::c_void; 2],
+    started_at: libc::timeval,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct MacProcessPrefix {
+    start: MacProcessStart,
+    vmspace: *mut libc::c_void,
+    signal_actions: *mut libc::c_void,
+    flags: libc::c_int,
+    status: libc::c_char,
 }
 
 #[cfg(target_os = "macos")]

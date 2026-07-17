@@ -152,6 +152,15 @@ fn invalid_sources_headers_and_route_mappings_fail_closed() {
         direct_codex_auth(&UpstreamAuth::None).unwrap(),
         DirectCodexAuth::None
     );
+    assert_eq!(
+        direct_codex_auth(&UpstreamAuth::Bearer {
+            source: CredentialSource::CodexProfile {
+                profile_id: "work-api".into(),
+            },
+        })
+        .unwrap(),
+        DirectCodexAuth::NativeApiKey
+    );
 }
 
 #[test]

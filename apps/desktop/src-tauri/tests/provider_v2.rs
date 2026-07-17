@@ -83,6 +83,16 @@ fn provider_v2_repository_creates_updates_and_uses_revision_cas() {
 }
 
 #[test]
+fn responses_provider_canonicalizes_legacy_gateway_flag_to_direct() {
+    let mut input = responses_input("legacy-responses-gateway");
+    input.codex.route_via_gateway = true;
+
+    let provider = build_provider(input, NOW).unwrap();
+
+    assert!(!provider.codex.route_via_gateway);
+}
+
+#[test]
 fn provider_v2_accepts_typed_chat_adapter_and_rejects_invalid_states() {
     let mut chat = responses_input("chat-service");
     chat.protocol = ProviderProtocol::ChatCompletions;

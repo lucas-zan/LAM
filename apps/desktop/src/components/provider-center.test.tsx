@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { ProviderCards, ProviderEditor } from './provider-center';
+import { ApiAccountConnectionEditor, ProviderCards, ProviderEditor } from './provider-center';
 import type { ProviderDefinitionV2, ProviderProfileViewV2 } from '../lib/types';
 
 const provider: ProviderProfileViewV2 = {
@@ -247,4 +247,53 @@ describe('ProviderEditor', () => {
       expect(screen.queryByDisplayValue('COMPANY_TOKEN')).toBeNull();
     },
   );
+});
+
+describe('ApiAccountConnectionEditor', () => {
+  const detail = {
+    profileId: 'work-api',
+    providerId: 'account-work-api',
+    protocol: 'responses' as const,
+    baseUrl: 'https://api.example.test/v1',
+    selectedModel: 'model-a',
+    providerStoreRevision: 7,
+    apiKeyConfigured: true,
+  };
+
+  it('shows redacted account configuration and supports URL-only updates', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<ApiAccountConnectionEditor connection={detail} onSave={onSave} onCancel={vi.fn()} />);
+
+    expect(screen.getByText('work-api')).toBeTruthy();
+    expect(screen.getByText('API key configured')).toBeTruthy();
+    const key = screen.getByLabelText('New API key');
+    expect((key as HTMLInputElement).value).toBe('');
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://new.example.test/v1/' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save API account' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave).toHaveBeenCalledWith({
+      profileId: 'work-api',
+      expectedProviderStoreRevision: 7,
+      baseUrl: 'https://new.example.test/v1',
+    });
+  });
+
+  it('sends a replacement key once, clears it, and rejects whitespace keys', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<ApiAccountConnectionEditor connection={detail} onSave={onSave} onCancel={vi.fn()} />);
+    const key = screen.getByLabelText('New API key');
+    fireEvent.change(key, { target: { value: 'sk-replacement-not-real' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save API account' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][0].apiKey).toBe('sk-replacement-not-real');
+    await waitFor(() => expect((key as HTMLInputElement).value).toBe(''));
+
+    fireEvent.change(key, { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save API account' }));
+    expect(await screen.findByText('New API key cannot be blank')).toBeTruthy();
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
 });

@@ -251,6 +251,15 @@
 - `cargo fmt -- --check` and `git diff --check`: passed.
 - No application packaging, installation, deployment, or launch was performed.
 
+### Post-completion CLI readiness correction (2026-07-17)
+
+The first Stage 2 pass missed the separate `lam codex` readiness path and did
+not classify macOS zombie processes as stopped. This caused API-account wrappers
+to return `GATEWAY_PROCESS_TERMINATION_TIMEOUT`. The CLI now uses the shared
+identity observation/reconciliation path, and macOS process status inspection
+treats zombies as exited. Focused regression and a real `codex-welfare
+--version` smoke test pass. See `docs/todo-provider-stage2-cli-readiness-fix.md`.
+
 ## STOP conditions
 
 - Identity proof would require exposing a secret or weakening loopback authentication.

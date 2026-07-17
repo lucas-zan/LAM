@@ -61,9 +61,7 @@ pub fn apply_projection(
             "config hash changed",
         ));
     }
-    if source.contains("experimental_bearer_token")
-        || source.contains("requires_openai_auth = true")
-    {
+    if source.contains("experimental_bearer_token") {
         return Err(AppError::new(
             "CODEX_CONFIG_SECRET_CONFLICT",
             "secret-bearing auth value is not manageable",
@@ -294,6 +292,10 @@ fn managed_keys(spec: &ConfigProjectionSpec) -> Vec<String> {
         DirectCodexAuth::EnvKey { .. } => keys.push("env_key".into()),
         DirectCodexAuth::EnvHeader { .. } => keys.push("env_http_headers".into()),
         DirectCodexAuth::AuthCommand { .. } => keys.push("auth".into()),
+        DirectCodexAuth::NativeApiKey => {
+            keys.push("cli_auth_credentials_store".into());
+            keys.push("requires_openai_auth".into());
+        }
         DirectCodexAuth::Keychain { .. }
         | DirectCodexAuth::ApprovedCommand { .. }
         | DirectCodexAuth::Gateway => keys.push("unresolved_auth".into()),
@@ -340,7 +342,12 @@ fn set_provider(doc: &mut DocumentMut, id: &str, key: &str, item: Item) {
 }
 fn clear_auth(doc: &mut DocumentMut, id: &str) {
     if let Some(t) = doc["model_providers"][id].as_table_mut() {
-        for k in ["env_key", "env_http_headers", "auth"] {
+        for k in [
+            "env_key",
+            "env_http_headers",
+            "auth",
+            "requires_openai_auth",
+        ] {
             t.remove(k);
         }
     }
@@ -368,6 +375,10 @@ fn apply_auth(doc: &mut DocumentMut, id: &str, auth: &DirectCodexAuth) -> Result
             t["timeout_ms"] = value(5_000);
             t["refresh_interval_ms"] = value(0);
             set_provider(doc, id, "auth", Item::Table(t));
+        }
+        DirectCodexAuth::NativeApiKey => {
+            set_top(doc, "cli_auth_credentials_store", "file");
+            set_provider(doc, id, "requires_openai_auth", value(true));
         }
         DirectCodexAuth::Keychain { .. }
         | DirectCodexAuth::ApprovedCommand { .. }
@@ -416,7 +427,10 @@ fn apply_options(doc: &mut DocumentMut, id: &str, spec: &ConfigProjectionSpec) {
     }
 }
 fn item_string(doc: &DocumentMut, id: &str, key: &str) -> Option<String> {
-    let item = if matches!(key, "model" | "model_provider") {
+    let item = if matches!(
+        key,
+        "model" | "model_provider" | "cli_auth_credentials_store"
+    ) {
         doc.get(key)
     } else {
         doc.get("model_providers")?.get(id)?.get(key)
@@ -424,7 +438,10 @@ fn item_string(doc: &DocumentMut, id: &str, key: &str) -> Option<String> {
     item.map(|value| value.to_string().trim().to_string())
 }
 fn restore_item(doc: &mut DocumentMut, id: &str, key: &str, previous: Option<&str>) -> Result<()> {
-    let target = if matches!(key, "model" | "model_provider") {
+    let target = if matches!(
+        key,
+        "model" | "model_provider" | "cli_auth_credentials_store"
+    ) {
         &mut doc[key]
     } else {
         &mut doc["model_providers"][id][key]
@@ -447,7 +464,10 @@ fn restore_item(doc: &mut DocumentMut, id: &str, key: &str, previous: Option<&st
             }
         }
         None => {
-            if matches!(key, "model" | "model_provider") {
+            if matches!(
+                key,
+                "model" | "model_provider" | "cli_auth_credentials_store"
+            ) {
                 doc.as_table_mut().remove(key);
             } else if let Some(t) = doc["model_providers"][id].as_table_mut() {
                 t.remove(key);

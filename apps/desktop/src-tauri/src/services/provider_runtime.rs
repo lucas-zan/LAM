@@ -203,6 +203,7 @@ pub fn materialize_codex_auth(
         DirectCodexAuth::EnvKey { .. }
             | DirectCodexAuth::EnvHeader { .. }
             | DirectCodexAuth::AuthCommand { .. }
+            | DirectCodexAuth::NativeApiKey
             | DirectCodexAuth::None
     ) {
         return Ok(auth.clone());

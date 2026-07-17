@@ -4,6 +4,9 @@
 日期：2026-06-01
 状态：实施任务清单
 
+> **历史实施记录：** LAM-010/LAM-011 所述整帐号 Sessions Sync 曾完成，但已于
+> 2026-07-17 从 UI、前端 API、Tauri command 与 Rust 服务中移除。对应条目不再代表现行能力。
+
 本文把 `FINAL-DESIGN.md` 拆成可执行 issue。主规格始终以 `docs/FINAL-DESIGN.md` 为准；旧 Codex-only 文档只作历史参考。
 
 ## 里程碑

@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { readReleaseMetadata } from './release-metadata.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tauriRoot = path.join(desktopRoot, 'src-tauri');
@@ -79,10 +80,8 @@ async function writeManifest(components) {
 }
 
 async function prepare() {
-  const triple = hostTriple();
-  if (triple !== 'aarch64-apple-darwin') {
-    throw new Error(`unsupported Gateway packaging target: ${triple}`);
-  }
+  const metadata = await readReleaseMetadata(desktopRoot, hostTriple());
+  const { architecture, triple, version } = metadata;
   run('cargo', [
     'build',
     '--manifest-path',
@@ -111,12 +110,12 @@ async function prepare() {
             ? 'auth-helper'
             : 'launcher',
       relativePath: `MacOS/${name}`,
-      version: '0.2.1',
+      version,
       sha256: await sha256(staged),
       protocolVersion: 1,
       stateSchema: 1,
       platform: 'macos',
-      architecture: 'aarch64',
+      architecture,
       packageIdentity: packageIdentity(),
     });
   }
@@ -124,6 +123,7 @@ async function prepare() {
 }
 
 async function prepareDev() {
+  const metadata = await readReleaseMetadata(desktopRoot, hostTriple());
   run('cargo', [
     'build',
     '--manifest-path',
@@ -153,12 +153,12 @@ async function prepareDev() {
             ? 'auth-helper'
             : 'launcher',
       relativePath: name,
-      version: '0.2.1',
+      version: metadata.version,
       sha256: await sha256(executable),
       protocolVersion: 1,
       stateSchema: 1,
       platform: 'macos',
-      architecture: 'aarch64',
+      architecture: metadata.architecture,
       packageIdentity: 'adhoc',
     });
   }
@@ -170,6 +170,7 @@ async function prepareDev() {
 }
 
 async function finalize() {
+  const metadata = await readReleaseMetadata(desktopRoot, hostTriple());
   const app = path.join(tauriRoot, 'target/release/bundle/macos/LAM.app');
   const contents = path.join(app, 'Contents');
   const components = [];
@@ -184,12 +185,12 @@ async function finalize() {
             ? 'auth-helper'
             : 'launcher',
       relativePath: `MacOS/${name}`,
-      version: '0.2.1',
+      version: metadata.version,
       sha256: await sha256(bundled),
       protocolVersion: 1,
       stateSchema: 1,
       platform: 'macos',
-      architecture: 'aarch64',
+      architecture: metadata.architecture,
       packageIdentity: packageIdentity(),
     });
   }
@@ -243,11 +244,12 @@ async function verifyBundledApp(app) {
 }
 
 async function dmg() {
+  const metadata = await readReleaseMetadata(desktopRoot, hostTriple());
   const release = path.join(tauriRoot, 'target/release/bundle');
   const app = path.join(release, 'macos/LAM.app');
   run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
   const staging = path.join(release, 'gateway-dmg-staging');
-  const output = path.join(release, 'dmg/LAM_0.2.1_aarch64.dmg');
+  const output = path.join(release, 'dmg', metadata.dmgName);
   run('/bin/rm', ['-rf', staging]);
   await mkdir(staging, { recursive: true, mode: 0o700 });
   run('/bin/cp', ['-R', app, path.join(staging, 'LAM.app')]);

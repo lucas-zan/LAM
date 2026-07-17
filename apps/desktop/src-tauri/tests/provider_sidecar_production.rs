@@ -30,7 +30,8 @@ fn production_binaries_wire_bounded_restart_idle_and_dual_stream_budgets() {
     assert!(launcher.contains("restart_decision"));
     assert!(launcher.contains("child.try_wait"));
     assert!(launcher.contains("child.kill"));
-    assert!(launcher.contains("recover_verified_gateway_process"));
+    assert!(launcher.contains("inspect_gateway_claim"));
+    assert!(launcher.contains("reconcile_gateway_claim"));
     assert!(launcher.contains("owned_child: Mutex<Option<Child>>"));
     assert!(launcher.contains("fn shutdown(&self)"));
     assert!(launcher.contains("self.owned_child.lock"));
@@ -39,11 +40,14 @@ fn production_binaries_wire_bounded_restart_idle_and_dual_stream_budgets() {
     ));
     assert!(sidecar.contains("should_idle_shutdown"));
     assert!(sidecar.contains("activity.inflight_requests"));
-    assert!(sidecar.contains("binding.revoked_at.is_none"));
+    assert!(sidecar.contains("binding_requires_gateway"));
     assert!(routes.contains("MAX_EVENT_CHANNEL_CAPACITY"));
     assert!(routes.contains("MAX_EVENT_CHANNEL_BYTES"));
     assert!(routes.contains("acquire_many_owned"));
     assert!(desktop.contains("monitor_packaged_gateway"));
+    assert!(desktop.contains("migrate_native_responses_bindings_service_v2"));
+    assert!(launcher.contains("migrate_native_responses_bindings_service_v2"));
+    assert!(supervisor.contains("binding_requires_gateway"));
     assert!(supervisor.contains("InstallManifestVerifier"));
     assert!(supervisor.contains("restart_decision"));
     assert!(launcher.contains("GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV"));

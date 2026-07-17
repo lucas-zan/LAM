@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useId, useMemo } from 'react';
 import { sessionDisplayName } from '../lib/format';
 import {
   countAccountsWithAvailableQuota,
@@ -256,9 +256,9 @@ export function Overview({
   quotas,
   providers,
   select,
-  openSync,
   rename,
   deleteAccount,
+  editApiAccount = () => {},
   switchModel = () => {},
   apiAccountIds = [],
   login,
@@ -277,14 +277,15 @@ export function Overview({
   onSaveAccountNote,
   authMode,
   compactButtons,
+  setCompactButtons = () => {},
 }: {
   accounts: CodexAccount[];
   quotas: UsageQuotaSnapshot[];
   providers: ProviderProfileViewV2[];
   select: (id: string) => void;
-  openSync: (id: string) => void;
   rename: (account: CodexAccount) => void;
   deleteAccount: (account: CodexAccount) => void;
+  editApiAccount?: (account: CodexAccount) => void;
   switchModel?: (account: CodexAccount) => void;
   apiAccountIds?: string[];
   login: (account: CodexAccount) => void;
@@ -303,6 +304,7 @@ export function Overview({
   onSaveAccountNote: (req: AccountNoteUpdate) => Promise<void> | void;
   authMode?: 'oauth' | 'pat';
   compactButtons?: boolean;
+  setCompactButtons?: (compact: boolean) => void;
 }) {
   const [activeTab, setActiveTab] = useState<'codex' | 'antigravity'>('codex');
 
@@ -377,9 +379,9 @@ export function Overview({
           accounts={accounts}
           quotas={quotas}
           select={select}
-          openSync={openSync}
           rename={rename}
           deleteAccount={deleteAccount}
+          editApiAccount={editApiAccount}
           switchModel={switchModel}
           apiAccountIds={apiAccountIds}
           login={login}
@@ -396,6 +398,7 @@ export function Overview({
           variant="overview"
           authMode={authMode}
           compactButtons={compactButtons}
+          setCompactButtons={setCompactButtons}
         />
       ) : (
         <AntigravityModels
@@ -454,9 +457,9 @@ export function Accounts({
   accounts,
   quotas,
   select,
-  openSync,
   rename,
   deleteAccount,
+  editApiAccount = () => {},
   switchModel = () => {},
   apiAccountIds = [],
   login,
@@ -473,13 +476,14 @@ export function Accounts({
   variant = 'default',
   authMode = 'oauth',
   compactButtons = true,
+  setCompactButtons = () => {},
 }: {
   accounts: CodexAccount[];
   quotas: UsageQuotaSnapshot[];
   select: (id: string) => void;
-  openSync: (id: string) => void;
   rename: (account: CodexAccount) => void;
   deleteAccount: (account: CodexAccount) => void;
+  editApiAccount?: (account: CodexAccount) => void;
   switchModel?: (account: CodexAccount) => void;
   apiAccountIds?: string[];
   login: (account: CodexAccount) => void;
@@ -496,6 +500,7 @@ export function Accounts({
   variant?: 'default' | 'overview';
   authMode?: 'oauth' | 'pat';
   compactButtons?: boolean;
+  setCompactButtons?: (compact: boolean) => void;
 }) {
   const [tokenStatuses, setTokenStatuses] = useState<Record<string, TokenExpirationStatus>>({});
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -549,7 +554,20 @@ export function Accounts({
   return (
     <section className={variant === 'overview' ? 'overviewAccountsPanel' : 'panel pagePanel'}>
       <div className="panelHead">
-        <h3 className="sectionTitle">Accounts</h3>
+        <div className="accountSectionTitleRow">
+          <h3 className="sectionTitle">Accounts</h3>
+          <UIButton
+            variant="icon"
+            size="sm"
+            className="accountLayoutToggle"
+            aria-label={compactButtons ? 'Show all account actions' : 'Collapse account actions'}
+            aria-pressed={!compactButtons}
+            title={compactButtons ? 'Show all account actions' : 'Collapse account actions'}
+            onClick={() => setCompactButtons(!compactButtons)}
+          >
+            <IconSliders size={14} />
+          </UIButton>
+        </div>
       </div>
       <div className="activeSessionBanner">
         <span>{authMode === 'pat' ? 'Active auth' : 'Active source'}</span>
@@ -597,7 +615,7 @@ export function Accounts({
             >
               <div className="cardHead">
                 <div className="cardTitleRow">
-                  <h3>{account.displayName}</h3>
+                  <AccountNoteTitle account={account} onSave={onSaveAccountNote} />
                   {resetCredits ? (
                     <span className="resetCreditBadge" aria-label={resetCredits.title}>
                       <span className="resetCreditDots">
@@ -637,160 +655,163 @@ export function Accounts({
                       ↻
                     </UIButton>
                   ) : null}
-                  <div className="cardMenuContainer">
-                    <UIButton
-                      variant="icon"
-                      size="sm"
-                      className="iconCircleBtn cardMenuBtn"
-                      title="More options"
-                      aria-label="More options"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setActiveMenuId(activeMenuId === account.id ? null : account.id);
-                      }}
-                    >
-                      <IconDots size={14} />
-                    </UIButton>
-                    {activeMenuId === account.id && (
-                      <div className="cardMenuDropdown" onClick={(e) => e.stopPropagation()}>
-                        {authMode === 'oauth' ? (
-                          <>
-                            <button
-                              type="button"
-                              className="cardMenuDropdownItem"
-                              onClick={() => {
-                                setActiveMenuId(null);
-                                openSync(account.id);
-                              }}
-                            >
-                              <IconCloud size={13} />
-                              <span>Sync Sessions...</span>
-                            </button>
-                            {!isApiAccount ? (
-                              <button
-                                type="button"
-                                className="cardMenuDropdownItem"
-                                disabled={!canResetQuota}
-                                title={
-                                  quota?.resetCreditCount
-                                    ? `Reset ${account.displayName} quota`
-                                    : 'No reset credits available'
-                                }
-                                onClick={async () => {
-                                  setActiveMenuId(null);
-                                  if (await confirmResetQuota(account.displayName)) {
-                                    void resetAccountQuota(account.id);
+                  {compactButtons ? (
+                    <div className="cardMenuContainer">
+                      <UIButton
+                        variant="icon"
+                        size="sm"
+                        className="iconCircleBtn cardMenuBtn"
+                        title="More options"
+                        aria-label="More options"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveMenuId(activeMenuId === account.id ? null : account.id);
+                        }}
+                      >
+                        <IconDots size={14} />
+                      </UIButton>
+                      {activeMenuId === account.id && (
+                        <div className="cardMenuDropdown" onClick={(e) => e.stopPropagation()}>
+                          {authMode === 'oauth' ? (
+                            <>
+                              {!isApiAccount ? (
+                                <button
+                                  type="button"
+                                  className="cardMenuDropdownItem"
+                                  disabled={!canResetQuota}
+                                  title={
+                                    quota?.resetCreditCount
+                                      ? `Reset ${account.displayName} quota`
+                                      : 'No reset credits available'
                                   }
-                                }}
-                              >
-                                <IconPlay size={13} />
-                                <span>{isResetting ? 'Resetting...' : 'Reset Quota'}</span>
-                              </button>
-                            ) : null}
-                            {account.hasAuth && (
+                                  onClick={async () => {
+                                    setActiveMenuId(null);
+                                    if (await confirmResetQuota(account.displayName)) {
+                                      void resetAccountQuota(account.id);
+                                    }
+                                  }}
+                                >
+                                  <IconPlay size={13} />
+                                  <span>{isResetting ? 'Resetting...' : 'Reset Quota'}</span>
+                                </button>
+                              ) : null}
+                              {isApiAccount ? (
+                                <button
+                                  type="button"
+                                  className="cardMenuDropdownItem"
+                                  onClick={() => {
+                                    setActiveMenuId(null);
+                                    editApiAccount(account);
+                                  }}
+                                >
+                                  <IconPencil size={13} />
+                                  <span>View&amp;Edit</span>
+                                </button>
+                              ) : account.hasAuth ? (
+                                <button
+                                  type="button"
+                                  className="cardMenuDropdownItem"
+                                  aria-label="Login"
+                                  onClick={() => {
+                                    setActiveMenuId(null);
+                                    login(account);
+                                  }}
+                                >
+                                  <IconKey size={13} />
+                                  <span>Login</span>
+                                </button>
+                              ) : null}
                               <button
                                 type="button"
                                 className="cardMenuDropdownItem"
-                                aria-label="Login"
+                                disabled={account.id === 'main'}
                                 onClick={() => {
                                   setActiveMenuId(null);
-                                  login(account);
+                                  rename(account);
                                 }}
                               >
-                                <IconKey size={13} />
-                                <span>Login</span>
+                                <IconPencil size={13} />
+                                <span>Rename</span>
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              className="cardMenuDropdownItem"
-                              disabled={account.id === 'main'}
-                              onClick={() => {
-                                setActiveMenuId(null);
-                                rename(account);
-                              }}
-                            >
-                              <IconPencil size={13} />
-                              <span>Rename</span>
-                            </button>
-                            {isApiAccount ? (
+                              {isApiAccount ? (
+                                <button
+                                  type="button"
+                                  className="cardMenuDropdownItem"
+                                  onClick={() => {
+                                    setActiveMenuId(null);
+                                    switchModel(account);
+                                  }}
+                                >
+                                  <IconPlay size={13} />
+                                  <span>Switch model...</span>
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="cardMenuDropdownItem cardMenuDropdownItem--danger"
+                                disabled={account.id === 'main'}
+                                aria-label={`Delete ${account.displayName}`}
+                                onClick={() => {
+                                  setActiveMenuId(null);
+                                  deleteAccount(account);
+                                }}
+                              >
+                                <IconTrash size={13} />
+                                <span>Delete</span>
+                              </button>
+                            </>
+                          ) : (
+                            <>
                               <button
                                 type="button"
                                 className="cardMenuDropdownItem"
                                 onClick={() => {
                                   setActiveMenuId(null);
-                                  switchModel(account);
+                                  exportCpa(account);
                                 }}
                               >
-                                <IconPlay size={13} />
-                                <span>Switch model...</span>
+                                <IconCloud size={13} />
+                                <span>Export CPA</span>
                               </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              className="cardMenuDropdownItem cardMenuDropdownItem--danger"
-                              disabled={account.id === 'main'}
-                              aria-label={`Delete ${account.displayName}`}
-                              onClick={() => {
-                                setActiveMenuId(null);
-                                deleteAccount(account);
-                              }}
-                            >
-                              <IconTrash size={13} />
-                              <span>Delete</span>
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              className="cardMenuDropdownItem"
-                              onClick={() => {
-                                setActiveMenuId(null);
-                                exportCpa(account);
-                              }}
-                            >
-                              <IconCloud size={13} />
-                              <span>Export CPA</span>
-                            </button>
-                            {!isApiAccount ? (
+                              {!isApiAccount ? (
+                                <button
+                                  type="button"
+                                  className="cardMenuDropdownItem"
+                                  disabled={!canResetQuota}
+                                  title={
+                                    quota?.resetCreditCount
+                                      ? `Reset ${account.displayName} quota`
+                                      : 'No reset credits available'
+                                  }
+                                  onClick={async () => {
+                                    setActiveMenuId(null);
+                                    if (await confirmResetQuota(account.displayName)) {
+                                      void resetAccountQuota(account.id);
+                                    }
+                                  }}
+                                >
+                                  <IconPlay size={13} />
+                                  <span>{isResetting ? 'Resetting...' : 'Reset Quota'}</span>
+                                </button>
+                              ) : null}
                               <button
                                 type="button"
                                 className="cardMenuDropdownItem"
-                                disabled={!canResetQuota}
-                                title={
-                                  quota?.resetCreditCount
-                                    ? `Reset ${account.displayName} quota`
-                                    : 'No reset credits available'
-                                }
-                                onClick={async () => {
+                                disabled={account.id === 'main' || isActiveAccount}
+                                onClick={() => {
                                   setActiveMenuId(null);
-                                  if (await confirmResetQuota(account.displayName)) {
-                                    void resetAccountQuota(account.id);
-                                  }
+                                  rename(account);
                                 }}
                               >
-                                <IconPlay size={13} />
-                                <span>{isResetting ? 'Resetting...' : 'Reset Quota'}</span>
+                                <IconPencil size={13} />
+                                <span>Rename</span>
                               </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              className="cardMenuDropdownItem"
-                              disabled={account.id === 'main' || isActiveAccount}
-                              onClick={() => {
-                                setActiveMenuId(null);
-                                rename(account);
-                              }}
-                            >
-                              <IconPencil size={13} />
-                              <span>Rename</span>
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               </div>
               <div className="cardTagsRow">
@@ -822,7 +843,6 @@ export function Accounts({
               <p className="cardMeta" title={metaText}>
                 {metaText}
               </p>
-              <AccountNotePanel account={account} onSave={onSaveAccountNote} />
               {!isApiAccount ? (
                 <div className="accountQuota">
                   {quotaDisplayWindows(quota).map((window) => (
@@ -839,34 +859,74 @@ export function Accounts({
               <div
                 className={compactButtons ? 'cardActions cardActions--singleRow' : 'cardActions'}
               >
-                {authMode === 'oauth' ? (
-                  isApiAccount ? (
-                    <>
-                      <UIButton
-                        size="sm"
-                        variant="primary"
-                        className="accountActionBtn accountActionBtn--primary"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          switchModel(account);
-                        }}
-                      >
-                        Switch Model
-                      </UIButton>
-                      <UIButton
-                        size="sm"
-                        variant="default"
-                        className="accountActionBtn accountActionBtn--secondary"
-                        disabled={accounts.length < 2}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openHandoff(account);
-                        }}
-                      >
-                        <IconPlay size={13} /> Handoff
-                      </UIButton>
-                    </>
-                  ) : account.hasAuth ? (
+                {isApiAccount ? (
+                  <>
+                    <UIButton
+                      size="sm"
+                      variant="primary"
+                      className="accountActionBtn accountActionBtn--primary"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        switchModel(account);
+                      }}
+                    >
+                      Switch Model
+                    </UIButton>
+                    <UIButton
+                      size="sm"
+                      variant="default"
+                      className="accountActionBtn accountActionBtn--secondary"
+                      disabled={accounts.length < 2}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openHandoff(account);
+                      }}
+                    >
+                      <IconPlay size={13} /> Handoff
+                    </UIButton>
+                    {!compactButtons ? (
+                      <>
+                        <UIButton
+                          size="sm"
+                          variant="default"
+                          className="accountActionBtn"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            editApiAccount(account);
+                          }}
+                        >
+                          <IconPencil size={13} /> View&amp;Edit
+                        </UIButton>
+                        <UIButton
+                          size="sm"
+                          variant="default"
+                          className="accountActionBtn"
+                          disabled={account.id === 'main'}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            rename(account);
+                          }}
+                        >
+                          <IconPencil size={13} /> Rename
+                        </UIButton>
+                        <UIButton
+                          size="sm"
+                          variant="danger"
+                          className="accountActionBtn"
+                          disabled={account.id === 'main'}
+                          aria-label={`Delete ${account.displayName}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            deleteAccount(account);
+                          }}
+                        >
+                          <IconTrash size={13} /> Delete
+                        </UIButton>
+                      </>
+                    ) : null}
+                  </>
+                ) : authMode === 'oauth' ? (
+                  account.hasAuth ? (
                     <>
                       <UIButton
                         size="sm"
@@ -908,19 +968,6 @@ export function Accounts({
                             size="sm"
                             variant="default"
                             className="accountActionBtn"
-                            title="Sync sessions"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openSync(account.id);
-                            }}
-                          >
-                            <IconCloud size={13} />
-                            Sync Sessions...
-                          </UIButton>
-                          <UIButton
-                            size="sm"
-                            variant="default"
-                            className="accountActionBtn"
                             disabled={!canResetQuota}
                             title={
                               quota?.resetCreditCount
@@ -937,23 +984,90 @@ export function Accounts({
                             <IconPlay size={13} />
                             {isResetting ? 'Resetting' : 'Reset Quota'}
                           </UIButton>
+                          <UIButton
+                            size="sm"
+                            variant="default"
+                            className="accountActionBtn"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              login(account);
+                            }}
+                          >
+                            <IconKey size={13} /> Login
+                          </UIButton>
+                          <UIButton
+                            size="sm"
+                            variant="default"
+                            className="accountActionBtn"
+                            disabled={account.id === 'main'}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              rename(account);
+                            }}
+                          >
+                            <IconPencil size={13} /> Rename
+                          </UIButton>
+                          <UIButton
+                            size="sm"
+                            variant="danger"
+                            className="accountActionBtn"
+                            disabled={account.id === 'main'}
+                            aria-label={`Delete ${account.displayName}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              deleteAccount(account);
+                            }}
+                          >
+                            <IconTrash size={13} /> Delete
+                          </UIButton>
                         </>
                       )}
                     </>
                   ) : (
-                    <UIButton
-                      size="sm"
-                      variant="primary"
-                      className="accountActionBtn accountActionBtn--full"
-                      title="Login to this account"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        login(account);
-                      }}
-                    >
-                      <IconKey size={13} />
-                      Login
-                    </UIButton>
+                    <>
+                      <UIButton
+                        size="sm"
+                        variant="primary"
+                        className="accountActionBtn accountActionBtn--full"
+                        title="Login to this account"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          login(account);
+                        }}
+                      >
+                        <IconKey size={13} />
+                        Login
+                      </UIButton>
+                      {!compactButtons ? (
+                        <>
+                          <UIButton
+                            size="sm"
+                            variant="default"
+                            className="accountActionBtn"
+                            disabled={account.id === 'main'}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              rename(account);
+                            }}
+                          >
+                            <IconPencil size={13} /> Rename
+                          </UIButton>
+                          <UIButton
+                            size="sm"
+                            variant="danger"
+                            className="accountActionBtn"
+                            disabled={account.id === 'main'}
+                            aria-label={`Delete ${account.displayName}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              deleteAccount(account);
+                            }}
+                          >
+                            <IconTrash size={13} /> Delete
+                          </UIButton>
+                        </>
+                      ) : null}
+                    </>
                   )
                 ) : (
                   // PAT mode
@@ -1033,26 +1147,7 @@ export function Accounts({
                           <IconCloud size={13} />
                           Export CPA
                         </UIButton>
-                        {isActiveAccount ? (
-                          <UIButton
-                            size="sm"
-                            variant="default"
-                            className="accountActionBtn"
-                            disabled={account.id === 'main'}
-                            title={
-                              account.id === 'main'
-                                ? 'Main profile cannot be renamed'
-                                : `Rename ${account.displayName}`
-                            }
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              rename(account);
-                            }}
-                          >
-                            <IconPencil size={13} />
-                            Rename
-                          </UIButton>
-                        ) : (
+                        {!isActiveAccount ? (
                           <UIButton
                             size="sm"
                             variant="default"
@@ -1073,7 +1168,27 @@ export function Accounts({
                             <IconPlay size={13} />
                             {isResetting ? 'Resetting' : 'Reset Quota'}
                           </UIButton>
-                        )}
+                        ) : null}
+                        <UIButton
+                          size="sm"
+                          variant="default"
+                          className="accountActionBtn"
+                          disabled={account.id === 'main' || isActiveAccount}
+                          title={
+                            account.id === 'main'
+                              ? 'Main profile cannot be renamed'
+                              : isActiveAccount
+                                ? 'Active profile cannot be renamed'
+                                : `Rename ${account.displayName}`
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            rename(account);
+                          }}
+                        >
+                          <IconPencil size={13} />
+                          Rename
+                        </UIButton>
                       </>
                     )}
                   </>
@@ -1087,7 +1202,7 @@ export function Accounts({
   );
 }
 
-function AccountNotePanel({
+function AccountNoteTitle({
   account,
   onSave,
 }: {
@@ -1098,6 +1213,7 @@ function AccountNotePanel({
   const [renewalDate, setRenewalDate] = useState(account.renewalDate ?? '');
   const [note, setNote] = useState(account.note ?? '');
   const [saving, setSaving] = useState(false);
+  const tooltipId = useId();
 
   function startEditing() {
     setRenewalDate(account.renewalDate ?? '');
@@ -1119,78 +1235,74 @@ function AccountNotePanel({
     }
   }
 
-  if (editing) {
-    return (
-      <form
-        className="accountNoteForm"
-        onClick={(event) => event.stopPropagation()}
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save();
-        }}
-      >
-        <label>
-          <span>Renewal date</span>
-          <input
-            type="date"
-            value={renewalDate}
-            onChange={(event) => setRenewalDate(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>Account note</span>
-          <textarea
-            value={note}
-            maxLength={500}
-            rows={3}
-            onChange={(event) => setNote(event.target.value)}
-          />
-        </label>
-        <div className="accountNoteActions">
-          <UIButton size="sm" variant="primary" type="submit" disabled={saving}>
-            Save
-          </UIButton>
-          <UIButton size="sm" type="button" onClick={() => setEditing(false)} disabled={saving}>
-            Cancel
-          </UIButton>
-        </div>
-      </form>
-    );
-  }
-
   const hasNotes = !!(account.renewalDate || account.note);
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      className={`accountNoteSummary accountNoteSummary--editable ${!hasNotes ? 'accountNoteSummary--empty' : ''}`}
-      title="Click to edit renewal date and notes"
-      aria-label="Edit note"
-      onClick={(event) => {
-        event.stopPropagation();
-        startEditing();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.stopPropagation();
-          event.preventDefault();
-          startEditing();
-        }
-      }}
-    >
-      <div className="accountNoteSummaryContent">
-        {hasNotes ? (
-          <>
-            {account.renewalDate && <strong>Renews {account.renewalDate}</strong>}
-            {account.note && <span>{account.note}</span>}
-          </>
-        ) : (
-          <span className="accountNotePlaceholder">+ Add renewal date or note</span>
-        )}
-      </div>
-      <span className="accountNoteSummaryEditIndicator" aria-hidden>
-        <IconPencil size={12} />
-      </span>
+    <div className={`accountTitleNote ${editing ? 'isEditing' : ''}`}>
+      <h3 aria-label={account.displayName}>
+        <button
+          type="button"
+          className="accountTitleButton"
+          aria-label={`Edit renewal information for ${account.displayName}`}
+          aria-describedby={editing ? undefined : tooltipId}
+          onClick={(event) => {
+            event.stopPropagation();
+            startEditing();
+          }}
+        >
+          {account.displayName}
+        </button>
+      </h3>
+      {editing ? (
+        <form
+          className="accountNoteForm accountNotePopover"
+          onClick={(event) => event.stopPropagation()}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
+          }}
+        >
+          <label>
+            <span>Renewal date</span>
+            <input
+              type="date"
+              value={renewalDate}
+              onChange={(event) => setRenewalDate(event.target.value)}
+            />
+          </label>
+          <label>
+            <span>Account note</span>
+            <textarea
+              value={note}
+              maxLength={500}
+              rows={3}
+              onChange={(event) => setNote(event.target.value)}
+            />
+          </label>
+          <div className="accountNoteActions">
+            <UIButton size="sm" variant="primary" type="submit" disabled={saving}>
+              Save
+            </UIButton>
+            <UIButton size="sm" type="button" onClick={() => setEditing(false)} disabled={saving}>
+              Cancel
+            </UIButton>
+          </div>
+        </form>
+      ) : (
+        <div id={tooltipId} role="tooltip" className="accountNoteTooltip">
+          {hasNotes ? (
+            <>
+              {account.renewalDate && <strong>Renews {account.renewalDate}</strong>}
+              {account.note && <span>{account.note}</span>}
+              <em>Click to edit</em>
+            </>
+          ) : (
+            <>
+              <span>No renewal information or note</span>
+              <em>Click to add</em>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1357,42 +1469,6 @@ export function Sessions({
   );
 }
 
-export function SyncHome({
-  accounts,
-  openSync,
-}: {
-  accounts: CodexAccount[];
-  openSync: () => void;
-}) {
-  return (
-    <section className="panel pagePanel">
-      <div className="panelHead">
-        <h3 className="sectionTitle">Sync</h3>
-        <UIButton variant="primary" disabled={accounts.length < 2} onClick={() => openSync()}>
-          Open Sync
-        </UIButton>
-      </div>
-      <div className="rows">
-        <div>
-          <span>Default include</span>
-          <strong>sessions/</strong>
-          <em>Phase 1</em>
-        </div>
-        <div>
-          <span>Blocked</span>
-          <strong>auth.json, config.toml, sqlite, cache, tmp, logs</strong>
-          <em>Strict</em>
-        </div>
-        <div>
-          <span>History</span>
-          <strong>sidecar backup only</strong>
-          <em>No merge</em>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export function Settings({
   health,
   themeMode: _themeMode,
@@ -1436,18 +1512,22 @@ export function Settings({
   );
   const [rateCardSearch, setRateCardSearch] = useState('');
   const [copiedHomeRoot, setCopiedHomeRoot] = useState(false);
-  const [gatewayTimeoutDraft, setGatewayTimeoutDraft] = useState(
-    String(gatewayFirstResponseTimeoutSeconds),
-  );
-
-  useEffect(() => {
-    setGatewayTimeoutDraft(String(gatewayFirstResponseTimeoutSeconds));
-  }, [gatewayFirstResponseTimeoutSeconds]);
+  const [gatewayTimeoutEdit, setGatewayTimeoutEdit] = useState({
+    source: gatewayFirstResponseTimeoutSeconds,
+    draft: String(gatewayFirstResponseTimeoutSeconds),
+  });
+  const gatewayTimeoutDraft =
+    gatewayTimeoutEdit.source === gatewayFirstResponseTimeoutSeconds
+      ? gatewayTimeoutEdit.draft
+      : String(gatewayFirstResponseTimeoutSeconds);
 
   const commitGatewayTimeout = () => {
     const seconds = Number(gatewayTimeoutDraft);
     if (!Number.isInteger(seconds) || seconds < 10 || seconds > 600) {
-      setGatewayTimeoutDraft(String(gatewayFirstResponseTimeoutSeconds));
+      setGatewayTimeoutEdit({
+        source: gatewayFirstResponseTimeoutSeconds,
+        draft: String(gatewayFirstResponseTimeoutSeconds),
+      });
       return;
     }
     setGatewayFirstResponseTimeoutSeconds(seconds);
@@ -1719,7 +1799,12 @@ export function Settings({
                       max={600}
                       step={1}
                       value={gatewayTimeoutDraft}
-                      onChange={(event) => setGatewayTimeoutDraft(event.target.value)}
+                      onChange={(event) =>
+                        setGatewayTimeoutEdit({
+                          source: gatewayFirstResponseTimeoutSeconds,
+                          draft: event.target.value,
+                        })
+                      }
                       onBlur={commitGatewayTimeout}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter') commitGatewayTimeout();

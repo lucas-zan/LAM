@@ -1,6 +1,8 @@
 # 开发设计文档：Codex Relay / Codex Session Manager
 
-> **历史草稿 / 部分有效：** 本文的 Tauri v2 + Rust + React 技术栈、Rust 服务分层、安全边界和部分命令草案仍可参考；当前模型、命名、阶段范围、Provider/Usage 分期和目标目录结构以 `docs/FINAL-DESIGN.md` 为准。实现时不要直接采用本文中的旧项目名、旧 metadata 文件名或旧路线图。
+> **历史草稿 / 部分有效：** 本文的 Tauri v2 + Rust + React 技术栈、Rust 服务分层和安全
+> 边界仍可参考。整帐号 Sessions Sync 已于 2026-07-17 下线；下文 Sync engine、
+> `SyncPlan` 与 command 草案只记录旧设计，不得重新作为现行契约实现。
 
 版本：0.1 draft  
 技术栈：Tauri v2 + Rust + TypeScript/React + Vite  

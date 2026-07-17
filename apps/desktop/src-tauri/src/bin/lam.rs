@@ -4,13 +4,16 @@ use localagentmanager_core::gateway::launcher::{
     CodexLaunchRequest, CodexLauncher, DirectCodexLauncher, GatewayReadiness, InstallManifest,
     InstallManifestVerifier, MacCodeSignIdentityVerifier, VerifiedInstallation,
 };
-use localagentmanager_core::gateway::recovery::{
-    recover_verified_gateway_process, SystemGatewayProcessControl,
-};
+use localagentmanager_core::gateway::recovery::SystemGatewayProcessControl;
 use localagentmanager_core::gateway::server::{HealthDocument, HealthProofKey};
 use localagentmanager_core::gateway::sidecar::{
     gateway_control_socket_path, AuthenticatedControl, ControlCommand, ControlSocketClient,
     GatewayRuntimeState, GatewayStateRepository, RestartDecision, SupervisorPolicy,
+};
+use localagentmanager_core::gateway::supervisor::{
+    inspect_gateway_claim, reconcile_gateway_claim, GatewayReconcileContext,
+    GatewayReconcileOutcome, GatewaySupervisorMachine, GatewaySupervisorObservation,
+    SystemGatewayIdentityProbe,
 };
 use localagentmanager_core::provider_binding::{
     ProfileBindingCollection, ProfileBindingRepository, ProfileProviderBinding, RouteKind,
@@ -58,6 +61,13 @@ fn run() -> localagentmanager_core::Result<i32> {
         &root,
         chrono::Utc::now().timestamp_millis().max(0) as u64,
     )?;
+    if std::env::var_os("LAM_PROVIDER_HUB_ROOT").is_none() {
+        let home = localagentmanager_core::resolve_home_root()?;
+        localagentmanager_core::migrate_native_responses_bindings_service_v2(
+            &home,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+        )?;
+    }
     let lock = InstallationLock::new(root.join("provider-hub.lock"), Duration::from_secs(5));
     let bindings =
         ProfileBindingRepository::new(VersionedFileStore::<ProfileBindingCollection>::new(
@@ -269,6 +279,54 @@ impl PackagedReadiness {
         Ok(())
     }
 
+    async fn prepare_gateway(&self, profile_id: &str) -> localagentmanager_core::Result<bool> {
+        let binding = self.active_binding(profile_id)?;
+        let token = self.test_or_keychain_gateway_token(profile_id, &binding.binding_id)?;
+        let probe =
+            SystemGatewayIdentityProbe::new(token, &self.identity_key, Duration::from_secs(2))?;
+        let executable = &self.installation.component("gateway")?.path;
+        let control = SystemGatewayProcessControl;
+        let mut machine = GatewaySupervisorMachine::new(3)?;
+
+        for attempt in 1..=3 {
+            let snapshot = self.state.load()?;
+            let observation =
+                inspect_gateway_claim(&control, &probe, &snapshot.value, executable, unsafe {
+                    libc::geteuid()
+                })
+                .await?;
+            if observation == GatewaySupervisorObservation::IdentityHealthy {
+                return Ok(true);
+            }
+            let action = machine.observe(observation);
+            let now = chrono::Utc::now().to_rfc3339();
+            let outcome = reconcile_gateway_claim(
+                action,
+                observation,
+                &snapshot,
+                GatewayReconcileContext {
+                    control: &control,
+                    state: &self.state,
+                    expected_executable: executable,
+                    expected_uid: unsafe { libc::geteuid() },
+                    control_path: &self.control_path,
+                    now: &now,
+                    termination_timeout: Duration::from_secs(2),
+                },
+            )?;
+            if matches!(outcome, GatewayReconcileOutcome::ReadyToStart(_)) {
+                return Ok(false);
+            }
+            if attempt < 3 {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+        Err(localagentmanager_core::AppError::new(
+            "GATEWAY_IDENTITY_UNAVAILABLE",
+            "Existing Gateway identity could not be verified after bounded retries",
+        ))
+    }
+
     fn active_binding(
         &self,
         profile_id: &str,
@@ -447,15 +505,8 @@ impl GatewayReadiness for PackagedReadiness {
                     "Gateway readiness runtime failed",
                 )
             })?;
-        let state = self.state.load()?;
-        if let Some(pid) = state.value.process_id {
-            recover_verified_gateway_process(
-                &SystemGatewayProcessControl,
-                pid,
-                &self.installation.component("gateway")?.path,
-                unsafe { libc::geteuid() },
-                Duration::from_secs(2),
-            )?;
+        if runtime.block_on(self.prepare_gateway(profile_id))? {
+            return Ok(());
         }
         let policy = SupervisorPolicy::new(
             3,

@@ -20,7 +20,7 @@ LAM_ENV      := $(if $(LAM_HOME),LAM_HOME=$(LAM_HOME),)
 LAM_CODESIGN_IDENTITY ?=
 export LAM_CODESIGN_IDENTITY
 
-.PHONY: help app desktop start stop status accounts check test build dmg install node-check cargo-check tauri-info clean
+.PHONY: help app desktop start stop status accounts check test build dmg release-version install node-check cargo-check tauri-info clean
 
 help:
 	@echo "LocalAgentManager (Lam) — local development"
@@ -33,9 +33,9 @@ help:
 	@echo "  make accounts    Print detected local Codex accounts"
 	@echo "  make check       Run frontend build, UI smoke, Rust fmt check, Rust tests"
 	@echo "  make test        Same as make check"
-	@echo "  make build       Build frontend and Tauri bundle"
-	@echo "  make dmg         Build macOS .app and .dmg installer"
-	@echo "  make dmg VERSION=0.2.1"
+	@echo "  make build       Build the macOS .app bundle"
+	@echo "  make dmg         Build the macOS .app and versioned .dmg installer"
+	@echo "  make dmg VERSION=0.3.0"
 	@echo "                   Sync package/Tauri/Cargo versions before building"
 	@echo "  make install     npm install in apps/desktop"
 	@echo ""
@@ -84,11 +84,16 @@ check test: install node-check cargo-check
 
 tauri-info: status
 
-build dmg: install node-check cargo-check
+release-version:
 ifneq ($(strip $(VERSION)),)
 	cd $(APP_DIR) && node scripts/sync-release-version.mjs "$(VERSION)"
 endif
+
+build: install node-check cargo-check release-version
 	cd $(APP_DIR) && $(NPM) run tauri:build
+
+dmg: install node-check cargo-check release-version
+	cd $(APP_DIR) && $(NPM) run tauri:dmg
 
 clean:
 	-@rm -rf $(APP_DIR)/dist

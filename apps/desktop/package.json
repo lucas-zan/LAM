@@ -1,6 +1,6 @@
 {
   "name": "@localagentmanager/desktop",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -15,7 +15,8 @@
     "verify:gateway-components": "node scripts/package-gateway-components.mjs verify",
     "package:gateway-finalize": "node scripts/package-gateway-components.mjs finalize",
     "package:gateway-dmg": "node scripts/package-gateway-components.mjs dmg",
-    "tauri:build": "npm run package:gateway-components && tauri build --bundles app --config src-tauri/tauri.gateway.conf.json && npm run package:gateway-finalize && npm run package:gateway-dmg",
+    "tauri:build": "npm run package:gateway-components && tauri build --bundles app --config src-tauri/tauri.gateway.conf.json && npm run package:gateway-finalize",
+    "tauri:dmg": "npm run tauri:build && npm run package:gateway-dmg",
     "icons": "tauri icon src-tauri/icons/icon.svg -o src-tauri/icons",
     "tauri": "tauri",
     "lint": "eslint src/",

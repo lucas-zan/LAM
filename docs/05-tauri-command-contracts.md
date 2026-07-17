@@ -1,11 +1,14 @@
 # Tauri Command API 草案
 
-> **基础契约草案 / 部分有效：** 本文保留 Phase 1 Codex MVP 的基础 command 形状。Provider、UsageQuota、Sync manifest、dry-run plan、AgentProfile 等扩展以 `docs/FINAL-DESIGN.md` §6.3 和 `docs/IMPLEMENTATION-ISSUES.md` 为准。
+> **基础契约草案 / 部分有效：** 本文保留 Phase 1 Codex MVP 的基础 command 形状。Provider、UsageQuota、dry-run plan、AgentProfile 等扩展以当前源码为准。整帐号 Sessions Sync 已下线；接力只通过 `relay_resume_session` 处理单条 session。
 
 > **v0.2.1 authoritative extension:** external API accounts use
 > `plan_api_account_v2` → `execute_api_account_v2`, model changes use
 > `plan_api_account_model_switch_v2` → `execute_api_account_model_switch_v2`, and deletion uses
-> `delete_api_account_v2`. The plan never contains a secret; `keychainSecret` exists only on execute.
+> `delete_api_account_v2`. The plan never contains a secret; `apiKey` exists
+> only on execute. Native Responses account connection metadata is read with
+> `get_api_account_connection_v2` and URL/write-only key changes use
+> `update_api_account_connection_v2`.
 > External model discovery uses the separate write-only `discover_provider_models_v2` command; its result is
 > advisory and cannot mutate a Provider or API Account.
 > `relay_resume_session` accepts `confirmCompatibilityLoss` and returns a sanitized compatibility report
@@ -60,20 +63,6 @@ export type CreateRelayAccountRequest = {
   openLoginAfterCreate: boolean;
 };
 
-export type SyncOptions = {
-  syncSessions: boolean;
-  backupTargetSessions: boolean;
-  sidecarBackupHistory: boolean;
-  mergeHistory: boolean;
-  dryRun: boolean;
-};
-
-export type SyncRequest = {
-  fromAccountId: string;
-  toAccountId: string;
-  options: SyncOptions;
-};
-
 export type ResumeCommandRequest = {
   accountId: string;
   sessionId: string;
@@ -103,14 +92,6 @@ export async function createAccount(req: CreateAccountRequest) {
 
 export async function createRelayAccount(req: CreateRelayAccountRequest) {
   return invoke("create_relay_account", { req });
-}
-
-export async function buildSyncPlan(req: SyncRequest) {
-  return invoke("build_sync_plan", { req });
-}
-
-export async function executeSync(req: SyncRequest) {
-  return invoke("execute_sync", { req });
 }
 
 export async function buildResumeCommand(req: ResumeCommandRequest) {
@@ -176,12 +157,6 @@ pub async fn create_account(req: CreateAccountRequest) -> Result<CreateAccountRe
 pub async fn create_relay_account(req: CreateRelayAccountRequest) -> Result<CreateAccountResult, AppError>;
 
 #[tauri::command]
-pub async fn build_sync_plan(req: SyncRequest) -> Result<SyncPlan, AppError>;
-
-#[tauri::command]
-pub async fn execute_sync(req: SyncRequest) -> Result<SyncResult, AppError>;
-
-#[tauri::command]
 pub async fn build_resume_command(req: ResumeCommandRequest) -> Result<ResumeCommandResult, AppError>;
 
 #[tauri::command]
@@ -212,7 +187,6 @@ CODEX_HOME_UNSAFE
 WRAPPER_DIR_NOT_IN_PATH
 CODEX_BINARY_NOT_FOUND
 SESSION_NOT_FOUND
-SYNC_BLOCKED_SENSITIVE_FILE
 TERMINAL_PERMISSION_DENIED
 IO_ERROR
 PARSE_ERROR

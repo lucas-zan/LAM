@@ -10,7 +10,7 @@ function usage() {
     'Usage: node scripts/sync-release-version.mjs [--root <repo-root>] <version>',
     '',
     'Example:',
-    '  node scripts/sync-release-version.mjs 0.2.1',
+    '  node scripts/sync-release-version.mjs 0.3.0',
   ].join('\n');
 }
 
@@ -44,23 +44,33 @@ async function updateJsonVersion(filePath, version) {
   await writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`);
 }
 
+async function updatePackageLockVersion(filePath, version) {
+  const data = JSON.parse(await readFile(filePath, 'utf8'));
+  if (!data.packages?.['']) {
+    throw new Error(`Could not find root package metadata in ${filePath}`);
+  }
+  data.version = version;
+  data.packages[''].version = version;
+  await writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`);
+}
+
 async function updateCargoPackageVersion(filePath, version) {
   const original = await readFile(filePath, 'utf8');
-  const next = original.replace(
-    /^(\[package\][\s\S]*?^version\s*=\s*)"[^"]+"/m,
-    `$1"${version}"`,
-  );
-
-  if (next === original) {
+  const pattern = /^(\[package\][\s\S]*?^version\s*=\s*)"([^"]+)"/m;
+  const current = original.match(pattern);
+  if (!current) {
     throw new Error(`Could not find package version in ${filePath}`);
   }
+  if (current[2] === version) return;
 
+  const next = original.replace(pattern, `$1"${version}"`);
   await writeFile(filePath, next);
 }
 
 export async function syncReleaseVersion({ root, version }) {
   const desktopDir = path.join(root, 'apps', 'desktop');
   await updateJsonVersion(path.join(desktopDir, 'package.json'), version);
+  await updatePackageLockVersion(path.join(desktopDir, 'package-lock.json'), version);
   await updateJsonVersion(path.join(desktopDir, 'src-tauri', 'tauri.conf.json'), version);
   await updateCargoPackageVersion(path.join(desktopDir, 'src-tauri', 'Cargo.toml'), version);
 }

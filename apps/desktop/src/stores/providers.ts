@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import * as api from '../lib/api';
 import type {
   CredentialReferenceV2,
+  ApiAccountConnectionViewV2,
+  UpdateApiAccountConnectionRequestV2,
   PlanAttachRequestV2,
   ProfileAttachPlanViewV2,
   ProfileDetachPlanViewV2,
@@ -22,6 +24,7 @@ interface ProviderState {
   detachPlan: ProfileDetachPlanViewV2 | null;
   loading: boolean;
   recoveryMessage: string;
+  apiAccountConnection: ApiAccountConnectionViewV2 | null;
   refreshGeneration: number;
   refresh: () => Promise<void>;
   saveProvider: (provider: ProviderDefinitionV2, editing: boolean) => Promise<void>;
@@ -38,6 +41,11 @@ interface ProviderState {
   previewDetach: (profileId: string) => Promise<ProfileDetachPlanViewV2>;
   executeDetach: () => Promise<void>;
   clearPlans: () => void;
+  loadApiAccountConnection: (profileId: string) => Promise<ApiAccountConnectionViewV2>;
+  updateApiAccountConnection: (
+    request: UpdateApiAccountConnectionRequestV2,
+  ) => Promise<ApiAccountConnectionViewV2>;
+  clearApiAccountConnection: () => void;
 }
 
 function requiredProviderStoreRevision(state: ProviderState): number {
@@ -88,6 +96,7 @@ export const useProviderStore = create<ProviderState>()((set, get) => ({
   detachPlan: null,
   loading: false,
   recoveryMessage: '',
+  apiAccountConnection: null,
   refreshGeneration: 0,
 
   refresh: async () => {
@@ -305,6 +314,37 @@ export const useProviderStore = create<ProviderState>()((set, get) => ({
       throw error;
     }
   },
+
+  loadApiAccountConnection: async (profileId) => {
+    try {
+      const connection = await api.getApiAccountConnectionV2(profileId);
+      set({ apiAccountConnection: connection });
+      return connection;
+    } catch (error) {
+      useAppStore.getState().setError(formatError(error));
+      throw error;
+    }
+  },
+
+  updateApiAccountConnection: async (request) => {
+    try {
+      const connection = await api.updateApiAccountConnectionV2(request);
+      set({ apiAccountConnection: connection });
+      await get().refresh();
+      useAppStore.getState().setStatus(`Updated API account ${connection.profileId}`);
+      return connection;
+    } catch (error) {
+      await recoverProviderConflict(
+        error,
+        () => set({ apiAccountConnection: null }),
+        get().refresh,
+      );
+      useAppStore.getState().setError(formatError(error));
+      throw error;
+    }
+  },
+
+  clearApiAccountConnection: () => set({ apiAccountConnection: null }),
 
   clearPlans: () => set({ attachPlan: null, detachPlan: null, recoveryMessage: '' }),
 }));

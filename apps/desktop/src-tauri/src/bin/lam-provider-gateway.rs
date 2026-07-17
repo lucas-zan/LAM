@@ -1,4 +1,6 @@
-use localagentmanager_core::gateway::binding::{GatewayBindingCollection, GatewayBindingService};
+use localagentmanager_core::gateway::binding::{
+    binding_requires_gateway, GatewayBindingCollection, GatewayBindingService,
+};
 use localagentmanager_core::gateway::catalog::CodexModelDefaultsCatalog;
 use localagentmanager_core::gateway::routes::GatewayRouteComposer;
 use localagentmanager_core::gateway::server::{
@@ -169,7 +171,7 @@ async fn run() -> localagentmanager_core::Result<()> {
                     .value
                     .bindings
                     .iter()
-                    .filter(|binding| binding.revoked_at.is_none())
+                    .filter(|binding| binding_requires_gateway(binding))
                     .count();
                 if idle_policy.should_idle_shutdown(
                     active_bindings,

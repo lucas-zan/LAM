@@ -281,7 +281,6 @@ export type NavIconName =
   | 'sessions'
   | 'relay'
   | 'providers'
-  | 'sync'
   | 'settings';
 
 const navIcons: Record<NavIconName, (p: IconProps) => JSX.Element> = {
@@ -290,7 +289,6 @@ const navIcons: Record<NavIconName, (p: IconProps) => JSX.Element> = {
   sessions: IconSessions,
   relay: IconRelay,
   providers: IconProviders,
-  sync: IconSync,
   settings: IconSettings,
 };
 

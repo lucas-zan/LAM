@@ -33,6 +33,10 @@ fn main() {
                 &home,
                 chrono::Utc::now().timestamp_millis().max(0) as u64,
             )?;
+            localagentmanager_core::migrate_native_responses_bindings_service_v2(
+                &home,
+                chrono::Utc::now().timestamp_millis().max(0) as u64,
+            )?;
             localagentmanager_core::repair_managed_wrappers(&home)?;
             let supervisor_home = home.clone();
             tauri::async_runtime::spawn(async move {
@@ -70,8 +74,6 @@ fn main() {
             commands::update_account_note,
             commands::plan_create_relay,
             commands::execute_create_relay,
-            commands::build_sync_plan,
-            commands::execute_sync,
             commands::build_resume_command,
             commands::build_login_command,
             commands::relay_resume_session,
@@ -135,6 +137,8 @@ fn main() {
             commands::execute_api_account_v2,
             commands::plan_api_account_model_switch_v2,
             commands::execute_api_account_model_switch_v2,
+            commands::get_api_account_connection_v2,
+            commands::update_api_account_connection_v2,
             commands::delete_api_account_v2,
             commands::plan_gateway_port_migration_v2,
             commands::execute_gateway_port_migration_v2,

@@ -1,4 +1,5 @@
 use super::binding::{GatewayBindingService, GatewayBindingSnapshot};
+use super::upstream::CodexUpstreamHeaders;
 use crate::services::error::{AppError, Result};
 use crate::services::provider_keychain::KeychainBackend;
 use axum::body::{to_bytes, Body};
@@ -49,6 +50,7 @@ pub struct GatewayHttpRequest {
     pub body: Vec<u8>,
     pub binding: GatewayBindingSnapshot,
     pub request_id: String,
+    pub upstream_headers: CodexUpstreamHeaders,
 }
 
 pub struct GatewayHttpResponse {
@@ -523,12 +525,14 @@ async fn dispatch_empty(
     Extension(request_id): Extension<RequestId>,
     request: Request,
 ) -> Response {
+    let upstream_headers = CodexUpstreamHeaders::capture(request.headers());
     dispatch(
         state,
         binding,
         request_id.0,
         request.uri().path().into(),
         Vec::new(),
+        upstream_headers,
     )
     .await
 }
@@ -540,11 +544,12 @@ async fn dispatch_body(
     request: Request,
 ) -> Response {
     let path = request.uri().path().to_owned();
+    let upstream_headers = CodexUpstreamHeaders::capture(request.headers());
     let body = match to_bytes(request.into_body(), state.config.max_body_bytes).await {
         Ok(body) => body.to_vec(),
         Err(_) => return gateway_error(StatusCode::PAYLOAD_TOO_LARGE, "GATEWAY_BODY_LIMIT"),
     };
-    dispatch(state, binding, request_id.0, path, body).await
+    dispatch(state, binding, request_id.0, path, body, upstream_headers).await
 }
 
 async fn dispatch(
@@ -553,6 +558,7 @@ async fn dispatch(
     request_id: String,
     path: String,
     body: Vec<u8>,
+    upstream_headers: CodexUpstreamHeaders,
 ) -> Response {
     let _activity = state.activity.begin();
     let started = Instant::now();
@@ -619,6 +625,7 @@ async fn dispatch(
             body,
             binding,
             request_id: request_id.clone(),
+            upstream_headers,
         }),
     )
     .await;
