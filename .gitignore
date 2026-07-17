@@ -68,6 +68,7 @@ apps/desktop/src-tauri/generated/provider-gateway-install-manifest.json
 **/.codex-*/installation_id
 
 # --- .fake-home: keep static fixtures; ignore volatile state ---
+.fake-home/.config/agent-workspace/
 .fake-home/**/cache/
 .fake-home/**/tmp/
 .fake-home/**/logs/
