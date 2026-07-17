@@ -347,7 +347,14 @@ describe('handoff navigation and entry points', () => {
       { ...accounts[0], isActiveAuth: true },
       { ...accounts[1], isActiveAuth: false },
     ];
-    render(<Overview {...overviewProps()} accounts={patAccounts} authMode="pat" />);
+    render(
+      <Overview
+        {...overviewProps()}
+        accounts={patAccounts}
+        authMode="pat"
+        compactButtons={false}
+      />,
+    );
 
     expect(screen.getByText('Active auth').nextElementSibling?.textContent).toBe('codex-a');
     expect(
@@ -361,7 +368,7 @@ describe('handoff navigation and entry points', () => {
         .getByRole('heading', { name: 'codex-a' })
         .closest('article')
         ?.querySelector('[aria-label="Switch to this account"]'),
-    ).toBeNull();
+    ).toHaveProperty('disabled', true);
     expect(
       screen
         .getByRole('heading', { name: 'codex-b' })

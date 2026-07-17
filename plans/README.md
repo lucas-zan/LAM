@@ -2,7 +2,7 @@
 
 **Base commit:** `6e4471e`  
 **Generated:** 2026-06-24  
-**Last updated:** 2026-07-10 (Plan 010 added)
+**Last updated:** 2026-07-17 (Plan 011 implemented; scoped gates pass)
 
 ## Plan Index
 
@@ -17,6 +17,7 @@
 | 008 | Usage statistics dashboard reference parity and full-page route | DONE | L | H | dashboard parity + tray smoke + installed-app verification |
 | 009 | Codex account usage parity, activity heatmap, and reset-credit dots | DONE | L | H | usage + quota + dashboard focused suites |
 | 010 | Restart ChatGPT after account switching | BLOCKED (pre-existing full-gate failures; live PID check pending) | S | M | 42 focused frontend + full Rust tests pass |
+| 011 | Configure Antigravity port in Settings and remove automatic discovery | BLOCKED (pre-existing clippy baseline; Plan 011 scoped gates pass) | M | M | Rust settings/quota + frontend Settings; live Antigravity smoke pending |
 
 ## Dependencies
 
@@ -47,6 +48,17 @@
   implementation is present and focused gates pass, but it remains BLOCKED
   until the repository's pre-existing Vitest/UI-smoke/clippy failures are
   cleared and the live ChatGPT PID restart check is performed.
+- **011** is independent of the PAT and usage plans. It replaces Antigravity's
+  runtime `lsof` and process-argument port discovery with one LAM-owned
+  `antigravityPort` setting, while retaining process discovery only for the
+  required CSRF token. It may execute directly against commit `bf59e4e` or a
+  drift-reviewed descendant. Implementation commit `94f5550`, integrated as
+  `f26e0b9`, passes the scoped tests, full Rust suite, frontend build, production
+  bundle, and codesign. The
+  current Rust 1.97 clippy gate stops on five pre-existing out-of-scope warnings
+  in `services/gateway/server.rs`, `services/gateway/supervisor.rs`, and
+  `services/session.rs`; Plan 011 must not repair those files and remains
+  `BLOCKED` while that baseline and the live Antigravity smoke remain pending.
 
 ## Plan 009 execution note
 

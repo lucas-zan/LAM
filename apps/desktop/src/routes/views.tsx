@@ -1072,7 +1072,7 @@ export function Accounts({
                 ) : (
                   // PAT mode
                   <>
-                    {isActiveAccount ? (
+                    {isActiveAccount && compactButtons ? (
                       <UIButton
                         size="sm"
                         variant="primary"
@@ -1099,11 +1099,13 @@ export function Accounts({
                         size="sm"
                         variant="primary"
                         className={primaryBtnClass}
-                        disabled={account.id === 'main'}
+                        disabled={account.id === 'main' || isActiveAccount}
                         aria-label="Switch to this account"
                         title={
                           account.id === 'main'
                             ? 'Main profile is the active auth slot'
+                            : isActiveAccount
+                              ? 'This account is already active'
                             : 'Switch to this account'
                         }
                         onClick={(e) => {
@@ -1147,28 +1149,26 @@ export function Accounts({
                           <IconCloud size={13} />
                           Export CPA
                         </UIButton>
-                        {!isActiveAccount ? (
-                          <UIButton
-                            size="sm"
-                            variant="default"
-                            className="accountActionBtn"
-                            disabled={!canResetQuota}
-                            title={
-                              quota?.resetCreditCount
-                                ? `Reset ${account.displayName} quota`
-                                : 'No reset credits available'
+                        <UIButton
+                          size="sm"
+                          variant="default"
+                          className="accountActionBtn"
+                          disabled={!canResetQuota}
+                          title={
+                            quota?.resetCreditCount
+                              ? `Reset ${account.displayName} quota`
+                              : 'No reset credits available'
+                          }
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (await confirmResetQuota(account.displayName)) {
+                              void resetAccountQuota(account.id);
                             }
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              if (await confirmResetQuota(account.displayName)) {
-                                void resetAccountQuota(account.id);
-                              }
-                            }}
-                          >
-                            <IconPlay size={13} />
-                            {isResetting ? 'Resetting' : 'Reset Quota'}
-                          </UIButton>
-                        ) : null}
+                          }}
+                        >
+                          <IconPlay size={13} />
+                          {isResetting ? 'Resetting' : 'Reset Quota'}
+                        </UIButton>
                         <UIButton
                           size="sm"
                           variant="default"
