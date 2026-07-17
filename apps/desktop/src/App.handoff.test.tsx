@@ -58,6 +58,8 @@ vi.mock('./lib/api', () => ({
   getAuthMode: vi.fn(() => Promise.resolve('oauth')),
   getHideDockIcon: vi.fn(() => Promise.resolve(false)),
   setHideDockIcon: vi.fn(),
+  getGatewayFirstResponseTimeoutSeconds: vi.fn(() => Promise.resolve(60)),
+  setGatewayFirstResponseTimeoutSeconds: vi.fn(),
   listTerminalTargets: vi.fn(() =>
     Promise.resolve([
       { id: 'terminal', displayName: 'Terminal.app', kind: 'terminal', installed: true },
@@ -237,10 +239,18 @@ beforeEach(() => {
   const store: Record<string, string> = {};
   vi.stubGlobal('localStorage', {
     getItem: (k: string) => store[k] ?? null,
-    setItem: (k: string, v: string) => { store[k] = v; },
-    removeItem: (k: string) => { delete store[k]; },
-    clear: () => { for (const k in store) delete store[k]; },
-    get length() { return Object.keys(store).length; },
+    setItem: (k: string, v: string) => {
+      store[k] = v;
+    },
+    removeItem: (k: string) => {
+      delete store[k];
+    },
+    clear: () => {
+      for (const k in store) delete store[k];
+    },
+    get length() {
+      return Object.keys(store).length;
+    },
     key: (i: number) => Object.keys(store)[i] ?? null,
   });
   Object.defineProperty(window, 'matchMedia', {
@@ -301,7 +311,7 @@ beforeEach(() => {
     homeRoot: '/tmp',
   });
   vi.mocked(api.listAccounts).mockResolvedValue(accounts);
-  vi.mocked(api.listProvidersV2).mockResolvedValue([]);
+  vi.mocked(api.listProvidersV2).mockResolvedValue({ revision: 0, providers: [] });
   vi.mocked(api.listProfileProviderBindingsV2).mockResolvedValue([]);
   vi.mocked(api.listCachedQuotas).mockResolvedValue([]);
   vi.mocked(api.getUsageSummary).mockResolvedValue(usageSummary);
@@ -1328,6 +1338,27 @@ describe('App handoff modal', () => {
     fireEvent.change(terminalSelect, { target: { value: 'ghostty' } });
 
     await waitFor(() => expect(api.setSelectedTerminalTarget).toHaveBeenCalledWith('ghostty'));
+  });
+
+  it('loads and saves the Gateway first response timeout from settings', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    vi.mocked(api.getGatewayFirstResponseTimeoutSeconds).mockResolvedValue(60);
+    useAppStore.setState({ route: 'settings' });
+
+    render(<App />);
+
+    const input = (await screen.findByLabelText(
+      /gateway first response timeout/i,
+    )) as HTMLInputElement;
+    expect(input.value).toBe('60');
+    fireEvent.change(input, { target: { value: '120' } });
+    fireEvent.blur(input);
+
+    await waitFor(() =>
+      expect(api.setGatewayFirstResponseTimeoutSeconds).toHaveBeenCalledWith(120),
+    );
+    expect(await screen.findByText(/next gateway launch/i)).toBeTruthy();
   });
 
   it('uses Profile Only mode availability from settings', async () => {

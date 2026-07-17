@@ -16,11 +16,13 @@ import { formatError } from '../lib/format';
 
 interface ProviderState {
   providers: ProviderProfileViewV2[];
+  providerStoreRevision: number | null;
   bindings: ProfileProviderBindingViewV2[];
   attachPlan: ProfileAttachPlanViewV2 | null;
   detachPlan: ProfileDetachPlanViewV2 | null;
   loading: boolean;
   recoveryMessage: string;
+  refreshGeneration: number;
   refresh: () => Promise<void>;
   saveProvider: (provider: ProviderDefinitionV2, editing: boolean) => Promise<void>;
   approveAuthCommand: (executable: string, args: string[]) => Promise<string>;
@@ -36,6 +38,13 @@ interface ProviderState {
   previewDetach: (profileId: string) => Promise<ProfileDetachPlanViewV2>;
   executeDetach: () => Promise<void>;
   clearPlans: () => void;
+}
+
+function requiredProviderStoreRevision(state: ProviderState): number {
+  if (state.providerStoreRevision == null) {
+    throw new Error('Provider state has not been loaded');
+  }
+  return state.providerStoreRevision;
 }
 
 const conflictCodes = new Set([
@@ -60,36 +69,66 @@ function structuredError(error: unknown): StructuredErrorViewV2 | null {
   };
 }
 
+async function recoverProviderConflict(
+  error: unknown,
+  clearStaleState: () => void,
+  refresh: () => Promise<void>,
+): Promise<void> {
+  const detail = structuredError(error);
+  if (!detail || !conflictCodes.has(detail.code)) return;
+  clearStaleState();
+  await refresh().catch(() => undefined);
+}
+
 export const useProviderStore = create<ProviderState>()((set, get) => ({
   providers: [],
+  providerStoreRevision: null,
   bindings: [],
   attachPlan: null,
   detachPlan: null,
   loading: false,
   recoveryMessage: '',
+  refreshGeneration: 0,
 
   refresh: async () => {
+    const generation = get().refreshGeneration + 1;
     if (!api.inTauri()) {
-      set({ providers: [], bindings: [], loading: false });
+      set({
+        providers: [],
+        providerStoreRevision: null,
+        bindings: [],
+        loading: false,
+        refreshGeneration: generation,
+      });
       return;
     }
-    set({ loading: true });
+    set({ loading: true, refreshGeneration: generation });
     try {
-      const [providers, bindings] = await Promise.all([
+      const [providerList, bindings] = await Promise.all([
         api.listProvidersV2(),
         api.listProfileProviderBindingsV2(),
       ]);
-      set({ providers, bindings });
+      if (get().refreshGeneration === generation) {
+        set({
+          providers: providerList.providers,
+          providerStoreRevision: providerList.revision,
+          bindings,
+        });
+      }
     } catch (error) {
-      useAppStore.getState().setError(formatError(error));
+      if (get().refreshGeneration === generation) {
+        useAppStore.getState().setError(formatError(error));
+      }
       throw error;
     } finally {
-      set({ loading: false });
+      if (get().refreshGeneration === generation) {
+        set({ loading: false });
+      }
     }
   },
 
   saveProvider: async (provider, editing) => {
-    const expectedRevision = get().providers[0]?.storeRevision ?? 0;
+    const expectedRevision = requiredProviderStoreRevision(get());
     try {
       const request = { expectedRevision, provider };
       if (editing) await api.updateProviderV2(request);
@@ -99,17 +138,16 @@ export const useProviderStore = create<ProviderState>()((set, get) => ({
         .getState()
         .setStatus(`Provider ${provider.id} ${editing ? 'updated' : 'created'}`);
     } catch (error) {
-      const detail = structuredError(error);
-      if (detail && conflictCodes.has(detail.code)) {
-        set({
-          attachPlan: null,
-          detachPlan: null,
-          recoveryMessage: 'Provider state changed. Refresh completed; preview again.',
-        });
-        await get()
-          .refresh()
-          .catch(() => undefined);
-      }
+      await recoverProviderConflict(
+        error,
+        () =>
+          set({
+            attachPlan: null,
+            detachPlan: null,
+            recoveryMessage: 'Provider state changed. Refresh completed; preview again.',
+          }),
+        get().refresh,
+      );
       useAppStore.getState().setError(formatError(error));
       throw error;
     }
@@ -134,19 +172,29 @@ export const useProviderStore = create<ProviderState>()((set, get) => ({
   },
 
   createKeychainProvider: async (provider, secret) => {
-    const expectedRevision = get().providers[0]?.storeRevision ?? 0;
+    const expectedRevision = requiredProviderStoreRevision(get());
     try {
       await api.createProviderWithKeychainV2({ expectedRevision, provider, secret });
       await get().refresh();
       useAppStore.getState().setStatus(`Provider ${provider.id} created`);
     } catch (error) {
+      await recoverProviderConflict(
+        error,
+        () =>
+          set({
+            attachPlan: null,
+            detachPlan: null,
+            recoveryMessage: 'Provider state changed. Refresh completed; preview again.',
+          }),
+        get().refresh,
+      );
       useAppStore.getState().setError(formatError(error));
       throw error;
     }
   },
 
   rotateKeychainCredential: async (providerId, expectedCredential, secret) => {
-    const expectedRevision = get().providers[0]?.storeRevision ?? 0;
+    const expectedRevision = requiredProviderStoreRevision(get());
     try {
       await api.rotateProviderCredentialV2({
         expectedRevision,
@@ -157,6 +205,16 @@ export const useProviderStore = create<ProviderState>()((set, get) => ({
       await get().refresh();
       useAppStore.getState().setStatus(`Provider ${providerId} credential rotated`);
     } catch (error) {
+      await recoverProviderConflict(
+        error,
+        () =>
+          set({
+            attachPlan: null,
+            detachPlan: null,
+            recoveryMessage: 'Provider state changed. Refresh completed; preview again.',
+          }),
+        get().refresh,
+      );
       useAppStore.getState().setError(formatError(error));
       throw error;
     }

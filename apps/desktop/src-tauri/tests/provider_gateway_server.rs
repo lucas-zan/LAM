@@ -44,6 +44,14 @@ impl GatewayRouteHandler for FakeHandler {
             if request.body == b"timeout" {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
+            if request.body == b"retry" {
+                return Ok(GatewayHttpResponse::json(503, serde_json::json!({}))
+                    .with_retry_after(Some("12".into())));
+            }
+            if request.body == b"invalid-retry" {
+                return Ok(GatewayHttpResponse::json(503, serde_json::json!({}))
+                    .with_retry_after(Some("invalid\r\nheader".into())));
+            }
             Ok(GatewayHttpResponse::json(
                 200,
                 serde_json::json!({
@@ -306,6 +314,34 @@ async fn routes_request_ids_cors_and_redacted_observer_are_deterministic() {
     assert!(!encoded.contains("synthetic prompt"));
     assert!(!encoded.contains("LAM_TEST_SECRET"));
     assert!(encoded.contains(&request_id));
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn response_emits_valid_retry_after_and_drops_invalid_header_values() {
+    let server = start(Arc::new(CaptureObserver::default())).await;
+    let client = reqwest::Client::new();
+    let url = format!("http://{}/v1/responses", server.local_addr());
+
+    let retry = client
+        .post(&url)
+        .header("authorization", "Bearer valid")
+        .body("retry")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(retry.status(), 503);
+    assert_eq!(retry.headers()["retry-after"], "12");
+
+    let invalid = client
+        .post(&url)
+        .header("authorization", "Bearer valid")
+        .body("invalid-retry")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), 503);
+    assert!(invalid.headers().get("retry-after").is_none());
     server.shutdown().await.unwrap();
 }
 

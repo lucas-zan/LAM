@@ -1,7 +1,9 @@
 use super::error::{AppError, Result};
 use super::provider_credentials::DirectCodexAuth;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -80,6 +82,32 @@ pub struct AuthHelperRuntime {
     pub state_root: PathBuf,
     pub profile_id: String,
     pub gateway_binding_id: Option<String>,
+}
+
+pub const GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV: &str = "LAM_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECS";
+pub const CODEX_MODEL_CATALOG_ENV: &str = "LAM_CODEX_MODEL_CATALOG_PATH";
+
+pub fn gateway_first_response_timeout_from_env(value: Option<&OsStr>) -> Result<Duration> {
+    let Some(value) = value else {
+        return Ok(Duration::from_secs(
+            super::types::DEFAULT_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS,
+        ));
+    };
+    let seconds = value
+        .to_str()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| {
+            (super::types::MIN_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS
+                ..=super::types::MAX_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS)
+                .contains(seconds)
+        })
+        .ok_or_else(|| {
+            AppError::new(
+                "GATEWAY_TIMEOUT_CONFIG_INVALID",
+                "Gateway first response timeout configuration is invalid",
+            )
+        })?;
+    Ok(Duration::from_secs(seconds))
 }
 
 pub fn resolve_launcher_executable() -> Result<PathBuf> {
@@ -242,7 +270,7 @@ pub fn materialize_codex_auth(
 }
 
 fn validate_helper_executable(path: &Path) -> Result<PathBuf> {
-    validate_runtime_executable(path, "PROVIDER_AUTH_HELPER_INVALID")
+    validate_runtime_executable(path, "AUTH_HELPER_EXECUTABLE_INVALID")
 }
 
 fn validate_runtime_executable(path: &Path, code: &'static str) -> Result<PathBuf> {

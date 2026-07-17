@@ -52,7 +52,7 @@ beforeEach(() => {
     recoveryMessage: '',
   });
   useAppStore.setState({ status: 'Ready', error: '' });
-  vi.mocked(api.listProvidersV2).mockResolvedValue([provider]);
+  vi.mocked(api.listProvidersV2).mockResolvedValue({ revision: 4, providers: [provider] });
   vi.mocked(api.listProfileProviderBindingsV2).mockResolvedValue([]);
   vi.mocked(api.testProviderUpstreamV2).mockResolvedValue({
     providerId: 'company',

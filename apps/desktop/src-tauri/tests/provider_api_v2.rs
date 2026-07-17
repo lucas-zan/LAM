@@ -76,6 +76,18 @@ fn dto_create_request_and_provider_view_have_stable_camel_case_goldens() {
 }
 
 #[test]
+fn dto_provider_list_view_keeps_revision_when_providers_are_empty() {
+    let view = ProviderListViewV2 {
+        revision: 7,
+        providers: Vec::new(),
+    };
+    assert_eq!(
+        serde_json::to_value(view).unwrap(),
+        json!({"revision": 7, "providers": []})
+    );
+}
+
+#[test]
 fn dto_legacy_env_key_and_openai_map_to_responses_with_warning() {
     let legacy: LegacyCreateProviderRequest = serde_json::from_value(json!({
         "id":"legacy", "name":"Legacy", "baseUrl":"https://legacy.example.test/v1",
@@ -185,6 +197,50 @@ fn service_provider_crud_and_views_are_revision_aware() {
             .code,
         "STORE_REVISION_CONFLICT"
     );
+}
+
+#[test]
+fn service_provider_list_exposes_the_collection_revision() {
+    let root = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+
+    let empty = list_provider_hub_view_v2(root.path()).unwrap();
+    assert_eq!(empty.revision, 0);
+    assert!(empty.providers.is_empty());
+
+    create_provider_service_v2(root.path(), service_request(0), "2026-07-16T00:00:00Z").unwrap();
+    let populated = list_provider_hub_view_v2(root.path()).unwrap();
+    assert_eq!(populated.revision, 1);
+    assert_eq!(populated.providers.len(), 1);
+    assert_eq!(populated.providers[0].store_revision, 1);
+
+    let hub_root = localagentmanager_core::ProviderHubPaths::for_home(root.path())
+        .ensure_canonical_root()
+        .unwrap();
+    let repository = localagentmanager_core::ProviderRepository::new(
+        localagentmanager_core::VersionedFileStore::<
+            localagentmanager_core::ProviderCollection,
+        >::new(
+            hub_root.join("providers.json"),
+            localagentmanager_core::InstallationLock::new(
+                hub_root.join("provider-hub.lock"),
+                Duration::from_secs(2),
+            ),
+            1,
+            localagentmanager_core::StoreOptions::default(),
+        ),
+    );
+    repository.delete(1, "service-provider").unwrap();
+
+    let deleted = list_provider_hub_view_v2(root.path()).unwrap();
+    assert_eq!(deleted.revision, 2);
+    assert!(deleted.providers.is_empty());
+
+    let recreated =
+        create_provider_service_v2(root.path(), service_request(2), "2026-07-16T00:01:00Z")
+            .unwrap();
+    assert_eq!(recreated.store_revision, 3);
 }
 
 #[test]
@@ -552,4 +608,21 @@ fn service_creates_hmac_bound_auth_command_approval_reference() {
     .unwrap();
     assert!(!persisted.contains("synthetic-token"));
     assert!(!persisted.contains(&hex::encode([9_u8; 32])));
+}
+
+#[test]
+fn provider_list_builder_is_snapshot_typed_and_keeps_readiness_io_outside() {
+    let source = include_str!("../src/services/provider_api_v2.rs");
+    let builder_start = source.find("fn build_provider_views(").unwrap();
+    let builder_tail = &source[builder_start..];
+    let builder_end = builder_tail
+        .find("\nfn apply_provider_readiness(")
+        .unwrap_or(builder_tail.len());
+    let builder = &builder_tail[..builder_end];
+
+    assert!(builder.contains("providers: &StoreSnapshot<ProviderCollection>"));
+    assert!(builder.contains("readiness: &BTreeMap<String, ProviderViewReadiness>"));
+    assert!(!builder.contains("ProductionCredentialResolver"));
+    assert!(!builder.contains("fs::read"));
+    assert!(!builder.contains("apply_provider_readiness("));
 }

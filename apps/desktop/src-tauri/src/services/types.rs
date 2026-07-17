@@ -243,6 +243,58 @@ pub(crate) fn settings_file_path(home_root: &Path) -> PathBuf {
     config_root(home_root).join("settings.json")
 }
 
+pub const DEFAULT_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS: u64 = 60;
+pub const MIN_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS: u64 = 10;
+pub const MAX_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS: u64 = 600;
+
+pub fn gateway_first_response_timeout_seconds(home_root: &Path) -> u64 {
+    let settings_path = settings_file_path(home_root);
+    let Ok(content) = fs::read_to_string(settings_path) else {
+        return DEFAULT_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS;
+    };
+    let Ok(settings) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return DEFAULT_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS;
+    };
+    settings
+        .get("gatewayFirstResponseTimeoutSeconds")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|value| {
+            (MIN_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS
+                ..=MAX_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS)
+                .contains(value)
+        })
+        .unwrap_or(DEFAULT_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS)
+}
+
+pub fn set_gateway_first_response_timeout_seconds(home_root: &Path, seconds: u64) -> Result<()> {
+    if !(MIN_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS..=MAX_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS)
+        .contains(&seconds)
+    {
+        return Err(AppError::new(
+            "GATEWAY_TIMEOUT_CONFIG_INVALID",
+            "Gateway first response timeout must be between 10 and 600 seconds",
+        ));
+    }
+    let settings_path = settings_file_path(home_root);
+    let config_dir = config_root(home_root);
+    fs::create_dir_all(&config_dir)?;
+    let mut settings = if settings_path.exists() {
+        fs::read_to_string(&settings_path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .unwrap_or_else(|| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    if let Some(object) = settings.as_object_mut() {
+        object.insert(
+            "gatewayFirstResponseTimeoutSeconds".into(),
+            serde_json::Value::from(seconds),
+        );
+    }
+    write_file_private(&settings_path, &settings.to_string())
+}
+
 /// Gets the current auth mode (oauth or pat)
 pub fn get_auth_mode(home_root: &Path) -> Result<String> {
     let settings_path = settings_file_path(home_root);

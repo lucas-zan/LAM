@@ -1,16 +1,17 @@
 use localagentmanager_core::{
     attach_provider_to_profile, build_resume_command, create_account_plan, create_provider,
     create_relay_plan, delete_provider, execute_attach_provider_to_profile, execute_create_account,
-    execute_create_relay, execute_rename_account, execute_sync, get_profile_quota, list_accounts,
-    list_cached_accounts, list_cached_quotas, list_providers, list_sessions, list_terminal_targets,
+    execute_create_relay, execute_rename_account, execute_sync,
+    gateway_first_response_timeout_seconds, get_profile_quota, list_accounts, list_cached_accounts,
+    list_cached_quotas, list_providers, list_sessions, list_terminal_targets,
     plan_attach_provider_to_profile, refresh_all_quotas, relay_resume_session, rename_account_plan,
     repair_managed_wrappers, reset_profile_quota, resolve_home_root, selected_terminal_target_id,
-    set_selected_terminal_target_id, sync_plan, terminal_applescript, update_account_note,
-    AccountNoteUpdate, AttachProviderRequest, CreateAccountRequest, CreateProviderRequest,
-    CreateRelayRequest, InstallationLock, ManagedConfigProjection, ProfileBindingCollection,
-    ProfileProviderBinding, ProjectionOwnership, ProviderHubPaths, RelayResumeRequest,
-    RenameAccountRequest, ResumeCommandRequest, SecretInput, StoreOptions, SyncRequest,
-    VersionedFileStore,
+    set_gateway_first_response_timeout_seconds, set_selected_terminal_target_id, sync_plan,
+    terminal_applescript, update_account_note, AccountNoteUpdate, AttachProviderRequest,
+    CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, InstallationLock,
+    ManagedConfigProjection, ProfileBindingCollection, ProfileProviderBinding, ProjectionOwnership,
+    ProviderHubPaths, RelayResumeRequest, RenameAccountRequest, ResumeCommandRequest, SecretInput,
+    StoreOptions, SyncRequest, VersionedFileStore,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -49,6 +50,37 @@ fn desktop_html_title_uses_lam_name() {
 
     assert!(index.contains("<title>LAM</title>"));
     assert!(!index.contains("LocalAgentManager"));
+}
+
+#[test]
+fn gateway_first_response_timeout_setting_defaults_validates_and_preserves_settings() {
+    let home = tempfile::tempdir().unwrap();
+    assert_eq!(gateway_first_response_timeout_seconds(home.path()), 60);
+
+    localagentmanager_core::set_auth_mode(home.path(), "pat").unwrap();
+    set_gateway_first_response_timeout_seconds(home.path(), 120).unwrap();
+    assert_eq!(gateway_first_response_timeout_seconds(home.path()), 120);
+    assert_eq!(
+        localagentmanager_core::get_auth_mode(home.path()).unwrap(),
+        "pat"
+    );
+
+    assert_eq!(
+        set_gateway_first_response_timeout_seconds(home.path(), 9)
+            .unwrap_err()
+            .code,
+        "GATEWAY_TIMEOUT_CONFIG_INVALID"
+    );
+    assert_eq!(
+        set_gateway_first_response_timeout_seconds(home.path(), 601)
+            .unwrap_err()
+            .code,
+        "GATEWAY_TIMEOUT_CONFIG_INVALID"
+    );
+
+    let settings = home.path().join(".config/agent-workspace/settings.json");
+    fs::write(&settings, r#"{"gatewayFirstResponseTimeoutSeconds":"bad"}"#).unwrap();
+    assert_eq!(gateway_first_response_timeout_seconds(home.path()), 60);
 }
 
 #[test]
@@ -332,9 +364,8 @@ fn creates_managed_account_with_plan_and_safe_wrapper() {
     assert!(!result.home_path.join("auth.json").exists());
     let wrapper = fs::read_to_string(result.wrapper_path).unwrap();
     assert!(wrapper.contains("export CODEX_HOME=\"$HOME/.codex-luna\""));
-    assert!(wrapper.contains("/lam' codex --profile 'luna' -- \"$@\""));
-    assert!(!wrapper.contains("exec 'lam' codex"));
-    assert!(!wrapper.contains("exec \"$CODEX_BIN\""));
+    assert!(wrapper.contains("exec \"$CODEX_BIN\" \"$@\""));
+    assert!(!wrapper.contains("lam codex"));
 }
 
 #[test]
@@ -365,8 +396,8 @@ fn repair_managed_wrappers_replaces_stale_and_missing_files_only() {
     assert_eq!(repaired.len(), 2);
     for name in ["stale", "missing"] {
         let wrapper = fs::read_to_string(home.join(format!("bin/codex-{name}"))).unwrap();
-        assert!(wrapper.contains(&format!("codex --profile '{name}' -- \"$@\"")));
-        assert!(!wrapper.contains("exec 'lam' codex"));
+        assert!(wrapper.contains("exec \"$CODEX_BIN\" \"$@\""));
+        assert!(!wrapper.contains("lam codex"));
     }
     assert_eq!(
         fs::read_to_string(&external).unwrap(),

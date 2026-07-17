@@ -1409,6 +1409,8 @@ export function Settings({
   resetUsageStatistics,
   compactButtons,
   setCompactButtons,
+  gatewayFirstResponseTimeoutSeconds,
+  setGatewayFirstResponseTimeoutSeconds,
 }: {
   health: HealthCheck | null;
   themeMode: 'system' | 'light' | 'dark';
@@ -1425,6 +1427,8 @@ export function Settings({
   resetUsageStatistics: () => void;
   compactButtons: boolean;
   setCompactButtons: (compact: boolean) => void;
+  gatewayFirstResponseTimeoutSeconds: number;
+  setGatewayFirstResponseTimeoutSeconds: (seconds: number) => void;
 }) {
   const [rateCard, setRateCard] = useState<UsageRateCardEntry[]>([]);
   const [activeTab, setActiveTab] = useState<'general' | 'advanced' | 'rate-card' | 'system'>(
@@ -1432,6 +1436,22 @@ export function Settings({
   );
   const [rateCardSearch, setRateCardSearch] = useState('');
   const [copiedHomeRoot, setCopiedHomeRoot] = useState(false);
+  const [gatewayTimeoutDraft, setGatewayTimeoutDraft] = useState(
+    String(gatewayFirstResponseTimeoutSeconds),
+  );
+
+  useEffect(() => {
+    setGatewayTimeoutDraft(String(gatewayFirstResponseTimeoutSeconds));
+  }, [gatewayFirstResponseTimeoutSeconds]);
+
+  const commitGatewayTimeout = () => {
+    const seconds = Number(gatewayTimeoutDraft);
+    if (!Number.isInteger(seconds) || seconds < 10 || seconds > 600) {
+      setGatewayTimeoutDraft(String(gatewayFirstResponseTimeoutSeconds));
+      return;
+    }
+    setGatewayFirstResponseTimeoutSeconds(seconds);
+  };
 
   const installedTerminalTargets = terminalTargets.filter((target) => target.installed);
   useEffect(() => {
@@ -1674,6 +1694,37 @@ export function Settings({
                       <option value="prefer_source">Prefer source with backup</option>
                       <option value="prefer_target">Prefer target and save source fork</option>
                     </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="settingsSectionTitle">Gateway Timeouts</div>
+              <div className="settingsGroupCard">
+                <div className="settingsRowLayout">
+                  <div className="settingsRowInfo">
+                    <label htmlFor="gatewayFirstResponseTimeout" className="settingsRowTitle">
+                      Gateway first response timeout
+                    </label>
+                    <p className="settingsRowDesc">
+                      Maximum seconds to wait for upstream response headers. Valid range: 10–600.
+                      Changes apply on the next Gateway launch; LAM will not restart it
+                      automatically.
+                    </p>
+                  </div>
+                  <div className="settingsRowControl">
+                    <input
+                      id="gatewayFirstResponseTimeout"
+                      type="number"
+                      min={10}
+                      max={600}
+                      step={1}
+                      value={gatewayTimeoutDraft}
+                      onChange={(event) => setGatewayTimeoutDraft(event.target.value)}
+                      onBlur={commitGatewayTimeout}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') commitGatewayTimeout();
+                      }}
+                    />
                   </div>
                 </div>
               </div>

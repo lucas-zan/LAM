@@ -27,6 +27,7 @@ interface AppState {
   terminalTargets: TerminalTarget[];
   terminalTargetId: string;
   compactButtons: boolean;
+  gatewayFirstResponseTimeoutSeconds: number;
 
   setRoute: (route: Route) => void;
   setThemeMode: (mode: ThemeMode) => void;
@@ -40,6 +41,7 @@ interface AppState {
   setHideDockIcon: (hide: boolean) => Promise<void>;
   setTerminalTargetId: (targetId: string) => Promise<void>;
   setCompactButtons: (compact: boolean) => void;
+  setGatewayFirstResponseTimeoutSeconds: (seconds: number) => Promise<void>;
   loadSettings: () => Promise<void>;
 }
 
@@ -63,6 +65,7 @@ export const useAppStore = create<AppState>()(
       const saved = localStorage.getItem('lam-compact-buttons');
       return saved === null ? true : saved === 'true';
     })(),
+    gatewayFirstResponseTimeoutSeconds: 60,
 
     setRoute: (route) => set({ route }),
     setThemeMode: (themeMode) => {
@@ -96,14 +99,29 @@ export const useAppStore = create<AppState>()(
       localStorage.setItem('lam-compact-buttons', String(compact));
       set({ compactButtons: compact });
     },
+    setGatewayFirstResponseTimeoutSeconds: async (seconds) => {
+      try {
+        await api.setGatewayFirstResponseTimeoutSeconds(seconds);
+        set({ gatewayFirstResponseTimeoutSeconds: seconds });
+      } catch (err) {
+        set({ error: err instanceof Error ? err.message : 'Failed to save Gateway timeout' });
+      }
+    },
     loadSettings: async () => {
       try {
-        const [hide, terminalTargets, terminalTargetId] = await Promise.all([
-          api.getHideDockIcon(),
-          api.listTerminalTargets(),
-          api.getSelectedTerminalTarget(),
-        ]);
-        set({ hideDockIcon: hide, terminalTargets, terminalTargetId });
+        const [hide, terminalTargets, terminalTargetId, gatewayFirstResponseTimeoutSeconds] =
+          await Promise.all([
+            api.getHideDockIcon(),
+            api.listTerminalTargets(),
+            api.getSelectedTerminalTarget(),
+            api.getGatewayFirstResponseTimeoutSeconds(),
+          ]);
+        set({
+          hideDockIcon: hide,
+          terminalTargets,
+          terminalTargetId,
+          gatewayFirstResponseTimeoutSeconds,
+        });
       } catch (err) {
         console.error('Failed to load settings:', err);
       }

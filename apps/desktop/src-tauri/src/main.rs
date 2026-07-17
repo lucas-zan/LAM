@@ -149,6 +149,8 @@ fn main() {
             commands::update_pat_session_auth,
             commands::get_auth_mode,
             commands::set_auth_mode,
+            commands::get_gateway_first_response_timeout_seconds,
+            commands::set_gateway_first_response_timeout_seconds,
             commands::get_hide_dock_icon,
             commands::set_hide_dock_icon,
             commands::restart_chatgpt,

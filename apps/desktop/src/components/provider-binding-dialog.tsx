@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
   PlanAttachRequestV2,
   ProfileAttachPlanViewV2,
@@ -37,14 +37,21 @@ export function ProviderBindingDialog({
   onClearPlan: () => void;
   onClose: () => void;
 }) {
-  const [openedAt] = useState(() => Date.now());
-  const effectiveNow = nowMs ?? openedAt;
+  const plan = mode === 'attach' ? attachPlan : detachPlan;
+  const [tickNow, setTickNow] = useState(() => Date.now());
+  const effectiveNow = nowMs ?? tickNow;
   const [profileId, setProfileId] = useState(binding?.profileId ?? profiles[0] ?? '');
   const [selectedModel, setSelectedModel] = useState(
     binding?.selectedModel ?? provider.defaultModel,
   );
-  const plan = mode === 'attach' ? attachPlan : detachPlan;
   const expired = Boolean(plan && plan.expiresAtMs <= effectiveNow);
+
+  useEffect(() => {
+    if (nowMs != null || !plan || expired) return;
+    const timer = window.setInterval(() => setTickNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [expired, nowMs, plan]);
+
   const attachMatches =
     attachPlan?.profileId === profileId &&
     attachPlan.providerId === provider.id &&

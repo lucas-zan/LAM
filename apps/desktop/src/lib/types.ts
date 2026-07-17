@@ -678,6 +678,11 @@ export type ProviderProfileViewV2 = {
   };
 };
 
+export type ProviderListViewV2 = {
+  revision: number;
+  providers: ProviderProfileViewV2[];
+};
+
 export type CreateProviderWithKeychainRequestV2 = {
   expectedRevision: number;
   provider: ProviderDefinitionV2;

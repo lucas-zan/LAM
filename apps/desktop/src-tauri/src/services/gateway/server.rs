@@ -55,6 +55,7 @@ pub struct GatewayHttpResponse {
     status: StatusCode,
     content_type: String,
     body: Body,
+    retry_after: Option<String>,
     usage: Option<RequestUsageMetadata>,
     retry_count: u8,
 }
@@ -65,6 +66,7 @@ impl GatewayHttpResponse {
             status: StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             content_type: "application/json".into(),
             body: Body::from(serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec())),
+            retry_after: None,
             usage: None,
             retry_count: 0,
         }
@@ -75,9 +77,15 @@ impl GatewayHttpResponse {
             status: StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             content_type: content_type.into(),
             body,
+            retry_after: None,
             usage: None,
             retry_count: 0,
         }
+    }
+
+    pub fn with_retry_after(mut self, retry_after: Option<String>) -> Self {
+        self.retry_after = retry_after;
+        self
     }
 
     pub fn with_metrics(mut self, usage: Option<RequestUsageMetadata>, attempts: u8) -> Self {
@@ -92,6 +100,10 @@ impl GatewayHttpResponse {
 
     pub fn content_type(&self) -> &str {
         &self.content_type
+    }
+
+    pub fn retry_after(&self) -> Option<&str> {
+        self.retry_after.as_deref()
     }
 
     pub fn usage(&self) -> Option<&RequestUsageMetadata> {
@@ -119,6 +131,13 @@ impl GatewayHttpResponse {
         response
             .headers_mut()
             .insert("cache-control", HeaderValue::from_static("no-store"));
+        if let Some(value) = self
+            .retry_after
+            .as_deref()
+            .and_then(|value| HeaderValue::from_str(value).ok())
+        {
+            response.headers_mut().insert("retry-after", value);
+        }
         response
     }
 }

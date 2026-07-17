@@ -30,7 +30,7 @@ use super::provider_v2::{
     CodexProviderOptions, ProviderCollection, ProviderInput, ProviderModel, ProviderProfileV2,
     ProviderProtocol, ProviderRepository,
 };
-use super::storage::{InstallationLock, StoreOptions, VersionedFileStore};
+use super::storage::{InstallationLock, StoreOptions, StoreSnapshot, VersionedFileStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -42,7 +42,32 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
-use toml_edit::{value, DocumentMut};
+use toml_edit::{value, DocumentMut, Item};
+
+const API_ACCOUNT_CODEX_CONFIG_TEMPLATE: &str =
+    include_str!("../../resources/codex-config-template.toml");
+const API_ACCOUNT_SAFE_TOP_LEVEL_KEYS: &[&str] = &[
+    "model_reasoning_effort",
+    "model_reasoning_summary",
+    "model_verbosity",
+    "personality",
+    "service_tier",
+    "approvals_reviewer",
+    "approval_policy",
+    "sandbox_mode",
+    "web_search",
+    "plan_mode_reasoning_effort",
+    "model_context_window",
+    "model_auto_compact_token_limit",
+    "tool_output_token_limit",
+    "project_doc_max_bytes",
+    "hide_agent_reasoning",
+    "show_raw_agent_reasoning",
+    "disable_response_storage",
+    "check_for_update_on_startup",
+    "suppress_unstable_features_warning",
+];
+const API_ACCOUNT_SAFE_FEATURE_KEYS: &[&str] = &["multi_agent", "js_repl"];
 
 pub trait ProviderCredentialResolver {
     fn resolve(&self, source: &CredentialSource) -> Result<SecretValue>;
@@ -370,6 +395,13 @@ pub struct ProviderProfileView {
     pub capabilities: EffectiveCapabilities,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_health: Option<ProviderHealthObservationV2>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderListViewV2 {
+    pub revision: u64,
+    pub providers: Vec<ProviderProfileView>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -1536,47 +1568,91 @@ pub fn update_provider_service_v2(
 }
 
 pub fn list_provider_views_service_v2(home_root: &Path) -> Result<Vec<ProviderProfileView>> {
+    Ok(list_provider_hub_view_v2(home_root)?.providers)
+}
+
+pub fn list_provider_hub_view_v2(home_root: &Path) -> Result<ProviderListViewV2> {
     let stores = provider_hub_stores(home_root)?;
     let providers = stores.providers.load_or_default()?;
     let bindings = stores.bindings.load_or_default()?;
     let health = stores.health.load_or_default()?;
-    Ok(providers
+    let readiness =
+        collect_provider_view_readiness(home_root, &providers, &bindings.value, &health.value);
+    let views = build_provider_views(&providers, &bindings.value, &readiness);
+    Ok(ProviderListViewV2 {
+        revision: providers.revision,
+        providers: views,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct ProviderViewReadiness {
+    blockers: Vec<String>,
+    binding_count: usize,
+    last_health: Option<ProviderHealthObservationV2>,
+}
+
+fn collect_provider_view_readiness(
+    home_root: &Path,
+    providers: &StoreSnapshot<ProviderCollection>,
+    bindings: &ProfileBindingCollection,
+    health: &ProviderHealthCollectionV2,
+) -> BTreeMap<String, ProviderViewReadiness> {
+    let resolver = ProductionCredentialResolver { home_root };
+    let gateway_available = super::provider_runtime::resolve_auth_helper_executable().is_ok();
+    providers
         .value
         .providers
         .iter()
         .map(|provider| {
-            let used_by: Vec<String> = bindings
-                .value
-                .bindings
-                .iter()
-                .filter(|binding| binding.provider_id == provider.id)
-                .map(|binding| binding.profile_id.clone())
-                .collect();
-            let mut view =
-                ProviderProfileView::from_domain(provider, providers.revision, used_by.clone());
             let provider_bindings = bindings
-                .value
                 .bindings
                 .iter()
                 .filter(|binding| binding.provider_id == provider.id)
                 .collect::<Vec<_>>();
             let last_health = health
-                .value
                 .observations
                 .iter()
                 .find(|observation| observation.provider_id == provider.id);
-            apply_provider_readiness(
-                &mut view,
+            let readiness = evaluate_provider_readiness(
                 provider,
                 providers.revision,
                 &provider_bindings,
                 last_health,
-                &ProductionCredentialResolver { home_root },
-                super::provider_runtime::resolve_auth_helper_executable().is_ok(),
+                &resolver,
+                gateway_available,
+            );
+            (provider.id.clone(), readiness)
+        })
+        .collect()
+}
+
+fn build_provider_views(
+    providers: &StoreSnapshot<ProviderCollection>,
+    bindings: &ProfileBindingCollection,
+    readiness: &BTreeMap<String, ProviderViewReadiness>,
+) -> Vec<ProviderProfileView> {
+    providers
+        .value
+        .providers
+        .iter()
+        .map(|provider| {
+            let used_by = bindings
+                .bindings
+                .iter()
+                .filter(|binding| binding.provider_id == provider.id)
+                .map(|binding| binding.profile_id.clone())
+                .collect();
+            let mut view = ProviderProfileView::from_domain(provider, providers.revision, used_by);
+            apply_provider_readiness_outcome(
+                &mut view,
+                readiness
+                    .get(&provider.id)
+                    .expect("readiness collected for every Provider"),
             );
             view
         })
-        .collect())
+        .collect()
 }
 
 fn apply_provider_readiness(
@@ -1588,6 +1664,25 @@ fn apply_provider_readiness(
     resolver: &dyn ProviderCredentialResolver,
     gateway_available: bool,
 ) {
+    let readiness = evaluate_provider_readiness(
+        provider,
+        provider_store_revision,
+        bindings,
+        last_health,
+        resolver,
+        gateway_available,
+    );
+    apply_provider_readiness_outcome(view, &readiness);
+}
+
+fn evaluate_provider_readiness(
+    provider: &ProviderProfileV2,
+    provider_store_revision: u64,
+    bindings: &[&ProfileProviderBinding],
+    last_health: Option<&ProviderHealthObservationV2>,
+    resolver: &dyn ProviderCredentialResolver,
+    gateway_available: bool,
+) -> ProviderViewReadiness {
     let mut blockers = provider_readiness_blockers(provider, resolver, gateway_available);
     let provider_bytes = serde_json::to_vec(provider).expect("serializable Provider");
     let provider_fingerprint = hex::encode(Sha256::digest(provider_bytes));
@@ -1614,16 +1709,27 @@ fn apply_provider_readiness(
                     .unwrap_or_else(|| "PROVIDER_HEALTH_UNAVAILABLE".into()),
             );
         }
-        view.last_health = Some(observation.clone());
     }
     blockers.sort();
     blockers.dedup();
-    view.readiness_blockers = blockers.clone();
-    view.readiness = ProviderReadinessViewV2 {
-        ready: blockers.is_empty(),
+    ProviderViewReadiness {
         blockers,
         binding_count: bindings.len(),
+        last_health: last_health.cloned(),
+    }
+}
+
+fn apply_provider_readiness_outcome(
+    view: &mut ProviderProfileView,
+    readiness: &ProviderViewReadiness,
+) {
+    view.readiness_blockers = readiness.blockers.clone();
+    view.readiness = ProviderReadinessViewV2 {
+        ready: readiness.blockers.is_empty(),
+        blockers: readiness.blockers.clone(),
+        binding_count: readiness.binding_count,
     };
+    view.last_health = readiness.last_health.clone();
 }
 
 fn provider_readiness_blockers(
@@ -2171,13 +2277,18 @@ pub fn execute_api_account_service_v2_with_fault(
 
     create_api_account_journal(home_root, &request.plan_id, &plan)?;
 
-    let account = match super::account::execute_create_account(
+    let account_route_kind = match plan.route_kind {
+        RouteKindDto::Direct => super::provider_binding::RouteKind::Direct,
+        RouteKindDto::Gateway => super::provider_binding::RouteKind::Gateway,
+    };
+    let account = match super::account::execute_create_account_with_route(
         home_root,
         &super::account::CreateAccountRequest {
             name: plan.request.account_name.clone(),
             copy_config_from: None,
             overwrite_wrapper: plan.request.overwrite_wrapper,
         },
+        account_route_kind,
     ) {
         Ok(account) => account,
         Err(error) => {
@@ -2185,7 +2296,7 @@ pub fn execute_api_account_service_v2_with_fault(
             return Err(error);
         }
     };
-    if let Err(error) = ensure_empty_api_account_config(&account.home_path) {
+    if let Err(error) = ensure_api_account_config(home_root, &account.home_path) {
         compensate_api_account_creation(home_root, &request.plan_id, &plan, None)?;
         return Err(error);
     }
@@ -2778,21 +2889,53 @@ fn api_account_fault() -> AppError {
     )
 }
 
-fn ensure_empty_api_account_config(codex_home: &Path) -> Result<()> {
+fn ensure_api_account_config(home_root: &Path, codex_home: &Path) -> Result<()> {
     let path = codex_home.join("config.toml");
     if path.exists() {
         return Err(AppError::new(
             "API_ACCOUNT_CONFIG_ALREADY_EXISTS",
-            "new API Account config must start empty",
+            "new API Account config must not already exist",
         ));
     }
-    fs::write(&path, b"")?;
+    let contents = api_account_config_contents(home_root)?;
+    fs::write(&path, contents.as_bytes())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
+}
+
+fn api_account_config_contents(home_root: &Path) -> Result<String> {
+    let mut template = API_ACCOUNT_CODEX_CONFIG_TEMPLATE
+        .parse::<DocumentMut>()
+        .map_err(|error| AppError::new("API_ACCOUNT_TEMPLATE_INVALID", error.to_string()))?;
+    let source = match fs::read_to_string(home_root.join(".codex").join("config.toml")) {
+        Ok(contents) => contents.parse::<DocumentMut>().ok(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let Some(source) = source else {
+        return Ok(template.to_string());
+    };
+
+    for key in API_ACCOUNT_SAFE_TOP_LEVEL_KEYS {
+        if let Some(item) = source.get(key).filter(|item| item.is_value()) {
+            template[key] = item.clone();
+        }
+    }
+    if let (Some(source_features), Some(template_features)) = (
+        source.get("features").and_then(Item::as_table_like),
+        template.get_mut("features").and_then(Item::as_table_mut),
+    ) {
+        for key in API_ACCOUNT_SAFE_FEATURE_KEYS {
+            if let Some(item) = source_features.get(key).filter(|item| item.is_value()) {
+                template_features.insert(key, item.clone());
+            }
+        }
+    }
+    Ok(template.to_string())
 }
 
 pub fn rotate_provider_credential_system_service_v2(

@@ -76,6 +76,8 @@
 
 ## 2. P0：Provider 空列表丢失 revision
 
+> **状态（2026-07-16）**：已完成并通过验收。实现采用 `ProviderListViewV2 { revision, providers }` 原子升级现有 V2 命令；全仓审计未发现独立外部调用者。执行记录见 `docs/todo-provider-revision-bugfix.md`。
+
 ### 2.1 已确认的根因
 
 前端 Provider 写操作当前从列表第一项推导 store revision：
@@ -90,7 +92,7 @@ const expectedRevision = get().providers[0]?.storeRevision ?? 0;
 - `createKeychainProvider`。
 - `rotateKeychainCredential`。
 
-后端 `list_providers_v2` 只返回 `Vec<ProviderProfileView>`。当 Provider 集合为空时，数组无法表达集合本身的 revision，前端只能错误回退为 `0`。
+修复前，后端 `list_providers_v2` 只返回 `Vec<ProviderProfileView>`。当 Provider 集合为空时，数组无法表达集合本身的 revision，前端只能错误回退为 `0`。
 
 真实可达的普通操作路径：
 
@@ -315,6 +317,8 @@ set(result);
 ---
 
 ## 3. P1：Attach/Detach 计划倒计时冻结
+
+> **状态（2026-07-16）**：验证成功。Dialog 使用仅在未注入 `nowMs` 且 plan 未过期时运行的内部时钟；到期自动禁用执行并清理 interval。执行记录见 `docs/todo-provider-plan-countdown-fix.md`。
 
 ### 3.1 根因
 
@@ -913,20 +917,24 @@ Gateway 并发改造至少记录以下脱敏指标：
 
 ### Stage 1：Provider revision 契约修复
 
+**状态**：验证成功（2026-07-16）。
+
+补充验收（2026-07-16）：所有 Provider 写入口现已统一处理 CAS 冲突，Keychain 创建和 credential rotation 会清理旧 plan、刷新快照且不重放写请求；前端 API 边界会明确拒绝旧数组或畸形 Provider 列表响应；readiness I/O 已与纯 DTO 构建分离，纯构建函数直接消费同一个 `StoreSnapshot<ProviderCollection>`。执行记录见 `docs/todo-provider-stage1-completion.md`。
+
 目标：消除空 Provider 集合导致的直接创建持续冲突，不修改 Gateway 并发。
 
 任务：
 
-- [ ] 新增 `ProviderListViewV2`。
-- [ ] 抽取不执行 I/O 的 `build_provider_views`。
-- [ ] 保证 Provider 内容与 revision 来自同一次 Store 读取。
-- [ ] 明确 bindings/health 为最终一致，或显式使用共同 lock guard；不得含糊描述。
-- [ ] 按调用者情况选择原命令升级或新增版本化命令。
-- [ ] 前端新增 `providerStoreRevision: number | null`。
-- [ ] 增加 refresh generation，防止旧响应覆盖新状态。
-- [ ] 删除所有从 `providers[0]` 推导 revision 的代码。
-- [ ] CAS 冲突改为刷新并重新确认，不做通用自动重试。
-- [ ] 补“删除最后一个独占 Provider 后再次创建”的后端和 UI 回归测试。
+- [x] 新增 `ProviderListViewV2`。
+- [x] 抽取不执行 I/O 的 `build_provider_views`。
+- [x] 保证 Provider 内容与 revision 来自同一次 Store 读取。
+- [x] 明确 bindings/health 为最终一致，或显式使用共同 lock guard；不得含糊描述。
+- [x] 按调用者情况选择原命令升级或新增版本化命令。
+- [x] 前端新增 `providerStoreRevision: number | null`。
+- [x] 增加 refresh generation，防止旧响应覆盖新状态。
+- [x] 删除所有从 `providers[0]` 推导 revision 的代码。
+- [x] CAS 冲突改为刷新并重新确认，不做通用自动重试。
+- [x] 补“删除最后一个独占 Provider 后再次创建”的后端和 UI 回归测试。
 
 禁止事项：
 
@@ -943,17 +951,20 @@ Stage 验收：见 2.7，并要求所有调用者和契约测试完成更新。
 
 ### Stage 2：计划时钟与 Supervisor 状态机
 
+**状态**：验证成功（2026-07-17）。执行和测试记录见
+`docs/todo-provider-stage2-completion.md`。
+
 目标：修复独立 UX 问题和恢复可靠性，不修改请求调度。
 
 任务：
 
-- [ ] Dialog 使用可注入、可清理的走动时钟。
-- [ ] 抽象 ProcessInspector 和 GatewayIdentityProbe。
-- [ ] Supervisor 实现 Healthy/Suspect/Degraded/Recovering/Stopped/Starting 状态机。
-- [ ] 加入 UID、executable、install/instance identity 验证。
-- [ ] 明确连续失败阈值、bounded retry 和状态转换日志。
-- [ ] 启动前验证旧实例退出、stable port、control socket 和 state claim。
-- [ ] 补 PID 复用、瞬时 control timeout、未知进程不得误杀和 split-brain 测试。
+- [x] Dialog 使用可注入、可清理的走动时钟。
+- [x] 抽象 ProcessInspector 和 GatewayIdentityProbe。
+- [x] Supervisor 实现 Healthy/Suspect/Degraded/Recovering/Stopped/Starting 状态机。
+- [x] 加入 UID、executable、install/instance identity 验证。
+- [x] 明确连续失败阈值、bounded retry 和状态转换日志。
+- [x] 启动前验证旧实例退出、stable port、control socket 和 state claim。
+- [x] 补 PID 复用、瞬时 control timeout、未知进程不得误杀和 split-brain 测试。
 
 禁止事项：
 

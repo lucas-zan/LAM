@@ -1,6 +1,7 @@
 use localagentmanager_core::adapters::protocol::{
     extract_responses_usage, parse_responses_passthrough, parse_responses_request, ChatChunk,
-    ChatCompletionResponse, ProtocolErrorCode, ResponsesInputItem, ResponsesTool, MAX_REQUEST_BYTES,
+    ChatCompletionResponse, ProtocolErrorCode, ResponsesInputItem, ResponsesTool,
+    MAX_REQUEST_BYTES,
 };
 use serde_json::Value;
 use std::fs;

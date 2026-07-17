@@ -111,6 +111,39 @@ fn explicit_responses_gateway_route_uses_gateway_auth_without_an_adapter() {
 }
 
 #[test]
+fn gateway_projection_uses_a_custom_provider_identity_for_local_compact() {
+    let mut gateway_provider = provider(ProviderProtocol::Responses);
+    gateway_provider.name = "OpenAI".into();
+    gateway_provider.codex.route_via_gateway = true;
+    let gateway_route = plan_provider_route(RoutePlanInput {
+        provider: gateway_provider,
+        selected_model: "model-a".into(),
+        adapters: AdapterCatalog::standard(),
+    });
+    let gateway_plan = plan_profile_attach(gateway_route, context());
+    assert_eq!(
+        gateway_plan.config_projection.display_name,
+        "LAM Gateway · OpenAI"
+    );
+    assert_ne!(gateway_plan.config_projection.display_name, "OpenAI");
+    assert_ne!(gateway_plan.config_projection.display_name, "Azure");
+    assert!(gateway_plan
+        .config_projection
+        .base_url
+        .starts_with("http://127.0.0.1:"));
+
+    let mut direct_provider = provider(ProviderProtocol::Responses);
+    direct_provider.name = "Company API".into();
+    let direct_route = plan_provider_route(RoutePlanInput {
+        provider: direct_provider,
+        selected_model: "model-a".into(),
+        adapters: AdapterCatalog::standard(),
+    });
+    let direct_plan = plan_profile_attach(direct_route, context());
+    assert_eq!(direct_plan.config_projection.display_name, "Company API");
+}
+
+#[test]
 fn missing_adapter_invalid_model_and_explicit_runtime_readiness_are_blockers() {
     let mut chat = provider(ProviderProtocol::ChatCompletions);
     chat.adapter = AdapterConfig::None;

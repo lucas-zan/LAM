@@ -225,6 +225,27 @@ pub struct CodexLauncher {
     readiness: Arc<dyn GatewayReadiness>,
 }
 
+pub struct DirectCodexLauncher;
+
+impl DirectCodexLauncher {
+    pub fn run(request: CodexLaunchRequest) -> Result<CodexLaunchOutcome> {
+        if request.route_kind != RouteKind::Direct {
+            return Err(AppError::new(
+                "CODEX_DIRECT_ROUTE_REQUIRED",
+                "Direct Codex launcher received a Gateway route",
+            ));
+        }
+        validate_launch_request(&request)?;
+        let executable = request.codex_executable.clone().ok_or_else(|| {
+            AppError::new(
+                "CODEX_EXECUTABLE_REQUIRED",
+                "Direct Codex launch requires an explicit executable",
+            )
+        })?;
+        run_codex_process(request, executable)
+    }
+}
+
 impl CodexLauncher {
     pub fn new(installation: VerifiedInstallation, readiness: Arc<dyn GatewayReadiness>) -> Self {
         Self {
@@ -244,12 +265,13 @@ impl CodexLauncher {
     }
 
     pub fn run(&self, request: CodexLaunchRequest) -> Result<CodexLaunchOutcome> {
-        validate_profile_id(&request.profile_id)?;
-        validate_launch_directory(&request.codex_home, "CODEX_PROFILE_HOME_INVALID")?;
-        validate_launch_directory(&request.cwd, "CODEX_LAUNCH_CWD_INVALID")?;
         if request.route_kind != RouteKind::Gateway {
-            return self.run_codex(request);
+            return Err(AppError::new(
+                "CODEX_GATEWAY_ROUTE_REQUIRED",
+                "Verified Gateway launcher received a Direct route",
+            ));
         }
+        validate_launch_request(&request)?;
         self.readiness.ensure_ready(&request.profile_id)?;
         let outcome = self.run_codex(request);
         let shutdown = self.readiness.shutdown();
@@ -261,43 +283,58 @@ impl CodexLauncher {
 
     fn run_codex(&self, request: CodexLaunchRequest) -> Result<CodexLaunchOutcome> {
         let executable = match request.codex_executable {
-            Some(path) => validate_external_executable(&path)?,
+            Some(ref path) => validate_external_executable(path)?,
             None => self.installation.component("codex")?.path.clone(),
         };
-        let mut command = Command::new(executable);
-        command
-            .args(&request.args)
-            .current_dir(&request.cwd)
-            .env_clear()
-            .env("CODEX_HOME", &request.codex_home)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-        for name in [
-            "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR", "NO_COLOR", "PATH",
-        ] {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
-            }
-        }
-        #[cfg(debug_assertions)]
-        for name in ["LAM_TEST_GATEWAY_TOKEN", "LAM_TEST_INSTALL_IDENTITY_KEY"] {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
-            }
-        }
-        let status = command.status().map_err(|_| {
-            AppError::new("CODEX_LAUNCH_FAILED", "Codex process could not be launched")
-        })?;
-        #[cfg(unix)]
-        let exit_code = status
-            .code()
-            .or_else(|| status.signal().map(|signal| 128 + signal))
-            .unwrap_or(1);
-        #[cfg(not(unix))]
-        let exit_code = status.code().unwrap_or(1);
-        Ok(CodexLaunchOutcome { exit_code })
+        run_codex_process(request, executable)
     }
+}
+
+fn validate_launch_request(request: &CodexLaunchRequest) -> Result<()> {
+    validate_profile_id(&request.profile_id)?;
+    validate_launch_directory(&request.codex_home, "CODEX_PROFILE_HOME_INVALID")?;
+    validate_launch_directory(&request.cwd, "CODEX_LAUNCH_CWD_INVALID")?;
+    Ok(())
+}
+
+fn run_codex_process(
+    request: CodexLaunchRequest,
+    executable: PathBuf,
+) -> Result<CodexLaunchOutcome> {
+    let executable = validate_external_executable(&executable)?;
+    let mut command = Command::new(executable);
+    command
+        .args(&request.args)
+        .current_dir(&request.cwd)
+        .env_clear()
+        .env("CODEX_HOME", &request.codex_home)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    for name in [
+        "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR", "NO_COLOR", "PATH",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    #[cfg(debug_assertions)]
+    for name in ["LAM_TEST_GATEWAY_TOKEN", "LAM_TEST_INSTALL_IDENTITY_KEY"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    let status = command
+        .status()
+        .map_err(|_| AppError::new("CODEX_LAUNCH_FAILED", "Codex process could not be launched"))?;
+    #[cfg(unix)]
+    let exit_code = status
+        .code()
+        .or_else(|| status.signal().map(|signal| 128 + signal))
+        .unwrap_or(1);
+    #[cfg(not(unix))]
+    let exit_code = status.code().unwrap_or(1);
+    Ok(CodexLaunchOutcome { exit_code })
 }
 
 fn validate_component_contract(component: &InstalledComponent) -> Result<()> {

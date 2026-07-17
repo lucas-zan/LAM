@@ -1,4 +1,5 @@
 use localagentmanager_core::gateway::binding::{GatewayBindingCollection, GatewayBindingService};
+use localagentmanager_core::gateway::catalog::CodexModelDefaultsCatalog;
 use localagentmanager_core::gateway::routes::GatewayRouteComposer;
 use localagentmanager_core::gateway::server::{
     FileMetadataObserver, GatewayLoopbackServer, GatewayServerConfig, HealthProofKey,
@@ -12,6 +13,10 @@ use localagentmanager_core::gateway::upstream::{
     SecureUpstreamClient, UpstreamClientConfig,
 };
 use localagentmanager_core::provider_keychain::{KeychainCredentialService, SystemKeychainBackend};
+use localagentmanager_core::provider_runtime::{
+    gateway_first_response_timeout_from_env, CODEX_MODEL_CATALOG_ENV,
+    GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV,
+};
 use localagentmanager_core::storage::{InstallationLock, StoreOptions, VersionedFileStore};
 #[cfg(debug_assertions)]
 use std::future::Future;
@@ -80,7 +85,9 @@ async fn run() -> localagentmanager_core::Result<()> {
     let upstream = Arc::new(SecureUpstreamClient::new(
         UpstreamClientConfig {
             connect_timeout: Duration::from_secs(10),
-            first_byte_timeout: Duration::from_secs(10),
+            first_byte_timeout: gateway_first_response_timeout_from_env(
+                std::env::var_os(GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV).as_deref(),
+            )?,
             stream_idle_timeout: Duration::from_secs(60),
             total_timeout: Duration::from_secs(15 * 60),
             max_response_bytes: 32 * 1024 * 1024,
@@ -91,7 +98,16 @@ async fn run() -> localagentmanager_core::Result<()> {
             KeychainCredentialService::new(Arc::new(SystemKeychainBackend)),
         )),
     )?);
-    let handler = Arc::new(GatewayRouteComposer::new(upstream));
+    let builtin_model_defaults = CodexModelDefaultsCatalog::builtin()?;
+    let model_defaults = std::env::var_os(CODEX_MODEL_CATALOG_ENV)
+        .map(PathBuf::from)
+        .and_then(|path| CodexModelDefaultsCatalog::from_path(&path, 4 * 1024 * 1024).ok())
+        .map(|local| builtin_model_defaults.clone().overlay(local))
+        .unwrap_or(builtin_model_defaults);
+    let handler = Arc::new(GatewayRouteComposer::new_with_model_defaults(
+        upstream,
+        model_defaults,
+    ));
     let uid = unsafe { libc::geteuid() };
     let control_auth = Arc::new(AuthenticatedControl::new(&identity_key, uid)?);
     let control = match ControlSocketServer::start(control_path, control_auth).await {

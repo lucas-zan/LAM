@@ -376,11 +376,19 @@ pub fn execute_create_account(
     home_root: &Path,
     req: &CreateAccountRequest,
 ) -> Result<CreateResult> {
+    execute_create_account_with_route(home_root, req, super::provider_binding::RouteKind::Direct)
+}
+
+pub(crate) fn execute_create_account_with_route(
+    home_root: &Path,
+    req: &CreateAccountRequest,
+    route_kind: super::provider_binding::RouteKind,
+) -> Result<CreateResult> {
     let plan = create_account_plan(home_root, req)?;
     let name = validate_profile_name(&req.name)?;
     let home = codex_home_path(home_root, &name);
     let wrapper = wrapper_path(home_root, &name);
-    let wrapper_contents = wrapper_script(&name)?;
+    let wrapper_contents = wrapper_script_for_route(&name, route_kind)?;
     fs::create_dir_all(&home)?;
     set_dir_private(&home)?;
     for sub in [
@@ -424,16 +432,14 @@ pub fn repair_managed_wrappers(home_root: &Path) -> Result<Vec<PathBuf>> {
     if managed.is_empty() {
         return Ok(Vec::new());
     }
-    let launcher = super::provider_runtime::resolve_launcher_executable()?;
-    let planner = super::gateway::launch_planner::CodexLaunchPlanner::new(
-        launcher.to_string_lossy().into_owned(),
-    );
     let mut repaired = Vec::new();
     for account in managed {
         let path = account
             .wrapper_path
             .unwrap_or_else(|| wrapper_path(home_root, &account.id));
-        let expected = planner.wrapper_script(&account.id)?;
+        let route_kind =
+            super::gateway::launch_planner::resolve_profile_route(home_root, &account.id)?;
+        let expected = wrapper_script_for_route(&account.id, route_kind)?;
         if fs::read_to_string(&path).ok().as_deref() == Some(&expected) {
             continue;
         }
@@ -566,7 +572,7 @@ pub fn execute_rename_account(
     let to_name = validate_profile_name(&req.to_name)?;
     let target_home = codex_home_path(home_root, &to_name);
     let target_wrapper = wrapper_path(home_root, &to_name);
-    let wrapper_contents = wrapper_script(&to_name)?;
+    let wrapper_contents = direct_wrapper_script(&to_name);
     let source_wrapper = from
         .wrapper_path
         .clone()
@@ -823,7 +829,7 @@ pub fn execute_create_relay(home_root: &Path, req: &CreateRelayRequest) -> Resul
     let name = relay_name(req)?;
     let home = codex_home_path(home_root, &name);
     let wrapper = wrapper_path(home_root, &name);
-    let wrapper_contents = wrapper_script(&name)?;
+    let wrapper_contents = direct_wrapper_script(&name);
     fs::create_dir_all(&home)?;
     set_dir_private(&home)?;
     fs::create_dir_all(home.join("sessions"))?;
@@ -951,10 +957,39 @@ fn relay_parts(id: &str) -> (bool, Option<String>, Option<String>) {
     }
 }
 
-fn wrapper_script(name: &str) -> Result<String> {
-    let launcher = super::provider_runtime::resolve_launcher_executable()?;
-    super::gateway::launch_planner::CodexLaunchPlanner::new(launcher.to_string_lossy().into_owned())
-        .wrapper_script(name)
+fn direct_wrapper_script(name: &str) -> String {
+    format!(
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+export CODEX_HOME="$HOME/.codex-{name}"
+CODEX_BIN="${{CODEX_BIN:-}}"
+if [ -z "$CODEX_BIN" ]; then
+  if command -v codex >/dev/null 2>&1; then
+    CODEX_BIN="$(command -v codex)"
+  else
+    echo "codex command not found. Add codex to PATH or set CODEX_BIN=/path/to/codex." >&2
+    exit 127
+  fi
+fi
+exec "$CODEX_BIN" "$@"
+"#
+    )
+}
+
+fn wrapper_script_for_route(
+    name: &str,
+    route_kind: super::provider_binding::RouteKind,
+) -> Result<String> {
+    match route_kind {
+        super::provider_binding::RouteKind::Direct => Ok(direct_wrapper_script(name)),
+        super::provider_binding::RouteKind::Gateway => {
+            let launcher = super::provider_runtime::resolve_launcher_executable()?;
+            super::gateway::launch_planner::CodexLaunchPlanner::new(
+                launcher.to_string_lossy().into_owned(),
+            )
+            .gateway_wrapper_script(name)
+        }
+    }
 }
 
 fn managed_account_json(
@@ -1352,7 +1387,7 @@ pub fn add_session_profile_account(
     }
 
     let wrapper = wrapper_path(home_root, &account_id);
-    let wrapper_contents = wrapper_script(&account_id)?;
+    let wrapper_contents = direct_wrapper_script(&account_id);
     if wrapper.exists() && !req.overwrite_wrapper {
         return Err(AppError::new(
             "WRAPPER_ALREADY_EXISTS",
@@ -1871,8 +1906,9 @@ pub fn switch_to_pat_account(home_root: &Path, account_id: &str) -> Result<()> {
     let source_auth_f = codex_dir.join("auth-f.json");
     let target_auth_f = target_codex.join("auth-f.json");
     if source_auth_f.exists() {
-        let source_content_f = fs::read(&source_auth_f)
-            .map_err(|e| AppError::new("READ_FAILED", format!("Failed to read auth-f.json: {e}")))?;
+        let source_content_f = fs::read(&source_auth_f).map_err(|e| {
+            AppError::new("READ_FAILED", format!("Failed to read auth-f.json: {e}"))
+        })?;
         let parsed_f: serde_json::Value = serde_json::from_slice(&source_content_f)
             .map_err(|e| AppError::new("INVALID_AUTH_JSON", format!("Invalid auth-f.json: {e}")))?;
         if !parsed_f.is_object() {
@@ -2310,7 +2346,11 @@ mod pat_tests {
         let account_home = home_root.join(".codex-c");
         std::fs::create_dir_all(&account_home).unwrap();
         std::fs::write(account_home.join("auth.json"), r#"{"source":"runtime"}"#).unwrap();
-        std::fs::write(account_home.join("auth-f.json"), r#"{"tokens":{"access_token":"token-c"}}"#).unwrap();
+        std::fs::write(
+            account_home.join("auth-f.json"),
+            r#"{"tokens":{"access_token":"token-c"}}"#,
+        )
+        .unwrap();
 
         let target_codex = home_root.join(".codex");
         let target_auth_f = target_codex.join("auth-f.json");
@@ -2325,7 +2365,11 @@ mod pat_tests {
         // 2. Switch to account "d" which does NOT have auth-f.json (should remove stale target auth-f.json)
         let account_home_d = home_root.join(".codex-d");
         std::fs::create_dir_all(&account_home_d).unwrap();
-        std::fs::write(account_home_d.join("auth.json"), r#"{"source":"runtime-d"}"#).unwrap();
+        std::fs::write(
+            account_home_d.join("auth.json"),
+            r#"{"source":"runtime-d"}"#,
+        )
+        .unwrap();
 
         switch_to_pat_account(home_root, "d").unwrap();
         assert!(!target_auth_f.exists());

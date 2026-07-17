@@ -1,4 +1,4 @@
-use super::catalog::build_codex_model_catalog;
+use super::catalog::{build_codex_model_catalog_with_defaults, CodexModelDefaultsCatalog};
 use super::server::{
     GatewayHttpRequest, GatewayHttpResponse, GatewayRouteHandler, RequestUsageMetadata,
 };
@@ -18,6 +18,7 @@ use crate::services::adapters::sse::{ResponsesStreamEvent, StreamingAdapter};
 use crate::services::error::{AppError, Result};
 use crate::services::provider_v2::{AdapterConfig, ProviderProtocol};
 use axum::body::{Body, Bytes};
+use axum::http::StatusCode;
 use chrono::Utc;
 use serde_json::json;
 use std::convert::Infallible;
@@ -37,6 +38,76 @@ enum Compatibility {
 struct BudgetedFrame {
     bytes: Bytes,
     _budget: OwnedSemaphorePermit,
+}
+
+const MAX_RESPONSES_SSE_PENDING_BYTES: usize = 64 * 1024;
+
+#[derive(Default)]
+struct ResponsesTerminalObserver {
+    pending: Vec<u8>,
+    terminal: bool,
+}
+
+impl ResponsesTerminalObserver {
+    fn push(&mut self, bytes: &[u8]) {
+        if self.terminal {
+            return;
+        }
+        self.pending.extend_from_slice(bytes);
+        while let Some((frame_end, separator_len)) = sse_frame_end(&self.pending) {
+            let frame = self.pending[..frame_end].to_vec();
+            self.pending.drain(..frame_end + separator_len);
+            self.observe_frame(&frame);
+        }
+        if self.pending.len() > MAX_RESPONSES_SSE_PENDING_BYTES {
+            self.pending.clear();
+        }
+    }
+
+    fn observe_frame(&mut self, frame: &[u8]) {
+        let frame = String::from_utf8_lossy(frame);
+        let event = frame
+            .lines()
+            .find_map(|line| line.strip_prefix("event:").map(str::trim));
+        let data_type = frame.lines().find_map(|line| {
+            line.strip_prefix("data:")
+                .map(str::trim)
+                .and_then(|data| serde_json::from_str::<serde_json::Value>(data).ok())
+                .and_then(|data| {
+                    data.get("type")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                })
+        });
+        self.terminal = event.is_some_and(is_responses_terminal_event)
+            || data_type
+                .as_deref()
+                .is_some_and(is_responses_terminal_event);
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.terminal
+    }
+}
+
+fn sse_frame_end(bytes: &[u8]) -> Option<(usize, usize)> {
+    bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| (index, 4))
+        .or_else(|| {
+            bytes
+                .windows(2)
+                .position(|window| window == b"\n\n")
+                .map(|index| (index, 2))
+        })
+}
+
+fn is_responses_terminal_event(event: &str) -> bool {
+    matches!(
+        event,
+        "response.completed" | "response.failed" | "response.incomplete" | "error"
+    )
 }
 
 impl Compatibility {
@@ -64,10 +135,18 @@ fn generic_compatibility_policy() -> &'static crate::services::adapters::request
 pub struct GatewayRouteComposer {
     upstream: Arc<SecureUpstreamClient>,
     adapters: Arc<AdapterRegistry>,
+    model_defaults: Arc<CodexModelDefaultsCatalog>,
 }
 
 impl GatewayRouteComposer {
     pub fn new(upstream: Arc<SecureUpstreamClient>) -> Self {
+        Self::new_with_model_defaults(upstream, CodexModelDefaultsCatalog::default())
+    }
+
+    pub fn new_with_model_defaults(
+        upstream: Arc<SecureUpstreamClient>,
+        model_defaults: CodexModelDefaultsCatalog,
+    ) -> Self {
         let mut adapters = AdapterRegistry::new();
         for policy in [
             "generic-openai-compatible-v1",
@@ -80,6 +159,7 @@ impl GatewayRouteComposer {
         Self {
             upstream,
             adapters: Arc::new(adapters),
+            model_defaults: Arc::new(model_defaults),
         }
     }
 
@@ -286,6 +366,11 @@ impl GatewayRouteComposer {
         }
         let stream = parsed.stream;
         let cancellation = GatewayCancellation::new();
+        let error_context = UpstreamErrorContext::new(
+            &request.binding.provider.id,
+            &request.binding.provider.base_url,
+            &request.request_id,
+        );
         let upstream_request = UpstreamRequest {
             base_url: request.binding.provider.base_url,
             controlled_path: "/responses".into(),
@@ -295,37 +380,45 @@ impl GatewayRouteComposer {
             cancellation: cancellation.clone(),
         };
         if stream {
-            self.passthrough_stream(upstream_request, cancellation)
+            self.passthrough_stream(upstream_request, cancellation, error_context)
                 .await
         } else {
-            self.passthrough_nonstream(upstream_request).await
+            self.passthrough_nonstream(upstream_request, error_context)
+                .await
         }
     }
 
     async fn passthrough_nonstream(
         &self,
         upstream_request: UpstreamRequest,
+        error_context: UpstreamErrorContext,
     ) -> Result<GatewayHttpResponse> {
         let response = match self.upstream.send(upstream_request).await {
             Ok(response) => response,
             Err(error) => return Ok(error_response(502, &error.code, &error.message)),
         };
+        if !(200..300).contains(&response.status) {
+            return Ok(upstream_http_error_response(
+                response.status,
+                response.content_type.as_deref(),
+                &response.body,
+                &error_context,
+            )
+            .with_retry_after(response.retry_after)
+            .with_metrics(None, response.attempts));
+        }
         let content_type = response
             .content_type
             .unwrap_or_else(|| "application/octet-stream".into());
-        let usage = if (200..300).contains(&response.status) {
-            serde_json::from_slice::<serde_json::Value>(&response.body)
-                .ok()
-                .as_ref()
-                .and_then(extract_responses_usage)
-                .map(|usage| RequestUsageMetadata {
-                    input_tokens: usage.input_tokens,
-                    output_tokens: usage.output_tokens,
-                    total_tokens: usage.total_tokens,
-                })
-        } else {
-            None
-        };
+        let usage = serde_json::from_slice::<serde_json::Value>(&response.body)
+            .ok()
+            .as_ref()
+            .and_then(extract_responses_usage)
+            .map(|usage| RequestUsageMetadata {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                total_tokens: usage.total_tokens,
+            });
         Ok(
             GatewayHttpResponse::from_body(
                 response.status,
@@ -340,11 +433,30 @@ impl GatewayRouteComposer {
         &self,
         upstream_request: UpstreamRequest,
         cancellation: GatewayCancellation,
+        error_context: UpstreamErrorContext,
     ) -> Result<GatewayHttpResponse> {
         let mut upstream = match self.upstream.open_stream(upstream_request).await {
             Ok(response) => response,
             Err(error) => return Ok(error_response(502, &error.code, &error.message)),
         };
+        if !(200..300).contains(&upstream.status) {
+            let status = upstream.status;
+            let content_type = upstream.content_type.clone();
+            let retry_after = upstream.retry_after.clone();
+            let attempts = upstream.attempts;
+            let mut body = Vec::new();
+            while let Some(chunk) = upstream.next_chunk().await? {
+                body.extend_from_slice(&chunk);
+            }
+            return Ok(upstream_http_error_response(
+                status,
+                content_type.as_deref(),
+                &body,
+                &error_context,
+            )
+            .with_retry_after(retry_after)
+            .with_metrics(None, attempts));
+        }
         let content_type = upstream
             .content_type
             .clone()
@@ -358,6 +470,7 @@ impl GatewayRouteComposer {
             ));
         }
         let status = upstream.status;
+        let require_terminal_event = true;
         let attempts = upstream.attempts;
         let (sender, receiver) = mpsc::channel::<std::result::Result<BudgetedFrame, Infallible>>(
             crate::services::adapters::protocol::MAX_EVENT_CHANNEL_CAPACITY,
@@ -366,9 +479,13 @@ impl GatewayRouteComposer {
             crate::services::adapters::protocol::MAX_EVENT_CHANNEL_BYTES,
         ));
         tokio::spawn(async move {
+            let mut terminal = ResponsesTerminalObserver::default();
             loop {
                 match upstream.next_chunk().await {
                     Ok(Some(chunk)) => {
+                        if require_terminal_event {
+                            terminal.push(&chunk);
+                        }
                         if send_passthrough_bytes(&sender, &byte_budget, &chunk)
                             .await
                             .is_err()
@@ -377,8 +494,24 @@ impl GatewayRouteComposer {
                             return;
                         }
                     }
-                    Ok(None) => return,
-                    Err(_) => {
+                    Ok(None) => {
+                        if require_terminal_event && !terminal.is_terminal() {
+                            let error = responses_stream_error_frame(
+                                "GATEWAY_UPSTREAM_STREAM_INCOMPLETE",
+                                "upstream Responses stream ended before a terminal event",
+                            );
+                            let _ = send_passthrough_bytes(&sender, &byte_budget, &error).await;
+                        }
+                        return;
+                    }
+                    Err(error) => {
+                        if require_terminal_event && !terminal.is_terminal() {
+                            let frame = responses_stream_error_frame(
+                                &error.code,
+                                "upstream Responses stream failed before completion",
+                            );
+                            let _ = send_passthrough_bytes(&sender, &byte_budget, &frame).await;
+                        }
                         cancellation.cancel();
                         return;
                     }
@@ -577,7 +710,10 @@ impl GatewayRouteComposer {
     }
 
     fn models(&self, request: GatewayHttpRequest) -> GatewayHttpResponse {
-        let catalog = match build_codex_model_catalog(&request.binding.provider.models) {
+        let catalog = match build_codex_model_catalog_with_defaults(
+            &request.binding.provider.models,
+            &self.model_defaults,
+        ) {
             Ok(catalog) => catalog,
             Err(error) => return error_response(500, &error.code, &error.message),
         };
@@ -590,6 +726,18 @@ impl GatewayRouteComposer {
             ),
         }
     }
+}
+
+fn responses_stream_error_frame(code: &str, message: &str) -> Vec<u8> {
+    let data = json!({
+        "type": "error",
+        "error": {
+            "type": "gateway_error",
+            "code": code,
+            "message": message
+        }
+    });
+    format!("event: error\ndata: {data}\n\n").into_bytes()
 }
 
 impl GatewayRouteHandler for GatewayRouteComposer {
@@ -677,6 +825,111 @@ fn error_response(status: u16, code: &str, message: &str) -> GatewayHttpResponse
     )
 }
 
+const MAX_UPSTREAM_ERROR_DETAIL_CHARS: usize = 512;
+
+struct UpstreamErrorContext {
+    provider_id: String,
+    upstream_host: String,
+    request_id: String,
+}
+
+impl UpstreamErrorContext {
+    fn new(provider_id: &str, base_url: &str, request_id: &str) -> Self {
+        let upstream_host = url::Url::parse(base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .unwrap_or_else(|| "configured upstream".into());
+        Self {
+            provider_id: provider_id.into(),
+            upstream_host,
+            request_id: request_id.into(),
+        }
+    }
+}
+
+fn upstream_http_error_response(
+    status: u16,
+    content_type: Option<&str>,
+    body: &[u8],
+    context: &UpstreamErrorContext,
+) -> GatewayHttpResponse {
+    let detail = upstream_error_detail(content_type, body);
+    let message = upstream_error_message(status, &context.upstream_host, detail.as_deref());
+    GatewayHttpResponse::json(
+        status,
+        json!({
+            "error": {
+                "type": "upstream_error",
+                "source": "upstream",
+                "code": upstream_error_code(status),
+                "message": message,
+                "upstreamStatus": status,
+                "upstreamHost": context.upstream_host,
+                "providerId": context.provider_id,
+                "requestId": context.request_id,
+                "retryable": upstream_status_is_retryable(status),
+            }
+        }),
+    )
+}
+
+fn upstream_error_detail(content_type: Option<&str>, body: &[u8]) -> Option<String> {
+    let text = if content_type.is_some_and(|value| value.contains("json")) {
+        json_error_message(body).unwrap_or_else(|| String::from_utf8_lossy(body).into_owned())
+    } else {
+        String::from_utf8_lossy(body).into_owned()
+    };
+    sanitize_upstream_detail(&text)
+}
+
+fn json_error_message(body: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    value
+        .pointer("/error/message")
+        .or_else(|| value.get("message"))
+        .or_else(|| value.get("error"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+}
+
+fn sanitize_upstream_detail(value: &str) -> Option<String> {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+    let mut bounded = normalized
+        .chars()
+        .take(MAX_UPSTREAM_ERROR_DETAIL_CHARS)
+        .collect::<String>();
+    if normalized.chars().count() > MAX_UPSTREAM_ERROR_DETAIL_CHARS {
+        bounded.push('…');
+    }
+    Some(bounded)
+}
+
+fn upstream_error_message(status: u16, host: &str, detail: Option<&str>) -> String {
+    let reason = StatusCode::from_u16(status)
+        .ok()
+        .and_then(|status| status.canonical_reason())
+        .unwrap_or("Unknown Status");
+    let prefix = format!("Remote API service {host} returned {status} {reason}");
+    detail.map_or(prefix.clone(), |detail| format!("{prefix}: {detail}"))
+}
+
+fn upstream_error_code(status: u16) -> &'static str {
+    match status {
+        429 => "UPSTREAM_RATE_LIMITED",
+        502 => "UPSTREAM_BAD_GATEWAY",
+        503 => "UPSTREAM_SERVICE_UNAVAILABLE",
+        504 => "UPSTREAM_GATEWAY_TIMEOUT",
+        _ => "UPSTREAM_HTTP_ERROR",
+    }
+}
+
+fn upstream_status_is_retryable(status: u16) -> bool {
+    matches!(status, 429 | 502 | 503 | 504)
+}
+
 fn request_error_code(
     code: crate::services::adapters::request::AdapterRequestErrorCode,
 ) -> &'static str {
@@ -696,5 +949,21 @@ fn request_error_code(
         | ToolArgumentsInvalid
         | ToolArgumentsLimitExceeded
         | ReasoningHistoryRequired => "ADAPTER_INVALID_REQUEST",
+    }
+}
+
+#[cfg(test)]
+mod responses_terminal_tests {
+    use super::ResponsesTerminalObserver;
+
+    #[test]
+    fn terminal_observer_handles_every_byte_boundary_and_data_type_fallback() {
+        let wire = b"event: message\r\ndata: {\"type\":\"response.completed\"}\r\n\r\n";
+        for split in 0..=wire.len() {
+            let mut observer = ResponsesTerminalObserver::default();
+            observer.push(&wire[..split]);
+            observer.push(&wire[split..]);
+            assert!(observer.is_terminal(), "split {split}");
+        }
     }
 }

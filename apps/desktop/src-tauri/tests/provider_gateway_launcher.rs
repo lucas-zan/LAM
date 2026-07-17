@@ -1,7 +1,7 @@
 use localagentmanager_core::gateway::launcher::{
     resolve_external_codex_executable, CodexLaunchRequest, CodexLauncher,
-    ComponentIdentityVerifier, GatewayReadiness, InstallManifest, InstallManifestVerifier,
-    InstalledComponent,
+    ComponentIdentityVerifier, DirectCodexLauncher, GatewayReadiness, InstallManifest,
+    InstallManifestVerifier, InstalledComponent,
 };
 use localagentmanager_core::provider_binding::RouteKind;
 use localagentmanager_core::{AppError, Result};
@@ -201,7 +201,66 @@ fn launcher_preserves_args_cwd_codex_home_and_exit_code() {
 }
 
 #[test]
-fn launcher_preserves_path_without_inheriting_unapproved_environment() {
+fn direct_launcher_runs_external_codex_without_a_gateway_installation() {
+    let root = tempfile::tempdir().unwrap();
+    let output = root.path().join("direct-output.json");
+    let codex = root.path().join("codex");
+    executable(
+        &codex,
+        &format!(
+            r#"#!/bin/sh
+printf '{{"cwd":"%s","codexHome":"%s","arg1":"%s"}}' "$PWD" "$CODEX_HOME" "$1" > '{}'
+exit 29
+"#,
+            output.display()
+        ),
+    );
+    let cwd = root.path().join("work");
+    let codex_home = root.path().join("profile-home");
+    fs::create_dir(&cwd).unwrap();
+    fs::create_dir(&codex_home).unwrap();
+
+    let outcome = DirectCodexLauncher::run(CodexLaunchRequest {
+        profile_id: "official-account".into(),
+        route_kind: RouteKind::Direct,
+        codex_home: codex_home.clone(),
+        cwd: cwd.clone(),
+        args: vec!["resume".into()],
+        codex_executable: Some(codex),
+    })
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 29);
+    let captured: serde_json::Value = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
+    assert_eq!(
+        captured["cwd"],
+        fs::canonicalize(&cwd).unwrap().to_string_lossy().as_ref()
+    );
+    assert_eq!(captured["codexHome"], codex_home.to_string_lossy().as_ref());
+    assert_eq!(captured["arg1"], "resume");
+}
+
+#[test]
+fn direct_launcher_rejects_gateway_routes() {
+    let root = tempfile::tempdir().unwrap();
+    let codex_home = root.path().join("profile-home");
+    fs::create_dir(&codex_home).unwrap();
+
+    let error = DirectCodexLauncher::run(CodexLaunchRequest {
+        profile_id: "external-account".into(),
+        route_kind: RouteKind::Gateway,
+        codex_home,
+        cwd: root.path().into(),
+        args: Vec::new(),
+        codex_executable: Some(root.path().join("codex")),
+    })
+    .unwrap_err();
+
+    assert_eq!(error.code, "CODEX_DIRECT_ROUTE_REQUIRED");
+}
+
+#[test]
+fn gateway_launcher_preserves_path_without_inheriting_unapproved_environment() {
     let root = tempfile::tempdir().unwrap();
     let (verified, output) = installation(root.path());
     let launcher = CodexLauncher::new(verified, Arc::new(FakeReadiness::default()));
@@ -211,7 +270,7 @@ fn launcher_preserves_path_without_inheriting_unapproved_environment() {
     launcher
         .run(CodexLaunchRequest {
             profile_id: "profile-a".into(),
-            route_kind: RouteKind::Direct,
+            route_kind: RouteKind::Gateway,
             codex_home: home,
             cwd: root.path().into(),
             args: Vec::new(),
@@ -250,42 +309,26 @@ fn npm_codex_symlink_resolves_to_the_owner_controlled_native_binary() {
 }
 
 #[test]
-fn direct_route_does_not_start_gateway_and_drift_fails_before_spawn() {
+fn verified_gateway_launcher_rejects_direct_routes() {
     let root = tempfile::tempdir().unwrap();
     let (verified, output) = installation(root.path());
     let readiness = Arc::new(FakeReadiness::default());
     let launcher = CodexLauncher::new(verified, readiness.clone());
     let home = root.path().join("home");
     fs::create_dir(&home).unwrap();
-    let outcome = launcher
+    let error = launcher
         .run(CodexLaunchRequest {
             profile_id: "profile-a".into(),
             route_kind: RouteKind::Direct,
-            codex_home: home.clone(),
+            codex_home: home,
             cwd: root.path().into(),
             args: vec![],
             codex_executable: None,
         })
-        .unwrap();
-    assert_eq!(outcome.exit_code, 23);
+        .unwrap_err();
+    assert_eq!(error.code, "CODEX_GATEWAY_ROUTE_REQUIRED");
     assert_eq!(readiness.ensure_count.load(Ordering::SeqCst), 0);
     assert_eq!(readiness.shutdown_count.load(Ordering::SeqCst), 0);
-    fs::remove_file(&output).unwrap();
-    fs::remove_dir(&home).unwrap();
-    assert_eq!(
-        launcher
-            .run(CodexLaunchRequest {
-                profile_id: "profile-a".into(),
-                route_kind: RouteKind::Direct,
-                codex_home: home,
-                cwd: root.path().into(),
-                args: vec![],
-                codex_executable: None,
-            })
-            .unwrap_err()
-            .code,
-        "CODEX_PROFILE_HOME_INVALID"
-    );
     assert!(!output.exists());
 }
 

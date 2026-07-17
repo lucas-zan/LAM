@@ -341,6 +341,135 @@ async fn responses_provider_preserves_nonstream_request_status_type_and_body() {
 }
 
 #[tokio::test]
+async fn responses_provider_wraps_nonstream_upstream_503_with_clear_source() {
+    let server = MockServer::start().await;
+    let overload = "system cpu overloaded (current: 97.8%, threshold: 90%)\n\t";
+    Mock::given(method("POST"))
+        .and(path("/api/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(503)
+                .insert_header("retry-after", "12")
+                .set_body_raw(overload, "text/plain"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let response = composer(&server)
+        .handle(responses_request_at(
+            *server.address(),
+            br#"{"model":"deepseek-chat","input":"hi","stream":false}"#,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 503);
+    assert_eq!(response.content_type(), "application/json");
+    assert_eq!(response.retry_after(), Some("12"));
+    let body: serde_json::Value =
+        serde_json::from_slice(&response.collect_bytes().await.unwrap()).unwrap();
+    assert_eq!(body["error"]["type"], "upstream_error");
+    assert_eq!(body["error"]["source"], "upstream");
+    assert_eq!(body["error"]["code"], "UPSTREAM_SERVICE_UNAVAILABLE");
+    assert_eq!(body["error"]["upstreamStatus"], 503);
+    assert_eq!(body["error"]["upstreamHost"], "provider.test");
+    assert_eq!(body["error"]["providerId"], "deepseek");
+    assert_eq!(body["error"]["requestId"], "request-responses-1");
+    assert_eq!(body["error"]["retryable"], true);
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(message.starts_with(
+        "Remote API service provider.test returned 503 Service Unavailable: system cpu overloaded"
+    ));
+    assert!(!message.contains('\n'));
+    assert!(!message.contains("/api/v1"));
+}
+
+#[tokio::test]
+async fn responses_provider_wraps_initial_stream_503_as_json() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(503)
+                .insert_header("retry-after", "Wed, 21 Oct 2026 07:28:00 GMT")
+                .set_body_json(serde_json::json!({"error":{"message":"capacity exhausted"}})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let response = composer(&server)
+        .handle(responses_request_at(
+            *server.address(),
+            br#"{"model":"deepseek-chat","input":"hi","stream":true}"#,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 503);
+    assert_eq!(response.content_type(), "application/json");
+    assert_eq!(
+        response.retry_after(),
+        Some("Wed, 21 Oct 2026 07:28:00 GMT")
+    );
+    let body: serde_json::Value =
+        serde_json::from_slice(&response.collect_bytes().await.unwrap()).unwrap();
+    assert_eq!(body["error"]["source"], "upstream");
+    assert_eq!(body["error"]["code"], "UPSTREAM_SERVICE_UNAVAILABLE");
+    assert!(body["error"]["message"]
+        .as_str()
+        .unwrap()
+        .ends_with("capacity exhausted"));
+}
+
+#[tokio::test]
+async fn responses_provider_bounds_empty_or_oversized_upstream_error_details() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/responses"))
+        .respond_with(ResponseTemplate::new(502).set_body_raw("x".repeat(2_048), "text/plain"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let response = composer(&server)
+        .handle(responses_request_at(
+            *server.address(),
+            br#"{"model":"deepseek-chat","input":"hi","stream":false}"#,
+        ))
+        .await
+        .unwrap();
+    let body: serde_json::Value =
+        serde_json::from_slice(&response.collect_bytes().await.unwrap()).unwrap();
+
+    assert_eq!(body["error"]["code"], "UPSTREAM_BAD_GATEWAY");
+    assert!(body["error"]["message"].as_str().unwrap().len() < 700);
+
+    let empty_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/responses"))
+        .respond_with(ResponseTemplate::new(500).set_body_raw(" \n\t", "text/plain"))
+        .expect(1)
+        .mount(&empty_server)
+        .await;
+    let empty = composer(&empty_server)
+        .handle(responses_request_at(
+            *empty_server.address(),
+            br#"{"model":"deepseek-chat","input":"hi","stream":false}"#,
+        ))
+        .await
+        .unwrap();
+    let empty_body: serde_json::Value =
+        serde_json::from_slice(&empty.collect_bytes().await.unwrap()).unwrap();
+    assert_eq!(empty_body["error"]["code"], "UPSTREAM_HTTP_ERROR");
+    assert_eq!(empty_body["error"]["retryable"], false);
+    assert_eq!(
+        empty_body["error"]["message"],
+        "Remote API service provider.test returned 500 Internal Server Error"
+    );
+}
+
+#[tokio::test]
 async fn responses_provider_passes_web_search_tool_through_unchanged() {
     let server = MockServer::start().await;
     let request_body = br#"{"model":"deepseek-chat","input":"hello","stream":false,"tools":[{"type":"web_search","search_context_size":"medium"}]}"#;
@@ -406,7 +535,9 @@ async fn responses_provider_records_usage_from_nonstream_response() {
         .unwrap();
 
     assert_eq!(response.status(), 200);
-    let usage = response.usage().expect("passthrough usage must be recorded");
+    let usage = response
+        .usage()
+        .expect("passthrough usage must be recorded");
     assert_eq!(usage.input_tokens, 11);
     assert_eq!(usage.output_tokens, 7);
     assert_eq!(usage.total_tokens, 18);
@@ -432,6 +563,146 @@ async fn responses_provider_preserves_sse_bytes_without_adapter_conversion() {
     assert_eq!(response.status(), 200);
     assert_eq!(response.content_type(), "text/event-stream");
     assert_eq!(response.collect_bytes().await.unwrap(), wire);
+}
+
+#[tokio::test]
+async fn responses_provider_emits_explicit_error_when_stream_ends_before_terminal_event() {
+    let server = MockServer::start().await;
+    let wire = b"event: response.created\ndata: {\"type\":\"response.created\"}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n";
+    Mock::given(method("POST"))
+        .and(path("/api/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(wire, "text/event-stream"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let response = composer(&server)
+        .handle(responses_request_at(
+            *server.address(),
+            br#"{"model":"deepseek-chat","input":"compact history","stream":true}"#,
+        ))
+        .await
+        .unwrap();
+    let body = String::from_utf8(response.collect_bytes().await.unwrap().to_vec()).unwrap();
+    assert!(body.starts_with(std::str::from_utf8(wire).unwrap()));
+    assert!(body.contains("event: error"));
+    assert!(body.contains("GATEWAY_UPSTREAM_STREAM_INCOMPLETE"));
+    assert!(!body.contains("event: response.completed"));
+}
+
+#[tokio::test]
+async fn responses_provider_accepts_failed_terminal_without_fabricating_completion_or_extra_error()
+{
+    let server = MockServer::start().await;
+    let wire = b"event: response.created\ndata: {\"type\":\"response.created\"}\n\nevent: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\"}}\n\n";
+    Mock::given(method("POST"))
+        .and(path("/api/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(wire, "text/event-stream"))
+        .mount(&server)
+        .await;
+    let response = composer(&server)
+        .handle(responses_request_at(
+            *server.address(),
+            br#"{"model":"deepseek-chat","input":"hi","stream":true}"#,
+        ))
+        .await
+        .unwrap();
+    let body = response.collect_bytes().await.unwrap();
+    assert_eq!(body, wire.as_slice());
+}
+
+#[tokio::test]
+async fn local_compact_request_with_long_history_completes_over_the_normal_responses_route() {
+    let server = MockServer::start().await;
+    let wire = b"event: response.created\ndata: {\"type\":\"response.created\"}\n\nevent: response.output_text.done\ndata: {\"type\":\"response.output_text.done\",\"text\":\"compact summary\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n";
+    Mock::given(method("POST"))
+        .and(path("/api/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(wire, "text/event-stream"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/responses/compact"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let history = (0..128)
+        .map(|index| {
+            serde_json::json!({
+                "type": "message",
+                "role": if index % 2 == 0 { "user" } else { "assistant" },
+                "content": [{"type":"input_text","text":format!("history item {index}")}]
+            })
+        })
+        .collect::<Vec<_>>();
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "deepseek-chat",
+        "stream": true,
+        "store": false,
+        "instructions": "Summarize the conversation for continuation after compaction.",
+        "input": history
+    }))
+    .unwrap();
+
+    let response = composer(&server)
+        .handle(responses_request_at(*server.address(), &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.collect_bytes().await.unwrap(), wire.as_slice());
+    let received = server.received_requests().await.unwrap();
+    let upstream: serde_json::Value = serde_json::from_slice(&received[0].body).unwrap();
+    assert_eq!(upstream["input"].as_array().unwrap().len(), 128);
+    assert!(upstream["instructions"]
+        .as_str()
+        .unwrap()
+        .contains("compaction"));
+}
+
+#[tokio::test]
+async fn automatic_compact_summary_request_uses_responses_when_compact_endpoint_is_absent() {
+    let server = MockServer::start().await;
+    let wire = b"event: response.created\ndata: {\"type\":\"response.created\"}\n\nevent: response.output_text.done\ndata: {\"type\":\"response.output_text.done\",\"text\":\"automatic compact summary\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n";
+    Mock::given(method("POST"))
+        .and(path("/api/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(wire, "text/event-stream"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/responses/compact"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let history = (0..96)
+        .map(|index| {
+            serde_json::json!({
+                "type": "message",
+                "role": "user",
+                "content": [{"type":"input_text","text":format!("automatic history {index}")}]
+            })
+        })
+        .collect::<Vec<_>>();
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": "deepseek-chat",
+        "stream": true,
+        "store": false,
+        "instructions": "Create a continuation summary because the automatic context threshold was reached.",
+        "input": history
+    }))
+    .unwrap();
+
+    let response = composer(&server)
+        .handle(responses_request_at(*server.address(), &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.collect_bytes().await.unwrap(), wire.as_slice());
+    let received = server.received_requests().await.unwrap();
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0].url.path(), "/api/v1/responses");
 }
 
 #[tokio::test]

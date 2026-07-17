@@ -111,7 +111,7 @@ impl CodexLaunchPlanner {
         })
     }
 
-    pub fn wrapper_script(&self, profile_id: &str) -> Result<String> {
+    pub fn gateway_wrapper_script(&self, profile_id: &str) -> Result<String> {
         validate_profile_id(profile_id)?;
         validate_arg(&self.launcher_command)?;
         Ok(format!(

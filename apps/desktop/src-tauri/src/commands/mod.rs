@@ -717,12 +717,11 @@ pub fn execute_attach_provider_to_profile(
 }
 
 #[tauri::command]
-pub async fn list_providers_v2() -> Result<
-    Vec<localagentmanager_core::ProviderProfileView>,
-    localagentmanager_core::StructuredErrorView,
-> {
+pub async fn list_providers_v2(
+) -> Result<localagentmanager_core::ProviderListViewV2, localagentmanager_core::StructuredErrorView>
+{
     let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
-    run_provider_api_v2(move || localagentmanager_core::list_provider_views_service_v2(&home)).await
+    run_provider_api_v2(move || localagentmanager_core::list_provider_hub_view_v2(&home)).await
 }
 
 #[tauri::command]
@@ -1168,6 +1167,16 @@ pub fn get_auth_mode() -> Result<String, AppError> {
 #[tauri::command]
 pub fn set_auth_mode(mode: String) -> Result<(), AppError> {
     localagentmanager_core::types::set_auth_mode(&home_root()?, &mode)
+}
+
+#[tauri::command]
+pub fn get_gateway_first_response_timeout_seconds() -> Result<u64, AppError> {
+    Ok(localagentmanager_core::gateway_first_response_timeout_seconds(&home_root()?))
+}
+
+#[tauri::command]
+pub fn set_gateway_first_response_timeout_seconds(seconds: u64) -> Result<(), AppError> {
+    localagentmanager_core::set_gateway_first_response_timeout_seconds(&home_root()?, seconds)
 }
 
 #[tauri::command]

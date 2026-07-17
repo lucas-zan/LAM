@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ProviderBindingDialog } from './provider-binding-dialog';
 import type {
@@ -70,6 +70,45 @@ const detachPlan: ProfileDetachPlanViewV2 = {
 };
 
 describe('ProviderBindingDialog', () => {
+  it('updates the live countdown and disables execution when the plan expires', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const livePlan = { ...attachPlan, expiresAtMs: 2_500 };
+    const view = render(
+      <ProviderBindingDialog
+        mode="attach"
+        provider={provider}
+        profiles={['profile-a']}
+        binding={null}
+        attachPlan={livePlan}
+        detachPlan={null}
+        recoveryMessage=""
+        onPreviewAttach={vi.fn()}
+        onPreviewDetach={vi.fn()}
+        onExecute={vi.fn()}
+        onClearPlan={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Expires in 2 seconds')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Attach' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+
+    act(() => vi.advanceTimersByTime(2_000));
+
+    expect(screen.getByText('Expires in 0 seconds')).toBeTruthy();
+    expect(screen.getByText('Preview expired; create a new preview')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Attach' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
   it('requires attach preview and renders the redacted plan before execution', () => {
     const onPreviewAttach = vi.fn();
     const onExecute = vi.fn();

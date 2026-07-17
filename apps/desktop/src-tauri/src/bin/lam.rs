@@ -1,8 +1,8 @@
 use localagentmanager_core::gateway::binding::{GatewayBindingCollection, GatewayBindingService};
 use localagentmanager_core::gateway::identity::load_or_create_system_install_identity;
 use localagentmanager_core::gateway::launcher::{
-    CodexLaunchRequest, CodexLauncher, GatewayReadiness, InstallManifest, InstallManifestVerifier,
-    MacCodeSignIdentityVerifier, VerifiedInstallation,
+    CodexLaunchRequest, CodexLauncher, DirectCodexLauncher, GatewayReadiness, InstallManifest,
+    InstallManifestVerifier, MacCodeSignIdentityVerifier, VerifiedInstallation,
 };
 use localagentmanager_core::gateway::recovery::{
     recover_verified_gateway_process, SystemGatewayProcessControl,
@@ -101,6 +101,24 @@ fn run() -> localagentmanager_core::Result<i32> {
             })?;
         (RouteKind::Direct, account.codex_home)
     };
+    let codex_executable = resolve_codex_executable()?;
+    let launch_request = CodexLaunchRequest {
+        profile_id,
+        route_kind,
+        codex_home,
+        cwd: std::env::current_dir().map_err(|_| {
+            localagentmanager_core::AppError::new(
+                "CODEX_LAUNCH_CWD_INVALID",
+                "current directory is unavailable",
+            )
+        })?,
+        args: codex_args,
+        codex_executable: Some(codex_executable),
+    };
+    if route_kind == RouteKind::Direct {
+        return Ok(DirectCodexLauncher::run(launch_request)?.exit_code);
+    }
+
     let (install_root, manifest_path) = install_paths()?;
     let manifest: InstallManifest =
         serde_json::from_slice(&fs::read(manifest_path).map_err(|_| {
@@ -119,39 +137,18 @@ fn run() -> localagentmanager_core::Result<i32> {
         InstallManifestVerifier::new(install_root, Arc::new(MacCodeSignIdentityVerifier))
             .verify(manifest)?,
     );
-    let readiness: Arc<dyn GatewayReadiness> = if route_kind == RouteKind::Gateway {
-        Arc::new(PackagedReadiness::new(root, lock, installation.clone())?)
-    } else {
-        Arc::new(InactiveReadiness)
-    };
+    let timeout_seconds = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| localagentmanager_core::gateway_first_response_timeout_seconds(&home))
+        .unwrap_or(localagentmanager_core::DEFAULT_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS);
+    let readiness: Arc<dyn GatewayReadiness> = Arc::new(PackagedReadiness::new(
+        root,
+        lock,
+        installation.clone(),
+        timeout_seconds,
+    )?);
     let launcher = CodexLauncher::new_shared(installation, readiness);
-    let codex_executable = resolve_codex_executable()?;
-    Ok(launcher
-        .run(CodexLaunchRequest {
-            profile_id,
-            route_kind,
-            codex_home,
-            cwd: std::env::current_dir().map_err(|_| {
-                localagentmanager_core::AppError::new(
-                    "CODEX_LAUNCH_CWD_INVALID",
-                    "current directory is unavailable",
-                )
-            })?,
-            args: codex_args,
-            codex_executable: Some(codex_executable),
-        })?
-        .exit_code)
-}
-
-struct InactiveReadiness;
-
-impl GatewayReadiness for InactiveReadiness {
-    fn ensure_ready(&self, _profile_id: &str) -> localagentmanager_core::Result<()> {
-        Err(localagentmanager_core::AppError::new(
-            "GATEWAY_ROUTE_UNEXPECTED",
-            "Direct route attempted to start Gateway",
-        ))
-    }
+    Ok(launcher.run(launch_request)?.exit_code)
 }
 
 struct PackagedReadiness {
@@ -161,6 +158,7 @@ struct PackagedReadiness {
     installation: Arc<VerifiedInstallation>,
     identity_key: [u8; 32],
     control_path: PathBuf,
+    first_response_timeout_seconds: u64,
     owned_child: Mutex<Option<Child>>,
 }
 
@@ -169,6 +167,7 @@ impl PackagedReadiness {
         root: PathBuf,
         lock: InstallationLock,
         installation: Arc<VerifiedInstallation>,
+        first_response_timeout_seconds: u64,
     ) -> localagentmanager_core::Result<Self> {
         let state = GatewayStateRepository::new(VersionedFileStore::<GatewayRuntimeState>::new(
             root.join("gateway-state.json"),
@@ -224,6 +223,7 @@ impl PackagedReadiness {
             installation,
             identity_key,
             control_path,
+            first_response_timeout_seconds,
             owned_child: Mutex::new(None),
         })
     }
@@ -314,9 +314,22 @@ impl PackagedReadiness {
             .env_clear()
             .env("LAM_PROVIDER_HUB_ROOT", &self.root)
             .env("LAM_GATEWAY_CONTROL_SOCKET", &self.control_path)
+            .env(
+                localagentmanager_core::provider_runtime::GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV,
+                self.first_response_timeout_seconds.to_string(),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
+        if let Some(home) = std::env::var_os("HOME") {
+            let model_catalog = PathBuf::from(home).join(".codex").join("models_cache.json");
+            if model_catalog.is_file() {
+                command.env(
+                    localagentmanager_core::provider_runtime::CODEX_MODEL_CATALOG_ENV,
+                    model_catalog,
+                );
+            }
+        }
         let source = match &binding.provider.upstream_auth {
             UpstreamAuth::Bearer { source } | UpstreamAuth::Header { source, .. } => Some(source),
             UpstreamAuth::None => None,

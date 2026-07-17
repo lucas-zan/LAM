@@ -16,7 +16,7 @@ import {
   executeGatewayPortMigrationV2,
   discoverProviderModelsV2,
 } from './api';
-import type { CreateProviderRequestV2 } from './types';
+import type { CreateProviderRequestV2, ProviderListViewV2 } from './types';
 import { invoke } from '@tauri-apps/api/core';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
@@ -41,14 +41,40 @@ beforeEach(() => mockInvoke.mockReset());
 
 describe('Provider V2 API wrappers', () => {
   it('passes create/update/list requests without shape conversion', async () => {
-    mockInvoke.mockResolvedValueOnce([]).mockResolvedValueOnce({}).mockResolvedValueOnce({});
-    await listProvidersV2();
+    const providerList: ProviderListViewV2 = { revision: 7, providers: [] };
+    mockInvoke
+      .mockResolvedValueOnce(providerList)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    await expect(listProvidersV2()).resolves.toEqual(providerList);
     await createProviderV2(request);
     await updateProviderV2({ ...request, expectedRevision: 1 });
     expect(mockInvoke).toHaveBeenNthCalledWith(1, 'list_providers_v2');
     expect(mockInvoke).toHaveBeenNthCalledWith(2, 'create_provider_v2', { req: request });
     expect(mockInvoke).toHaveBeenNthCalledWith(3, 'update_provider_v2', {
       req: { ...request, expectedRevision: 1 },
+    });
+  });
+
+  it('rejects the legacy Provider array response with an explicit contract error', async () => {
+    mockInvoke.mockResolvedValueOnce([]);
+
+    await expect(listProvidersV2()).rejects.toMatchObject({
+      code: 'PROVIDER_LIST_CONTRACT_MISMATCH',
+    });
+  });
+
+  it.each([
+    null,
+    {},
+    { revision: -1, providers: [] },
+    { revision: 1.5, providers: [] },
+    { revision: 1, providers: null },
+  ])('rejects malformed Provider list payload %#', async (payload) => {
+    mockInvoke.mockResolvedValueOnce(payload);
+
+    await expect(listProvidersV2()).rejects.toMatchObject({
+      code: 'PROVIDER_LIST_CONTRACT_MISMATCH',
     });
   });
 

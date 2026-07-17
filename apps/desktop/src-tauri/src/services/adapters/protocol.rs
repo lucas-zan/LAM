@@ -349,8 +349,14 @@ pub fn parse_responses_passthrough(
             )
         })?
         .to_string();
-    let stream = object.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    let store = object.get("store").and_then(Value::as_bool).unwrap_or(false);
+    let stream = object
+        .get("stream")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let store = object
+        .get("store")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let previous_response_id = object
         .get("previous_response_id")
         .and_then(Value::as_str)

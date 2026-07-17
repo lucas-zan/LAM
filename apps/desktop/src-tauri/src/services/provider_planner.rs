@@ -263,10 +263,15 @@ pub fn plan_profile_attach(
         Ok(auth) => route.codex_auth = auth,
         Err(_) => blockers.push(PlanBlocker::AuthRuntimeUnavailable),
     }
+    let display_name = if route.route_kind == RouteKind::Gateway {
+        format!("LAM Gateway · {}", route.provider.name)
+    } else {
+        route.provider.name.clone()
+    };
     let config_projection = ConfigProjectionSpec {
         provider_id: route.provider_id.clone(),
         model: route.selected_model.clone(),
-        display_name: route.provider.name.clone(),
+        display_name,
         base_url,
         auth: route.codex_auth.clone(),
         codex: route.provider.codex.clone(),

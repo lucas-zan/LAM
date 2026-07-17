@@ -58,7 +58,7 @@ beforeEach(() => {
     version: 'test',
     homeRoot: '/tmp',
   });
-  vi.mocked(api.listProvidersV2).mockResolvedValue([]);
+  vi.mocked(api.listProvidersV2).mockResolvedValue({ revision: 0, providers: [] });
   vi.mocked(api.listProfileProviderBindingsV2).mockResolvedValue([]);
   vi.mocked(api.listSessions).mockResolvedValue([]);
   vi.mocked(api.listCachedQuotas).mockResolvedValue([]);

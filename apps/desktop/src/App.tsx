@@ -132,6 +132,8 @@ export function App() {
     setTerminalTargetId,
     compactButtons,
     setCompactButtons,
+    gatewayFirstResponseTimeoutSeconds,
+    setGatewayFirstResponseTimeoutSeconds,
   } = useAppStore();
   const {
     accounts,
@@ -972,6 +974,8 @@ export function App() {
             resetUsageStatistics={resetUsageStatistics}
             compactButtons={compactButtons}
             setCompactButtons={setCompactButtons}
+            gatewayFirstResponseTimeoutSeconds={gatewayFirstResponseTimeoutSeconds}
+            setGatewayFirstResponseTimeoutSeconds={setGatewayFirstResponseTimeoutSeconds}
           />
         ) : null}
       </section>

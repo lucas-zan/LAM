@@ -53,6 +53,7 @@ import type {
   CreateProviderRequestV2,
   CreateProviderWithKeychainRequestV2,
   UpdateProviderRequestV2,
+  ProviderListViewV2,
   ProviderProfileViewV2,
   PlanAttachRequestV2,
   ExecuteAttachRequestV2,
@@ -460,8 +461,29 @@ export async function attachProviderToProfile(
   return invoke<AttachProviderResult>('attach_provider_to_profile', { req });
 }
 
-export async function listProvidersV2(): Promise<ProviderProfileViewV2[]> {
-  return invoke<ProviderProfileViewV2[]>('list_providers_v2');
+function providerListContractMismatch(): Error & { code: string } {
+  const error = new Error('Provider list response does not match the V2 contract') as Error & {
+    code: string;
+  };
+  error.code = 'PROVIDER_LIST_CONTRACT_MISMATCH';
+  return error;
+}
+
+export async function listProvidersV2(): Promise<ProviderListViewV2> {
+  const result = await invoke<unknown>('list_providers_v2');
+  if (
+    !result ||
+    typeof result !== 'object' ||
+    Array.isArray(result) ||
+    !('revision' in result) ||
+    !Number.isSafeInteger(result.revision) ||
+    (result.revision as number) < 0 ||
+    !('providers' in result) ||
+    !Array.isArray(result.providers)
+  ) {
+    throw providerListContractMismatch();
+  }
+  return result as ProviderListViewV2;
 }
 
 export async function createProviderV2(
@@ -654,6 +676,16 @@ export async function getAuthMode(): Promise<string> {
 export async function setAuthMode(mode: string): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>('set_auth_mode', { mode });
+}
+
+export async function getGatewayFirstResponseTimeoutSeconds(): Promise<number> {
+  if (!inTauri()) return 60;
+  return invoke<number>('get_gateway_first_response_timeout_seconds');
+}
+
+export async function setGatewayFirstResponseTimeoutSeconds(seconds: number): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>('set_gateway_first_response_timeout_seconds', { seconds });
 }
 
 export async function getHideDockIcon(): Promise<boolean> {

@@ -94,10 +94,10 @@ fn relay_handoff_sequence_preserves_cwd_session_prompt_and_safe_escaping() {
 }
 
 #[test]
-fn wrapper_script_never_constructs_a_raw_codex_bypass() {
+fn gateway_wrapper_script_never_constructs_a_raw_codex_bypass() {
     let planner =
         CodexLaunchPlanner::new("/Applications/LAM Preview.app/Contents/MacOS/lam".into());
-    let wrapper = planner.wrapper_script("profile-a").unwrap();
+    let wrapper = planner.gateway_wrapper_script("profile-a").unwrap();
     assert!(wrapper.contains(
         "exec '/Applications/LAM Preview.app/Contents/MacOS/lam' codex --profile 'profile-a' -- \"$@\""
     ));
@@ -107,8 +107,8 @@ fn wrapper_script_never_constructs_a_raw_codex_bypass() {
 }
 
 #[test]
-fn wrapper_script_rejects_invalid_profile_ids() {
+fn gateway_wrapper_script_rejects_invalid_profile_ids() {
     let planner = CodexLaunchPlanner::new("/Applications/LAM.app/Contents/MacOS/lam".into());
-    let error = planner.wrapper_script("../main").unwrap_err();
+    let error = planner.gateway_wrapper_script("../main").unwrap_err();
     assert_eq!(error.code, "CODEX_PROFILE_ID_INVALID");
 }

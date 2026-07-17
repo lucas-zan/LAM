@@ -1,9 +1,11 @@
 use crate::services::error::{AppError, Result};
 use crate::services::provider_v2::ProviderModel;
-use serde::Serialize;
-use std::collections::BTreeSet;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 const GENERIC_BASE_INSTRUCTIONS: &str = "You are a coding agent. Follow the provided developer and user instructions, use available tools carefully, and make verifiable changes in the current workspace.";
+const BUILTIN_CODEX_MODEL_CATALOG: &str =
+    include_str!("../../../resources/codex-model-catalog.json");
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CodexModelCatalog {
@@ -25,6 +27,89 @@ pub struct CodexModelInfo {
     pub truncation_policy: CodexTruncationPolicy,
     pub supports_parallel_tool_calls: bool,
     pub experimental_supported_tools: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_context_window: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_compact_token_limit: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_context_window_percent: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CodexModelDefaultsCatalog {
+    models: BTreeMap<String, CodexModelDefaults>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+struct CodexModelDefaults {
+    slug: String,
+    context_window: Option<i64>,
+    max_context_window: Option<i64>,
+    auto_compact_token_limit: Option<i64>,
+    effective_context_window_percent: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct CodexModelDefaultsDocument {
+    #[serde(default)]
+    models: Vec<CodexModelDefaults>,
+}
+
+impl CodexModelDefaultsCatalog {
+    pub fn builtin() -> Result<Self> {
+        Self::from_json(BUILTIN_CODEX_MODEL_CATALOG)
+    }
+
+    pub fn from_json(source: &str) -> Result<Self> {
+        let document = serde_json::from_str::<CodexModelDefaultsDocument>(source)
+            .map_err(|error| AppError::new("CODEX_MODEL_CATALOG_INVALID", error.to_string()))?;
+        let models = document
+            .models
+            .into_iter()
+            .filter(|model| !model.slug.trim().is_empty() && model.slug.trim() == model.slug)
+            .map(|mut model| {
+                model.context_window = positive(model.context_window);
+                model.max_context_window = positive(model.max_context_window);
+                model.auto_compact_token_limit = positive(model.auto_compact_token_limit);
+                model.effective_context_window_percent = model
+                    .effective_context_window_percent
+                    .filter(|value| (1..=100).contains(value));
+                (model.slug.clone(), model)
+            })
+            .collect();
+        Ok(Self { models })
+    }
+
+    pub fn from_path(path: &std::path::Path, max_bytes: u64) -> Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        if metadata.len() > max_bytes {
+            return Err(AppError::new(
+                "CODEX_MODEL_CATALOG_TOO_LARGE",
+                "Codex model catalog exceeds the configured size limit",
+            ));
+        }
+        let source = std::fs::read_to_string(path)?;
+        Self::from_json(&source)
+    }
+
+    pub fn overlay_json(self, source: &str) -> Result<Self> {
+        Self::from_json(source).map(|overlay| self.overlay(overlay))
+    }
+
+    pub fn overlay(mut self, overlay: Self) -> Self {
+        self.models.extend(overlay.models);
+        self
+    }
+
+    fn get(&self, slug: &str) -> Option<&CodexModelDefaults> {
+        self.models.get(slug)
+    }
+}
+
+fn positive(value: Option<i64>) -> Option<i64> {
+    value.filter(|value| *value > 0)
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -52,6 +137,13 @@ pub struct CodexTruncationPolicy {
 }
 
 pub fn build_codex_model_catalog(models: &[ProviderModel]) -> Result<CodexModelCatalog> {
+    build_codex_model_catalog_with_defaults(models, &CodexModelDefaultsCatalog::default())
+}
+
+pub fn build_codex_model_catalog_with_defaults(
+    models: &[ProviderModel],
+    defaults: &CodexModelDefaultsCatalog,
+) -> Result<CodexModelCatalog> {
     let mut models = models.to_vec();
     models.sort_by(|left, right| left.id.cmp(&right.id));
     validate_models(&models)?;
@@ -59,7 +151,10 @@ pub fn build_codex_model_catalog(models: &[ProviderModel]) -> Result<CodexModelC
         models: models
             .into_iter()
             .enumerate()
-            .map(|(index, model)| codex_model(model, index + 1))
+            .map(|(index, model)| {
+                let model_defaults = defaults.get(&model.id);
+                codex_model(model, index + 1, model_defaults)
+            })
             .collect(),
     })
 }
@@ -83,7 +178,11 @@ fn validate_models(models: &[ProviderModel]) -> Result<()> {
     Ok(())
 }
 
-fn codex_model(model: ProviderModel, priority: usize) -> CodexModelInfo {
+fn codex_model(
+    model: ProviderModel,
+    priority: usize,
+    defaults: Option<&CodexModelDefaults>,
+) -> CodexModelInfo {
     CodexModelInfo {
         slug: model.id,
         display_name: model.label,
@@ -101,5 +200,10 @@ fn codex_model(model: ProviderModel, priority: usize) -> CodexModelInfo {
         },
         supports_parallel_tool_calls: false,
         experimental_supported_tools: Vec::new(),
+        context_window: defaults.and_then(|value| value.context_window),
+        max_context_window: defaults.and_then(|value| value.max_context_window),
+        auto_compact_token_limit: defaults.and_then(|value| value.auto_compact_token_limit),
+        effective_context_window_percent: defaults
+            .and_then(|value| value.effective_context_window_percent),
     }
 }
