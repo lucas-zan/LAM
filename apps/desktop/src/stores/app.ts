@@ -27,6 +27,7 @@ interface AppState {
   terminalTargetId: string;
   compactButtons: boolean;
   gatewayFirstResponseTimeoutSeconds: number;
+  antigravityPort: number | null;
 
   setRoute: (route: Route) => void;
   setThemeMode: (mode: ThemeMode) => void;
@@ -41,6 +42,7 @@ interface AppState {
   setTerminalTargetId: (targetId: string) => Promise<void>;
   setCompactButtons: (compact: boolean) => void;
   setGatewayFirstResponseTimeoutSeconds: (seconds: number) => Promise<void>;
+  setAntigravityPort: (port: number | null) => Promise<void>;
   loadSettings: () => Promise<void>;
 }
 
@@ -65,6 +67,7 @@ export const useAppStore = create<AppState>()(
       return saved === null ? true : saved === 'true';
     })(),
     gatewayFirstResponseTimeoutSeconds: 60,
+    antigravityPort: null,
 
     setRoute: (route) => set({ route }),
     setThemeMode: (themeMode) => {
@@ -106,20 +109,35 @@ export const useAppStore = create<AppState>()(
         set({ error: err instanceof Error ? err.message : 'Failed to save Gateway timeout' });
       }
     },
+    setAntigravityPort: async (port) => {
+      try {
+        await api.setAntigravityPort(port);
+        set({ antigravityPort: port });
+      } catch (err) {
+        set({ error: err instanceof Error ? err.message : 'Failed to save Antigravity port' });
+      }
+    },
     loadSettings: async () => {
       try {
-        const [hide, terminalTargets, terminalTargetId, gatewayFirstResponseTimeoutSeconds] =
-          await Promise.all([
-            api.getHideDockIcon(),
-            api.listTerminalTargets(),
-            api.getSelectedTerminalTarget(),
-            api.getGatewayFirstResponseTimeoutSeconds(),
-          ]);
+        const [
+          hide,
+          terminalTargets,
+          terminalTargetId,
+          gatewayFirstResponseTimeoutSeconds,
+          antigravityPort,
+        ] = await Promise.all([
+          api.getHideDockIcon(),
+          api.listTerminalTargets(),
+          api.getSelectedTerminalTarget(),
+          api.getGatewayFirstResponseTimeoutSeconds(),
+          api.getAntigravityPort(),
+        ]);
         set({
           hideDockIcon: hide,
           terminalTargets,
           terminalTargetId,
           gatewayFirstResponseTimeoutSeconds,
+          antigravityPort,
         });
       } catch (err) {
         console.error('Failed to load settings:', err);

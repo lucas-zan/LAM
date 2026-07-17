@@ -1,16 +1,18 @@
 use localagentmanager_core::{
-    attach_provider_to_profile, build_resume_command, create_account_plan, create_provider,
-    create_relay_plan, delete_provider, execute_attach_provider_to_profile, execute_create_account,
-    execute_create_relay, execute_rename_account, gateway_first_response_timeout_seconds,
-    get_profile_quota, list_accounts, list_cached_accounts, list_cached_quotas, list_providers,
-    list_sessions, list_terminal_targets, plan_attach_provider_to_profile, refresh_all_quotas,
+    antigravity_port, attach_provider_to_profile, build_resume_command, create_account_plan,
+    create_provider, create_relay_plan, delete_provider, execute_attach_provider_to_profile,
+    execute_create_account, execute_create_relay, execute_rename_account,
+    gateway_first_response_timeout_seconds, get_live_antigravity_quota, get_profile_quota,
+    list_accounts, list_cached_accounts, list_cached_quotas, list_providers, list_sessions,
+    list_terminal_targets, plan_attach_provider_to_profile, refresh_all_quotas,
     relay_resume_session, rename_account_plan, repair_managed_wrappers, reset_profile_quota,
-    resolve_home_root, selected_terminal_target_id, set_gateway_first_response_timeout_seconds,
-    set_selected_terminal_target_id, terminal_applescript, update_account_note, AccountNoteUpdate,
-    AttachProviderRequest, CreateAccountRequest, CreateProviderRequest, CreateRelayRequest,
-    InstallationLock, ManagedConfigProjection, ProfileBindingCollection, ProfileProviderBinding,
-    ProjectionOwnership, ProviderHubPaths, RelayResumeRequest, RenameAccountRequest,
-    ResumeCommandRequest, SecretInput, StoreOptions, VersionedFileStore,
+    resolve_home_root, selected_terminal_target_id, set_antigravity_port,
+    set_gateway_first_response_timeout_seconds, set_selected_terminal_target_id,
+    terminal_applescript, update_account_note, AccountNoteUpdate, AttachProviderRequest,
+    CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, InstallationLock,
+    ManagedConfigProjection, ProfileBindingCollection, ProfileProviderBinding, ProjectionOwnership,
+    ProviderHubPaths, RelayResumeRequest, RenameAccountRequest, ResumeCommandRequest, SecretInput,
+    StoreOptions, VersionedFileStore,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -80,6 +82,75 @@ fn gateway_first_response_timeout_setting_defaults_validates_and_preserves_setti
     let settings = home.path().join(".config/agent-workspace/settings.json");
     fs::write(&settings, r#"{"gatewayFirstResponseTimeoutSeconds":"bad"}"#).unwrap();
     assert_eq!(gateway_first_response_timeout_seconds(home.path()), 60);
+}
+
+#[test]
+fn antigravity_port_setting_round_trips_clears_and_validates() {
+    let home = tempfile::tempdir().unwrap();
+    assert_eq!(antigravity_port(home.path()), None);
+
+    localagentmanager_core::set_auth_mode(home.path(), "pat").unwrap();
+    set_antigravity_port(home.path(), Some(62891)).unwrap();
+    assert_eq!(antigravity_port(home.path()), Some(62891));
+    assert_eq!(
+        localagentmanager_core::get_auth_mode(home.path()).unwrap(),
+        "pat"
+    );
+
+    set_antigravity_port(home.path(), None).unwrap();
+    assert_eq!(antigravity_port(home.path()), None);
+    assert_eq!(
+        localagentmanager_core::get_auth_mode(home.path()).unwrap(),
+        "pat"
+    );
+
+    for port in [0, 65536] {
+        assert_eq!(
+            set_antigravity_port(home.path(), Some(port))
+                .unwrap_err()
+                .code,
+            "ANTIGRAVITY_PORT_CONFIG_INVALID"
+        );
+    }
+}
+
+#[test]
+fn antigravity_port_setting_ignores_invalid_values_and_normalizes_non_objects() {
+    let home = tempfile::tempdir().unwrap();
+    let settings = home.path().join(".config/agent-workspace/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+
+    for value in [r#""bad""#, "1.5", "0", "65536"] {
+        fs::write(&settings, format!(r#"{{"antigravityPort":{value}}}"#)).unwrap();
+        assert_eq!(antigravity_port(home.path()), None);
+    }
+
+    fs::write(&settings, r#"["not-an-object"]"#).unwrap();
+    set_antigravity_port(home.path(), Some(62891)).unwrap();
+    assert_eq!(antigravity_port(home.path()), Some(62891));
+}
+
+#[test]
+fn antigravity_quota_requires_a_configured_port_before_process_discovery() {
+    let _guard = env_lock().lock().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let empty_path = tempfile::tempdir().unwrap();
+    let original_path = std::env::var_os("PATH");
+    std::env::set_var("PATH", empty_path.path());
+
+    let response = get_live_antigravity_quota(home.path()).unwrap();
+
+    restore_env_var("PATH", original_path);
+    assert!(!response.ok);
+    assert!(response.models.is_empty());
+    assert!(response.groups.is_empty());
+    assert_eq!(response.description, None);
+    assert_eq!(
+        response.error.as_deref(),
+        Some(
+            "Configure the Antigravity port in Settings > System & Desktop > Antigravity Integration before refreshing."
+        )
+    );
 }
 
 #[test]

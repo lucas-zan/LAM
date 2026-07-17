@@ -6,6 +6,8 @@ import {
   checkProfileTokenExpiration,
   getApiAccountConnectionV2,
   updateApiAccountConnectionV2,
+  getAntigravityPort,
+  setAntigravityPort,
 } from './api';
 import type { UploadedCredentials, AuthMetadata, TokenExpirationStatus } from './types';
 
@@ -165,5 +167,37 @@ describe('PAT API functions', () => {
       expect(result.isExpired).toBe(true);
       expect(result.warningLevel).toBe('expired');
     });
+  });
+});
+
+describe('Antigravity settings API', () => {
+  it('uses exact get and set commands and payloads', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, '__TAURI_INTERNALS__');
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: { invoke: vi.fn() },
+    });
+    try {
+      mockInvoke.mockResolvedValueOnce(62891).mockResolvedValue(undefined);
+
+      await expect(getAntigravityPort()).resolves.toBe(62891);
+      expect(mockInvoke).toHaveBeenLastCalledWith('get_antigravity_port');
+      await setAntigravityPort(62891);
+      expect(mockInvoke).toHaveBeenLastCalledWith('set_antigravity_port', { port: 62891 });
+      await setAntigravityPort(null);
+      expect(mockInvoke).toHaveBeenLastCalledWith('set_antigravity_port', { port: null });
+    } finally {
+      if (descriptor) Object.defineProperty(window, '__TAURI_INTERNALS__', descriptor);
+      else delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+
+  it('uses browser fallbacks without a Tauri bridge', async () => {
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+
+    await expect(getAntigravityPort()).resolves.toBeNull();
+    await expect(setAntigravityPort(62891)).resolves.toBeUndefined();
+    await expect(setAntigravityPort(null)).resolves.toBeUndefined();
+    expect(mockInvoke).not.toHaveBeenCalled();
   });
 });

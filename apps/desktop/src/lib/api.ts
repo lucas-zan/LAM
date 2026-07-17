@@ -691,6 +691,16 @@ export async function setGatewayFirstResponseTimeoutSeconds(seconds: number): Pr
   return invoke<void>('set_gateway_first_response_timeout_seconds', { seconds });
 }
 
+export async function getAntigravityPort(): Promise<number | null> {
+  if (!inTauri()) return null;
+  return invoke<number | null>('get_antigravity_port');
+}
+
+export async function setAntigravityPort(port: number | null): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>('set_antigravity_port', { port });
+}
+
 export async function getHideDockIcon(): Promise<boolean> {
   if (!inTauri()) return false;
   return invoke<boolean>('get_hide_dock_icon');

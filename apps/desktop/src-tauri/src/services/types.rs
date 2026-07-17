@@ -295,6 +295,42 @@ pub fn set_gateway_first_response_timeout_seconds(home_root: &Path, seconds: u64
     write_file_private(&settings_path, &settings.to_string())
 }
 
+pub fn antigravity_port(home_root: &Path) -> Option<u16> {
+    let content = fs::read_to_string(settings_file_path(home_root)).ok()?;
+    let settings = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    settings
+        .get("antigravityPort")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|port| u16::try_from(port).ok())
+        .filter(|port| *port != 0)
+}
+
+pub fn set_antigravity_port(home_root: &Path, port: Option<u64>) -> Result<()> {
+    if matches!(port, Some(value) if !(1..=u16::MAX as u64).contains(&value)) {
+        return Err(AppError::new(
+            "ANTIGRAVITY_PORT_CONFIG_INVALID",
+            "Antigravity port must be between 1 and 65535",
+        ));
+    }
+
+    let settings_path = settings_file_path(home_root);
+    fs::create_dir_all(config_root(home_root))?;
+    let mut settings = fs::read_to_string(&settings_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    let object = settings
+        .as_object_mut()
+        .expect("settings must be an object");
+    if let Some(port) = port {
+        object.insert("antigravityPort".into(), serde_json::Value::from(port));
+    } else {
+        object.remove("antigravityPort");
+    }
+    write_file_private(&settings_path, &settings.to_string())
+}
+
 /// Gets the current auth mode (oauth or pat)
 pub fn get_auth_mode(home_root: &Path) -> Result<String> {
     let settings_path = settings_file_path(home_root);

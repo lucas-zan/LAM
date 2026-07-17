@@ -1,4 +1,4 @@
-import { useState, useEffect, useId, useMemo } from 'react';
+import { useState, useEffect, useId, useMemo, useRef } from 'react';
 import { sessionDisplayName } from '../lib/format';
 import {
   countAccountsWithAvailableQuota,
@@ -1469,6 +1469,9 @@ export function Sessions({
   );
 }
 
+const ANTIGRAVITY_PORT_COMMAND =
+  `lsof -Pan -p "$(pgrep -f '/Antigravity.app/.*/language_server.*--standalone' | head -n 1)" -iTCP -sTCP:LISTEN`;
+
 export function Settings({
   health,
   themeMode: _themeMode,
@@ -1487,6 +1490,8 @@ export function Settings({
   setCompactButtons,
   gatewayFirstResponseTimeoutSeconds,
   setGatewayFirstResponseTimeoutSeconds,
+  antigravityPort,
+  setAntigravityPort,
 }: {
   health: HealthCheck | null;
   themeMode: 'system' | 'light' | 'dark';
@@ -1505,6 +1510,8 @@ export function Settings({
   setCompactButtons: (compact: boolean) => void;
   gatewayFirstResponseTimeoutSeconds: number;
   setGatewayFirstResponseTimeoutSeconds: (seconds: number) => void;
+  antigravityPort: number | null;
+  setAntigravityPort: (port: number | null) => void;
 }) {
   const [rateCard, setRateCard] = useState<UsageRateCardEntry[]>([]);
   const [activeTab, setActiveTab] = useState<'general' | 'advanced' | 'rate-card' | 'system'>(
@@ -1520,6 +1527,18 @@ export function Settings({
     gatewayTimeoutEdit.source === gatewayFirstResponseTimeoutSeconds
       ? gatewayTimeoutEdit.draft
       : String(gatewayFirstResponseTimeoutSeconds);
+  const [antigravityPortEdit, setAntigravityPortEdit] = useState({
+    source: antigravityPort,
+    draft: antigravityPort === null ? '' : String(antigravityPort),
+  });
+  const antigravityPortDraft =
+    antigravityPortEdit.source === antigravityPort
+      ? antigravityPortEdit.draft
+      : antigravityPort === null
+        ? ''
+        : String(antigravityPort);
+  const antigravityPortCommit = useRef<string | null>(null);
+  const antigravityPortBadInput = useRef(false);
 
   const commitGatewayTimeout = () => {
     const seconds = Number(gatewayTimeoutDraft);
@@ -1531,6 +1550,34 @@ export function Settings({
       return;
     }
     setGatewayFirstResponseTimeoutSeconds(seconds);
+  };
+
+  const commitAntigravityPort = () => {
+    const draft = antigravityPortDraft.trim();
+    if (antigravityPortBadInput.current) {
+      antigravityPortBadInput.current = false;
+      setAntigravityPortEdit({
+        source: antigravityPort,
+        draft: antigravityPort === null ? '' : String(antigravityPort),
+      });
+      return;
+    }
+    if (antigravityPortCommit.current === draft) return;
+    if (draft === '') {
+      antigravityPortCommit.current = draft;
+      setAntigravityPort(null);
+      return;
+    }
+    const port = Number(draft);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setAntigravityPortEdit({
+        source: antigravityPort,
+        draft: antigravityPort === null ? '' : String(antigravityPort),
+      });
+      return;
+    }
+    antigravityPortCommit.current = draft;
+    setAntigravityPort(port);
   };
 
   const installedTerminalTargets = terminalTargets.filter((target) => target.installed);
@@ -1934,6 +1981,50 @@ export function Settings({
                       <option value="false">Show Dock icon</option>
                       <option value="true">Hide Dock icon (Accessory mode)</option>
                     </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="settingsSectionTitle">Antigravity Integration</div>
+              <div className="settingsGroupCard">
+                <div className="settingsRowLayout">
+                  <div className="settingsRowInfo">
+                    <label htmlFor="antigravityPort" className="settingsRowTitle">
+                      Antigravity port
+                    </label>
+                    <p className="settingsRowDesc">
+                      LAM no longer discovers this port automatically. Start Antigravity before
+                      running the command, then enter the port from the first{' '}
+                      <code>127.0.0.1:&lt;port&gt; (LISTEN)</code> row. If refresh remains offline
+                      and more rows exist, try the next listed port.
+                    </p>
+                    <code className="antigravityPortCommand">{ANTIGRAVITY_PORT_COMMAND}</code>
+                    <p className="settingsRowDesc">
+                      The value applies on the next refresh and may need updating after Antigravity
+                      restarts.
+                    </p>
+                  </div>
+                  <div className="settingsRowControl">
+                    <input
+                      id="antigravityPort"
+                      type="number"
+                      min={1}
+                      max={65535}
+                      step={1}
+                      value={antigravityPortDraft}
+                      onChange={(event) => {
+                        antigravityPortCommit.current = null;
+                        antigravityPortBadInput.current = event.currentTarget.validity.badInput;
+                        setAntigravityPortEdit({
+                          source: antigravityPort,
+                          draft: event.target.value,
+                        });
+                      }}
+                      onBlur={commitAntigravityPort}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') event.currentTarget.blur();
+                      }}
+                    />
                   </div>
                 </div>
               </div>

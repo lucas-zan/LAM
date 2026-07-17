@@ -1,16 +1,11 @@
-use crate::AppError;
+use crate::{antigravity_port, AppError};
 use serde::{Deserialize, Serialize};
-use std::io::Read;
-use std::process::{Command, Output, Stdio};
+use std::path::Path;
+use std::process::Command;
 use std::sync::{Mutex, OnceLock, TryLockError};
-use std::time::{Duration, Instant};
-
-const LSOF_PORT_SCAN_TIMEOUT: Duration = Duration::from_secs(2);
-const FAILED_EXPLICIT_PORT_COOLDOWN: Duration = Duration::from_secs(10 * 60);
 
 static ANTIGRAVITY_REFRESH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static ANTIGRAVITY_PORT_CACHE: OnceLock<Mutex<Option<AntigravityPortCache>>> = OnceLock::new();
-static FAILED_EXPLICIT_PORTS: OnceLock<Mutex<Vec<FailedExplicitPort>>> = OnceLock::new();
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -61,7 +56,6 @@ struct AntigravityQuotaSummary {
 struct AntigravityProcess {
     pid: u32,
     csrf_token: String,
-    ports: Vec<u16>,
     /// true = standalone Antigravity app, false = IDE extension
     is_standalone: bool,
 }
@@ -74,24 +68,12 @@ struct AntigravityPortCache {
     response: AntigravityQuotaResponse,
 }
 
-#[derive(Debug, Clone)]
-struct FailedExplicitPort {
-    pid: u32,
-    csrf_token: String,
-    port: u16,
-    failed_at: Instant,
-}
-
 fn refresh_lock() -> &'static Mutex<()> {
     ANTIGRAVITY_REFRESH_LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn port_cache() -> &'static Mutex<Option<AntigravityPortCache>> {
     ANTIGRAVITY_PORT_CACHE.get_or_init(|| Mutex::new(None))
-}
-
-fn failed_explicit_ports() -> &'static Mutex<Vec<FailedExplicitPort>> {
-    FAILED_EXPLICIT_PORTS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 fn read_port_cache() -> Option<AntigravityPortCache> {
@@ -115,12 +97,15 @@ fn clear_port_cache() {
     }
 }
 
-fn cached_port_for_process(proc: &AntigravityProcess, cache: &AntigravityPortCache) -> Option<u16> {
-    if proc.pid == cache.pid && proc.csrf_token == cache.csrf_token {
-        Some(cache.port)
-    } else {
-        None
-    }
+fn cache_matches(
+    processes: &[AntigravityProcess],
+    configured_port: u16,
+    cache: &AntigravityPortCache,
+) -> bool {
+    cache.port == configured_port
+        && processes
+            .iter()
+            .any(|proc| proc.pid == cache.pid && proc.csrf_token == cache.csrf_token)
 }
 
 fn antigravity_single_flight_response(
@@ -137,69 +122,6 @@ fn antigravity_single_flight_response(
         })
 }
 
-fn filter_available_explicit_ports(
-    pid: u32,
-    csrf_token: &str,
-    ports: &[u16],
-    failures: &[FailedExplicitPort],
-    now: Instant,
-    cooldown: Duration,
-) -> Vec<u16> {
-    ports
-        .iter()
-        .copied()
-        .filter(|port| {
-            !failures.iter().any(|failure| {
-                failure.pid == pid
-                    && failure.csrf_token == csrf_token
-                    && failure.port == *port
-                    && failure.failed_at + cooldown > now
-            })
-        })
-        .collect()
-}
-
-fn current_available_explicit_ports(proc: &AntigravityProcess) -> Vec<u16> {
-    let failures = failed_explicit_ports()
-        .lock()
-        .map(|failures| failures.clone())
-        .unwrap_or_default();
-    filter_available_explicit_ports(
-        proc.pid,
-        &proc.csrf_token,
-        &proc.ports,
-        &failures,
-        Instant::now(),
-        FAILED_EXPLICIT_PORT_COOLDOWN,
-    )
-}
-
-fn mark_failed_explicit_ports(proc: &AntigravityProcess, ports: &[u16]) {
-    if ports.is_empty() {
-        return;
-    }
-    let now = Instant::now();
-    if let Ok(mut failures) = failed_explicit_ports().lock() {
-        failures.retain(|failure| failure.failed_at + FAILED_EXPLICIT_PORT_COOLDOWN > now);
-        for port in ports {
-            if let Some(existing) = failures.iter_mut().find(|failure| {
-                failure.pid == proc.pid
-                    && failure.csrf_token == proc.csrf_token
-                    && failure.port == *port
-            }) {
-                existing.failed_at = now;
-            } else {
-                failures.push(FailedExplicitPort {
-                    pid: proc.pid,
-                    csrf_token: proc.csrf_token.clone(),
-                    port: *port,
-                    failed_at: now,
-                });
-            }
-        }
-    }
-}
-
 fn extract_arg_value(cmd: &str, arg: &str) -> Option<String> {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     for i in 0..parts.len() {
@@ -214,109 +136,6 @@ fn extract_arg_value(cmd: &str, arg: &str) -> Option<String> {
         }
     }
     None
-}
-
-fn extract_antigravity_ports(cmd: &str) -> Vec<u16> {
-    let mut ports = Vec::new();
-    for arg in [
-        "--https_server_port",
-        "--http_server_port",
-        "--extension_server_port",
-    ] {
-        collect_arg_ports(cmd, arg, &mut ports);
-    }
-    ports
-}
-
-fn collect_arg_ports(cmd: &str, arg: &str, ports: &mut Vec<u16>) {
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
-    for i in 0..parts.len() {
-        let value = if parts[i] == arg && i + 1 < parts.len() {
-            Some(parts[i + 1])
-        } else {
-            parts[i].strip_prefix(&format!("{arg}="))
-        };
-
-        let Some(value) = value else {
-            continue;
-        };
-        let Ok(port) = value.parse::<u16>() else {
-            continue;
-        };
-        if port != 0 && !ports.contains(&port) {
-            ports.push(port);
-        }
-    }
-}
-
-fn run_command_with_timeout(
-    program: &str,
-    args: &[&str],
-    timeout: Duration,
-) -> Result<Output, AppError> {
-    let mut child = Command::new(program)
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| {
-            AppError::new(
-                "PORT_SCAN_FAILED",
-                format!("Failed to run {program}: {err}"),
-            )
-        })?;
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let stdout_reader = stdout.map(|mut stdout| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = stdout.read_to_end(&mut bytes);
-            bytes
-        })
-    });
-    let stderr_reader = stderr.map(|mut stderr| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = stderr.read_to_end(&mut bytes);
-            bytes
-        })
-    });
-
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(status) = child.try_wait().map_err(|err| {
-            AppError::new(
-                "PORT_SCAN_FAILED",
-                format!("Failed to wait for {program}: {err}"),
-            )
-        })? {
-            let stdout = stdout_reader
-                .and_then(|reader| reader.join().ok())
-                .unwrap_or_default();
-            let stderr = stderr_reader
-                .and_then(|reader| reader.join().ok())
-                .unwrap_or_default();
-            return Ok(Output {
-                status,
-                stdout,
-                stderr,
-            });
-        }
-
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = stdout_reader.and_then(|reader| reader.join().ok());
-            let _ = stderr_reader.and_then(|reader| reader.join().ok());
-            return Err(AppError::new(
-                "PORT_SCAN_TIMEOUT",
-                format!("{program} timed out after {}ms", timeout.as_millis()),
-            ));
-        }
-
-        std::thread::sleep(Duration::from_millis(20));
-    }
 }
 
 fn find_antigravity_processes() -> Result<Vec<AntigravityProcess>, AppError> {
@@ -372,14 +191,13 @@ fn find_antigravity_processes() -> Result<Vec<AntigravityProcess>, AppError> {
             processes.push(AntigravityProcess {
                 pid,
                 csrf_token: token,
-                ports: extract_antigravity_ports(cmd),
                 is_standalone,
             });
         }
     }
 
     // Sort: standalone processes first (preferred), then IDE extensions
-    processes.sort_by(|a, b| b.is_standalone.cmp(&a.is_standalone));
+    processes.sort_by_key(|process| std::cmp::Reverse(process.is_standalone));
 
     if processes.is_empty() {
         return Err(AppError::new(
@@ -389,38 +207,6 @@ fn find_antigravity_processes() -> Result<Vec<AntigravityProcess>, AppError> {
     }
 
     Ok(processes)
-}
-
-fn find_listening_ports(pid: u32) -> Result<Vec<u16>, AppError> {
-    let output = run_command_with_timeout(
-        "lsof",
-        &["-Pan", "-p", &pid.to_string(), "-i"],
-        LSOF_PORT_SCAN_TIMEOUT,
-    )?;
-
-    if !output.status.success() {
-        return Ok(Vec::new());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut ports = Vec::new();
-    for line in stdout.lines() {
-        if !line.contains("(LISTEN)") || !line.contains("127.0.0.1:") {
-            continue;
-        }
-
-        if let Some(pos) = line.find("127.0.0.1:") {
-            let rest = &line[pos + "127.0.0.1:".len()..];
-            let port_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(port) = port_str.parse::<u16>() {
-                if !ports.contains(&port) {
-                    ports.push(port);
-                }
-            }
-        }
-    }
-
-    Ok(ports)
 }
 
 /// POST a JSON payload to the Antigravity language server.
@@ -699,12 +485,42 @@ fn query_ports_for_quota(
     None
 }
 
-pub fn get_live_antigravity_quota() -> Result<AntigravityQuotaResponse, AppError> {
+pub fn get_live_antigravity_quota(home_root: &Path) -> Result<AntigravityQuotaResponse, AppError> {
+    let Some(configured_port) = antigravity_port(home_root) else {
+        clear_port_cache();
+        return Ok(AntigravityQuotaResponse {
+            ok: false,
+            models: Vec::new(),
+            description: None,
+            groups: Vec::new(),
+            error: Some(
+                "Configure the Antigravity port in Settings > System & Desktop > Antigravity Integration before refreshing."
+                    .to_string(),
+            ),
+        });
+    };
+    let processes = match find_antigravity_processes() {
+        Ok(processes) => processes,
+        Err(err) => {
+            clear_port_cache();
+            return Ok(AntigravityQuotaResponse {
+                ok: false,
+                models: Vec::new(),
+                description: None,
+                groups: Vec::new(),
+                error: Some(format!("Failed to find process: {}", err.message)),
+            });
+        }
+    };
+
     let _refresh_guard = match refresh_lock().try_lock() {
         Ok(guard) => guard,
         Err(TryLockError::WouldBlock) => {
             let cache = read_port_cache();
-            return Ok(antigravity_single_flight_response(cache.as_ref()));
+            let matching_cache = cache
+                .as_ref()
+                .filter(|cache| cache_matches(&processes, configured_port, cache));
+            return Ok(antigravity_single_flight_response(matching_cache));
         }
         Err(TryLockError::Poisoned(_)) => {
             return Ok(AntigravityQuotaResponse {
@@ -716,89 +532,25 @@ pub fn get_live_antigravity_quota() -> Result<AntigravityQuotaResponse, AppError
             });
         }
     };
-    get_live_antigravity_quota_inner()
-}
-
-fn get_live_antigravity_quota_inner() -> Result<AntigravityQuotaResponse, AppError> {
-    let processes = match find_antigravity_processes() {
-        Ok(res) => res,
-        Err(err) => {
-            return Ok(AntigravityQuotaResponse {
-                ok: false,
-                models: Vec::new(),
-                description: None,
-                groups: Vec::new(),
-                error: Some(format!("Failed to find process: {}", err.message)),
-            });
-        }
-    };
 
     let mut last_err = None;
-    if let Some(cache) = read_port_cache() {
-        for proc in &processes {
-            if let Some(port) = cached_port_for_process(proc, &cache) {
-                if let Some((port, response)) =
-                    query_ports_for_quota(&[port], &proc.csrf_token, &mut last_err)
-                {
-                    store_port_cache(proc, port, &response);
-                    return Ok(response);
-                }
-                clear_port_cache();
-                break;
-            }
-        }
-    }
-
     for proc in processes {
-        let explicit_ports = current_available_explicit_ports(&proc);
-        if !explicit_ports.is_empty() {
-            if let Some((port, response)) =
-                query_ports_for_quota(&explicit_ports, &proc.csrf_token, &mut last_err)
-            {
-                store_port_cache(&proc, port, &response);
-                return Ok(response);
-            }
-            mark_failed_explicit_ports(&proc, &explicit_ports);
-        }
-
-        let ports = match find_listening_ports(proc.pid) {
-            Ok(res) => res,
-            Err(err) => {
-                if proc.ports.is_empty() {
-                    last_err = Some(err);
-                }
-                continue;
-            }
-        };
-
-        if ports.is_empty() {
-            if proc.ports.is_empty() {
-                last_err = Some(AppError::new(
-                    "NO_PORTS_FOUND",
-                    format!(
-                        "Process {} (standalone={}) is not listening on any ports",
-                        proc.pid, proc.is_standalone
-                    ),
-                ));
-            }
-            continue;
-        }
-
         if let Some((port, response)) =
-            query_ports_for_quota(&ports, &proc.csrf_token, &mut last_err)
+            query_ports_for_quota(&[configured_port], &proc.csrf_token, &mut last_err)
         {
             store_port_cache(&proc, port, &response);
             return Ok(response);
         }
     }
 
+    clear_port_cache();
     Ok(AntigravityQuotaResponse {
         ok: false,
         models: Vec::new(),
         description: None,
         groups: Vec::new(),
         error: Some(format!(
-            "Failed to query all ports. Last error: {}",
+            "Failed to query configured Antigravity port {configured_port}. Rerun the lsof guide in Settings > System & Desktop > Antigravity Integration. Last error: {}",
             last_err
                 .map(|e| e.message)
                 .unwrap_or_else(|| "Unknown".to_string())
@@ -866,48 +618,6 @@ mod tests {
         assert_eq!(err.code, "NO_QUOTA_GROUPS_FOUND");
     }
 
-    #[test]
-    fn antigravity_command_timeout_kills_slow_process() {
-        let err = run_command_with_timeout(
-            "sh",
-            &["-c", "sleep 2"],
-            std::time::Duration::from_millis(50),
-        )
-        .unwrap_err();
-
-        assert_eq!(err.code, "PORT_SCAN_TIMEOUT");
-    }
-
-    #[test]
-    fn antigravity_command_timeout_captures_fast_stdout() {
-        let output = run_command_with_timeout(
-            "sh",
-            &["-c", "printf 'ready'"],
-            std::time::Duration::from_secs(1),
-        )
-        .unwrap();
-
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "ready");
-    }
-
-    #[test]
-    fn antigravity_explicit_port_parses_space_and_equals_forms() {
-        let ports = extract_antigravity_ports(
-            "--https_server_port 57362 --http_server_port=57363 --extension_server_port 57364",
-        );
-
-        assert_eq!(ports, vec![57362, 57363, 57364]);
-    }
-
-    #[test]
-    fn antigravity_explicit_port_ignores_zero_invalid_and_duplicates() {
-        let ports = extract_antigravity_ports(
-            "--https_server_port 0 --http_server_port nope --extension_server_port 57362 --https_server_port=57362",
-        );
-
-        assert_eq!(ports, vec![57362]);
-    }
-
     fn sample_antigravity_response() -> AntigravityQuotaResponse {
         AntigravityQuotaResponse {
             ok: true,
@@ -923,11 +633,10 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_cache_matches_same_pid_and_token() {
+    fn antigravity_cache_matches_pid_token_and_configured_port() {
         let proc = AntigravityProcess {
             pid: 42,
             csrf_token: "token-a".to_string(),
-            ports: Vec::new(),
             is_standalone: true,
         };
         let cache = AntigravityPortCache {
@@ -937,11 +646,16 @@ mod tests {
             response: sample_antigravity_response(),
         };
 
-        assert_eq!(cached_port_for_process(&proc, &cache), Some(57362));
+        let response = antigravity_single_flight_response(
+            cache_matches(&[proc], 57362, &cache).then_some(&cache),
+        );
+
+        assert!(response.ok);
+        assert_eq!(response.models[0].label, "Gemini");
     }
 
     #[test]
-    fn antigravity_cache_rejects_mismatched_pid_or_token() {
+    fn antigravity_cache_rejects_mismatched_pid_token_or_port() {
         let cache = AntigravityPortCache {
             pid: 42,
             csrf_token: "token-a".to_string(),
@@ -951,33 +665,33 @@ mod tests {
         let wrong_pid = AntigravityProcess {
             pid: 43,
             csrf_token: "token-a".to_string(),
-            ports: Vec::new(),
             is_standalone: true,
         };
         let wrong_token = AntigravityProcess {
             pid: 42,
             csrf_token: "token-b".to_string(),
-            ports: Vec::new(),
             is_standalone: true,
         };
 
-        assert_eq!(cached_port_for_process(&wrong_pid, &cache), None);
-        assert_eq!(cached_port_for_process(&wrong_token, &cache), None);
-    }
-
-    #[test]
-    fn antigravity_single_flight_returns_cached_response_when_available() {
-        let cache = AntigravityPortCache {
-            pid: 42,
-            csrf_token: "token-a".to_string(),
-            port: 57362,
-            response: sample_antigravity_response(),
-        };
-
-        let response = antigravity_single_flight_response(Some(&cache));
-
-        assert!(response.ok);
-        assert_eq!(response.models[0].label, "Gemini");
+        for matches in [
+            cache_matches(&[wrong_pid], 57362, &cache),
+            cache_matches(&[wrong_token], 57362, &cache),
+            cache_matches(
+                &[AntigravityProcess {
+                    pid: 42,
+                    csrf_token: "token-a".to_string(),
+                    is_standalone: true,
+                }],
+                57363,
+                &cache,
+            ),
+        ] {
+            let response = antigravity_single_flight_response(matches.then_some(&cache));
+            assert_eq!(
+                response.error.as_deref(),
+                Some("Antigravity refresh already in progress")
+            );
+        }
     }
 
     #[test]
@@ -989,49 +703,5 @@ mod tests {
             response.error.as_deref(),
             Some("Antigravity refresh already in progress")
         );
-    }
-
-    #[test]
-    fn antigravity_negative_port_filters_active_failures() {
-        let now = Instant::now();
-        let failures = vec![FailedExplicitPort {
-            pid: 42,
-            csrf_token: "token-a".to_string(),
-            port: 57362,
-            failed_at: now,
-        }];
-
-        let ports = filter_available_explicit_ports(
-            42,
-            "token-a",
-            &[57362, 57363],
-            &failures,
-            now + Duration::from_secs(60),
-            Duration::from_secs(600),
-        );
-
-        assert_eq!(ports, vec![57363]);
-    }
-
-    #[test]
-    fn antigravity_negative_port_allows_expired_failures() {
-        let now = Instant::now();
-        let failures = vec![FailedExplicitPort {
-            pid: 42,
-            csrf_token: "token-a".to_string(),
-            port: 57362,
-            failed_at: now,
-        }];
-
-        let ports = filter_available_explicit_ports(
-            42,
-            "token-a",
-            &[57362, 57363],
-            &failures,
-            now + Duration::from_secs(601),
-            Duration::from_secs(600),
-        );
-
-        assert_eq!(ports, vec![57362, 57363]);
     }
 }

@@ -1130,7 +1130,8 @@ pub async fn execute_gateway_port_migration_v2(
 #[tauri::command]
 pub async fn get_antigravity_quota(
 ) -> Result<localagentmanager_core::AntigravityQuotaResponse, AppError> {
-    run_blocking(localagentmanager_core::get_live_antigravity_quota).await
+    let home = home_root()?;
+    run_blocking(move || localagentmanager_core::get_live_antigravity_quota(&home)).await
 }
 
 #[tauri::command]
@@ -1201,6 +1202,16 @@ pub fn get_gateway_first_response_timeout_seconds() -> Result<u64, AppError> {
 #[tauri::command]
 pub fn set_gateway_first_response_timeout_seconds(seconds: u64) -> Result<(), AppError> {
     localagentmanager_core::set_gateway_first_response_timeout_seconds(&home_root()?, seconds)
+}
+
+#[tauri::command]
+pub fn get_antigravity_port() -> Result<Option<u16>, AppError> {
+    Ok(localagentmanager_core::antigravity_port(&home_root()?))
+}
+
+#[tauri::command]
+pub fn set_antigravity_port(port: Option<u64>) -> Result<(), AppError> {
+    localagentmanager_core::set_antigravity_port(&home_root()?, port)
 }
 
 #[tauri::command]

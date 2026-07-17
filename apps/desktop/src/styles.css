@@ -4596,6 +4596,15 @@ pre {
   line-height: 1.4;
 }
 
+.antigravityPortCommand {
+  display: block;
+  max-width: 100%;
+  font-family: var(--font-mono, monospace);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .settingsRowControl {
   flex-shrink: 0;
   display: flex;

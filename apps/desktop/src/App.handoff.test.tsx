@@ -68,6 +68,8 @@ vi.mock('./lib/api', () => ({
   setHideDockIcon: vi.fn(),
   getGatewayFirstResponseTimeoutSeconds: vi.fn(() => Promise.resolve(60)),
   setGatewayFirstResponseTimeoutSeconds: vi.fn(),
+  getAntigravityPort: vi.fn(() => Promise.resolve(null)),
+  setAntigravityPort: vi.fn(),
   listTerminalTargets: vi.fn(() =>
     Promise.resolve([
       { id: 'terminal', displayName: 'Terminal.app', kind: 'terminal', installed: true },
@@ -308,6 +310,7 @@ beforeEach(() => {
     error: '',
     appReady: false,
     modal: null,
+    antigravityPort: null,
   });
   useAccountStore.setState({
     accounts: [],
@@ -1460,6 +1463,44 @@ describe('App handoff modal', () => {
       expect(api.setGatewayFirstResponseTimeoutSeconds).toHaveBeenCalledWith(120),
     );
     expect(await screen.findByText(/next gateway launch/i)).toBeTruthy();
+  });
+
+  it('loads, validates, saves, and clears the Antigravity port setting', async () => {
+    const command =
+      `lsof -Pan -p "$(pgrep -f '/Antigravity.app/.*/language_server.*--standalone' | head -n 1)" -iTCP -sTCP:LISTEN`;
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    vi.mocked(api.getAntigravityPort).mockResolvedValue(62891);
+    useAppStore.setState({ route: 'settings' });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /system & desktop/i }));
+
+    const input = (await screen.findByLabelText(/antigravity port/i)) as HTMLInputElement;
+    expect(input.value).toBe('62891');
+    const guide = screen.getByText(command, { selector: 'code' });
+    expect(guide.textContent).toBe(command);
+
+    fireEvent.change(input, { target: { value: '63000' } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(api.setAntigravityPort).toHaveBeenCalledWith(63000));
+
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(api.setAntigravityPort).toHaveBeenCalledWith(null));
+
+    vi.mocked(api.setAntigravityPort).mockClear();
+    fireEvent.change(input, { target: { value: '0' } });
+    fireEvent.blur(input);
+    expect(api.setAntigravityPort).not.toHaveBeenCalled();
+    expect(input.value).toBe('');
+
+    fireEvent.change(input, { target: { value: '62892' } });
+    input.focus();
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.blur(input);
+    await waitFor(() => expect(api.setAntigravityPort).toHaveBeenCalledWith(62892));
+    expect(api.setAntigravityPort).toHaveBeenCalledTimes(1);
   });
 
   it('uses Profile Only mode availability from settings', async () => {

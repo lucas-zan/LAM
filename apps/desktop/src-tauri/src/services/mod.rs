@@ -51,8 +51,9 @@ pub use runtime::*;
 pub use session::*;
 pub use storage::*;
 pub use types::{
-    gateway_first_response_timeout_seconds, get_auth_mode, selected_terminal_target_id,
-    set_auth_mode, set_gateway_first_response_timeout_seconds, set_selected_terminal_target_id,
+    antigravity_port, gateway_first_response_timeout_seconds, get_auth_mode,
+    selected_terminal_target_id, set_antigravity_port, set_auth_mode,
+    set_gateway_first_response_timeout_seconds, set_selected_terminal_target_id,
     DEFAULT_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS, MAX_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS,
     MIN_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS,
 };

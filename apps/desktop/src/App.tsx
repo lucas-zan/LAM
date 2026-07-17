@@ -130,6 +130,8 @@ export function App() {
     setCompactButtons,
     gatewayFirstResponseTimeoutSeconds,
     setGatewayFirstResponseTimeoutSeconds,
+    antigravityPort,
+    setAntigravityPort,
   } = useAppStore();
   const {
     accounts,
@@ -974,6 +976,8 @@ export function App() {
             setCompactButtons={setCompactButtons}
             gatewayFirstResponseTimeoutSeconds={gatewayFirstResponseTimeoutSeconds}
             setGatewayFirstResponseTimeoutSeconds={setGatewayFirstResponseTimeoutSeconds}
+            antigravityPort={antigravityPort}
+            setAntigravityPort={setAntigravityPort}
           />
         ) : null}
       </section>
