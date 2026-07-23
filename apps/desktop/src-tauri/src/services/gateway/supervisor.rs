@@ -3,6 +3,7 @@ use super::identity::load_or_create_system_install_identity;
 use super::launcher::{
     InstallManifest, InstallManifestVerifier, MacCodeSignIdentityVerifier, VerifiedInstallation,
 };
+use super::listener_handoff::configure_listener_handoff;
 use super::recovery::{
     recover_verified_gateway_process, GatewayProcessControl, GatewayProcessIdentity,
     SystemGatewayProcessControl,
@@ -371,7 +372,7 @@ pub fn validate_gateway_start_preflight(
     state: &GatewayStateRepository,
     expected_revision: u64,
     control_path: &Path,
-) -> Result<StoreSnapshot<GatewayRuntimeState>> {
+) -> Result<GatewayStartReservation> {
     let snapshot = state.load()?;
     if snapshot.revision != expected_revision {
         return Err(AppError::new(
@@ -392,7 +393,6 @@ pub fn validate_gateway_start_preflight(
                 "Gateway stable port is already occupied",
             )
         })?;
-    drop(listener);
     #[cfg(unix)]
     if control_path.exists() && std::os::unix::net::UnixStream::connect(control_path).is_ok() {
         return Err(AppError::new(
@@ -400,13 +400,29 @@ pub fn validate_gateway_start_preflight(
             "Gateway control socket still has a live listener",
         ));
     }
-    Ok(snapshot)
+    Ok(GatewayStartReservation { snapshot, listener })
+}
+
+#[derive(Debug)]
+pub struct GatewayStartReservation {
+    snapshot: StoreSnapshot<GatewayRuntimeState>,
+    listener: TcpListener,
+}
+
+impl GatewayStartReservation {
+    pub fn snapshot(&self) -> &StoreSnapshot<GatewayRuntimeState> {
+        &self.snapshot
+    }
+
+    pub fn listener(&self) -> &TcpListener {
+        &self.listener
+    }
 }
 
 #[derive(Debug)]
 pub enum GatewayReconcileOutcome {
     Hold,
-    ReadyToStart(StoreSnapshot<GatewayRuntimeState>),
+    ReadyToStart(GatewayStartReservation),
 }
 
 pub struct GatewayReconcileContext<'a, C> {
@@ -480,8 +496,8 @@ fn clear_claim_and_validate_start(
         Some(pid) => clear_stale_gateway_claim(state, snapshot.revision, pid, now)?,
         None => snapshot.clone(),
     };
-    let ready = validate_gateway_start_preflight(state, current.revision, control_path)?;
-    Ok(GatewayReconcileOutcome::ReadyToStart(ready))
+    let reservation = validate_gateway_start_preflight(state, current.revision, control_path)?;
+    Ok(GatewayReconcileOutcome::ReadyToStart(reservation))
 }
 
 fn required_claimed_pid(snapshot: &StoreSnapshot<GatewayRuntimeState>) -> Result<u32> {
@@ -626,8 +642,8 @@ impl PackagedGatewaySupervisor {
             .await;
         match outcome {
             Ok(GatewayReconcileOutcome::Hold) => self.hold_delay(),
-            Ok(GatewayReconcileOutcome::ReadyToStart(ready)) => {
-                self.start(ready, &active, installation, &control_path)
+            Ok(GatewayReconcileOutcome::ReadyToStart(reservation)) => {
+                self.start(reservation, &active, installation, &control_path)
             }
             Err(error) => {
                 self.transition(GatewaySupervisorObservation::StartPreflightBlocked);
@@ -683,7 +699,7 @@ impl PackagedGatewaySupervisor {
 
     fn start(
         &mut self,
-        ready: StoreSnapshot<GatewayRuntimeState>,
+        reservation: GatewayStartReservation,
         active: &[super::binding::GatewayBinding],
         installation: Arc<VerifiedInstallation>,
         control_path: &Path,
@@ -698,7 +714,7 @@ impl PackagedGatewaySupervisor {
         match start_packaged_sidecar(
             &self.home_root,
             &self.root,
-            &ready.value,
+            &reservation,
             active,
             timeout,
             &installation,
@@ -829,12 +845,13 @@ fn log_supervisor_transition(machine: &GatewaySupervisorMachine) {
 fn start_packaged_sidecar(
     home_root: &Path,
     root: &Path,
-    state: &GatewayRuntimeState,
+    reservation: &GatewayStartReservation,
     bindings: &[super::binding::GatewayBinding],
     first_response_timeout_seconds: u64,
     installation: &VerifiedInstallation,
     control_path: &Path,
 ) -> Result<()> {
+    let state = &reservation.snapshot().value;
     let identity = load_or_create_system_install_identity(&state.install_id)?;
     let control_parent = control_path.parent().ok_or_else(|| {
         AppError::new(
@@ -887,6 +904,7 @@ fn start_packaged_sidecar(
             command.env(env_key, value);
         }
     }
+    configure_listener_handoff(&mut command, reservation.listener())?;
     let mut child = command.spawn().map_err(|_| {
         AppError::new(
             "GATEWAY_START_FAILED",

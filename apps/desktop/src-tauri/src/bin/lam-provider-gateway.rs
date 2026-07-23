@@ -2,6 +2,7 @@ use localagentmanager_core::gateway::binding::{
     binding_requires_gateway, GatewayBindingCollection, GatewayBindingService,
 };
 use localagentmanager_core::gateway::catalog::CodexModelDefaultsCatalog;
+use localagentmanager_core::gateway::listener_handoff::take_inherited_gateway_listener;
 use localagentmanager_core::gateway::routes::GatewayRouteComposer;
 use localagentmanager_core::gateway::server::{
     FileMetadataObserver, GatewayLoopbackServer, GatewayServerConfig, HealthProofKey,
@@ -66,6 +67,13 @@ async fn run() -> localagentmanager_core::Result<()> {
             "Gateway state is not initialized",
         ));
     }
+    let listener = take_inherited_gateway_listener(state.value.stable_port)?;
+    let listener = tokio::net::TcpListener::from_std(listener).map_err(|_| {
+        localagentmanager_core::AppError::new(
+            "GATEWAY_LISTENER_IDENTITY_INVALID",
+            "Gateway inherited listener could not enter async mode",
+        )
+    })?;
     let pid = std::process::id();
     let stale = state
         .value
@@ -120,7 +128,7 @@ async fn run() -> localagentmanager_core::Result<()> {
             return Err(error);
         }
     };
-    let server = match GatewayLoopbackServer::start(
+    let server = match GatewayLoopbackServer::start_with_listener(
         GatewayServerConfig {
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), claimed.value.stable_port),
             protocol_version: claimed.value.control_protocol_version,
@@ -136,6 +144,7 @@ async fn run() -> localagentmanager_core::Result<()> {
             max_queue_per_binding: 8,
             request_timeout: Duration::from_secs(15 * 60),
         },
+        listener,
         binding_service.clone(),
         handler,
         Arc::new(HealthProofKey::new(&identity_key)?),

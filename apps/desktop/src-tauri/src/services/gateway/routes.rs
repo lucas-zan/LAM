@@ -25,7 +25,7 @@ use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 use uuid::Uuid;
@@ -407,7 +407,8 @@ impl GatewayRouteComposer {
                 &error_context,
             )
             .with_retry_after(response.retry_after)
-            .with_metrics(None, response.attempts));
+            .with_metrics(None, response.attempts)
+            .with_upstream_metrics(response.status, response.first_byte_ms));
         }
         let content_type = response
             .content_type
@@ -427,7 +428,8 @@ impl GatewayRouteComposer {
                 content_type,
                 Body::from(response.body),
             )
-            .with_metrics(usage, response.attempts),
+            .with_metrics(usage, response.attempts)
+            .with_upstream_metrics(response.status, response.first_byte_ms),
         )
     }
 
@@ -446,6 +448,7 @@ impl GatewayRouteComposer {
             let content_type = upstream.content_type.clone();
             let retry_after = upstream.retry_after.clone();
             let attempts = upstream.attempts;
+            let first_byte_ms = upstream.first_byte_ms;
             let mut body = Vec::new();
             while let Some(chunk) = upstream.next_chunk().await? {
                 body.extend_from_slice(&chunk);
@@ -457,7 +460,8 @@ impl GatewayRouteComposer {
                 &error_context,
             )
             .with_retry_after(retry_after)
-            .with_metrics(None, attempts));
+            .with_metrics(None, attempts)
+            .with_upstream_metrics(status, first_byte_ms));
         }
         let content_type = upstream
             .content_type
@@ -474,13 +478,17 @@ impl GatewayRouteComposer {
         let status = upstream.status;
         let require_terminal_event = true;
         let attempts = upstream.attempts;
+        let first_byte_ms = upstream.first_byte_ms;
         let (sender, receiver) = mpsc::channel::<std::result::Result<BudgetedFrame, Infallible>>(
             crate::services::adapters::protocol::MAX_EVENT_CHANNEL_CAPACITY,
         );
         let byte_budget = Arc::new(Semaphore::new(
             crate::services::adapters::protocol::MAX_EVENT_CHANNEL_BYTES,
         ));
+        let downstream_cancellation = cancellation.clone();
+        let (completion, completed) = oneshot::channel();
         tokio::spawn(async move {
+            let _completion = completion;
             let mut terminal = ResponsesTerminalObserver::default();
             loop {
                 match upstream.next_chunk().await {
@@ -527,7 +535,10 @@ impl GatewayRouteComposer {
                 ReceiverStream::new(receiver).map(|item| item.map(|frame| frame.bytes)),
             ),
         )
-        .with_metrics(None, attempts))
+        .with_metrics(None, attempts)
+        .with_upstream_metrics(status, first_byte_ms)
+        .with_stream_lifecycle(downstream_cancellation, completed)
+        .streaming())
     }
 
     async fn nonstream(
@@ -551,7 +562,8 @@ impl GatewayRouteComposer {
                 "UPSTREAM_HTTP_ERROR",
                 "upstream rejected the translated request",
             )
-            .with_metrics(None, attempts));
+            .with_metrics(None, attempts)
+            .with_upstream_metrics(response.status, response.first_byte_ms));
         }
         let chat: ChatCompletionResponse = match serde_json::from_slice(&response.body) {
             Ok(chat) => chat,
@@ -595,7 +607,8 @@ impl GatewayRouteComposer {
                 )
             })?,
         )
-        .with_metrics(usage, attempts))
+        .with_metrics(usage, attempts)
+        .with_upstream_metrics(response.status, response.first_byte_ms))
     }
 
     async fn streaming(
@@ -614,6 +627,8 @@ impl GatewayRouteComposer {
             }
         };
         let attempts = upstream.attempts;
+        let upstream_status = upstream.status;
+        let first_byte_ms = upstream.first_byte_ms;
         if !(200..300).contains(&upstream.status) {
             let _ = exchange.cancel();
             return Ok(error_response(
@@ -621,7 +636,8 @@ impl GatewayRouteComposer {
                 "UPSTREAM_HTTP_ERROR",
                 "upstream rejected the translated stream",
             )
-            .with_metrics(None, attempts));
+            .with_metrics(None, attempts)
+            .with_upstream_metrics(upstream_status, first_byte_ms));
         }
         if !upstream
             .content_type
@@ -641,7 +657,10 @@ impl GatewayRouteComposer {
         let byte_budget = Arc::new(Semaphore::new(
             crate::services::adapters::protocol::MAX_EVENT_CHANNEL_BYTES,
         ));
+        let downstream_cancellation = cancellation.clone();
+        let (completion, completed) = oneshot::channel();
         tokio::spawn(async move {
+            let _completion = completion;
             let mut adapter = StreamingAdapter::new(
                 format!("resp_{}", Uuid::new_v4().simple()),
                 requested_model,
@@ -708,7 +727,10 @@ impl GatewayRouteComposer {
                 ReceiverStream::new(receiver).map(|item| item.map(|frame| frame.bytes)),
             ),
         )
-        .with_metrics(None, attempts))
+        .with_metrics(None, attempts)
+        .with_upstream_metrics(upstream_status, first_byte_ms)
+        .with_stream_lifecycle(downstream_cancellation, completed)
+        .streaming())
     }
 
     fn models(&self, request: GatewayHttpRequest) -> GatewayHttpResponse {
@@ -825,6 +847,7 @@ fn error_response(status: u16, code: &str, message: &str) -> GatewayHttpResponse
             }
         }),
     )
+    .with_outcome_code(code)
 }
 
 const MAX_UPSTREAM_ERROR_DETAIL_CHARS: usize = 512;
@@ -873,6 +896,7 @@ fn upstream_http_error_response(
             }
         }),
     )
+    .with_outcome_code(upstream_error_code(status))
 }
 
 fn upstream_error_detail(content_type: Option<&str>, body: &[u8]) -> Option<String> {

@@ -231,11 +231,13 @@ impl GatewayCancellation {
         self.inner.cancelled.load(Ordering::SeqCst)
     }
 
-    async fn cancelled(&self) {
-        if self.is_cancelled() {
-            return;
+    pub async fn cancelled(&self) {
+        let notified = self.inner.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if !self.is_cancelled() {
+            notified.await;
         }
-        self.inner.notify.notified().await;
     }
 }
 
@@ -255,6 +257,7 @@ pub struct UpstreamResponse {
     pub retry_after: Option<String>,
     pub body: Vec<u8>,
     pub attempts: u8,
+    pub first_byte_ms: u64,
 }
 
 pub struct UpstreamStreamResponse {
@@ -262,6 +265,7 @@ pub struct UpstreamStreamResponse {
     pub content_type: Option<String>,
     pub retry_after: Option<String>,
     pub attempts: u8,
+    pub first_byte_ms: u64,
     response: reqwest::Response,
     deadline: Instant,
     idle_timeout: Duration,
@@ -309,6 +313,7 @@ impl fmt::Debug for UpstreamResponse {
             .field("retry_after", &self.retry_after)
             .field("body_bytes", &self.body.len())
             .field("attempts", &self.attempts)
+            .field("first_byte_ms", &self.first_byte_ms)
             .finish()
     }
 }
@@ -358,10 +363,12 @@ impl SecureUpstreamClient {
             retry_after: response.retry_after,
             body,
             attempts: response.attempts,
+            first_byte_ms: response.first_byte_ms,
         })
     }
 
     pub async fn open_stream(&self, request: UpstreamRequest) -> Result<UpstreamStreamResponse> {
+        let started = Instant::now();
         if request.cancellation.is_cancelled() {
             return Err(cancelled());
         }
@@ -441,6 +448,7 @@ impl SecureUpstreamClient {
             content_type,
             retry_after,
             attempts,
+            first_byte_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
             response,
             deadline,
             idle_timeout: self.config.stream_idle_timeout,

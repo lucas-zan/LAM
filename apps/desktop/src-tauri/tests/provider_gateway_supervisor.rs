@@ -570,7 +570,16 @@ fn start_preflight_requires_empty_claim_and_available_stable_port() {
     );
     drop(listener);
 
-    validate_gateway_start_preflight(&repo, cleared.revision, &control_path).unwrap();
+    let reservation =
+        validate_gateway_start_preflight(&repo, cleared.revision, &control_path).unwrap();
+    assert_eq!(reservation.snapshot().revision, cleared.revision);
+    assert_eq!(
+        reservation.listener().local_addr().unwrap().port(),
+        cleared.value.stable_port
+    );
+    assert!(TcpListener::bind(("127.0.0.1", cleared.value.stable_port)).is_err());
+    drop(reservation);
+    TcpListener::bind(("127.0.0.1", cleared.value.stable_port)).unwrap();
 }
 
 #[cfg(unix)]
@@ -605,6 +614,8 @@ fn production_supervisor_no_longer_uses_pid_existence_as_health() {
     assert!(source.contains("ReloadingCache"));
     assert!(source.contains("reconcile_gateway_claim"));
     assert!(source.contains("validate_gateway_start_preflight"));
+    assert!(source.contains("configure_listener_handoff"));
+    assert!(!source.contains("drop(listener)"));
     assert!(!source.contains("is_some_and(process_exists)"));
     assert!(!source.contains("fn process_exists("));
 }

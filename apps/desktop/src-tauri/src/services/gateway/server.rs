@@ -1,8 +1,11 @@
 use super::binding::{GatewayBindingService, GatewayBindingSnapshot};
-use super::upstream::CodexUpstreamHeaders;
+use super::observability::{
+    capacity_identity_hash, GatewayActivitySnapshot, GatewayRejectionReason, GatewayTimeoutStage,
+};
+use super::upstream::{CodexUpstreamHeaders, GatewayCancellation};
 use crate::services::error::{AppError, Result};
 use crate::services::provider_keychain::KeychainBackend;
-use axum::body::{to_bytes, Body};
+use axum::body::{to_bytes, Body, BodyDataStream, Bytes};
 use axum::extract::{Extension, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
@@ -25,10 +28,12 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
-use tokio::sync::{oneshot, Semaphore};
+use tokio::sync::{oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
+use tokio_stream::Stream;
 use uuid::Uuid;
 
 const HEALTH_NONCE_HEADER: &str = "x-lam-health-nonce";
@@ -60,6 +65,13 @@ pub struct GatewayHttpResponse {
     retry_after: Option<String>,
     usage: Option<RequestUsageMetadata>,
     retry_count: u8,
+    streaming: bool,
+    ttft_ms: Option<u64>,
+    upstream_status: Option<u16>,
+    outcome_code: Option<String>,
+    timeout_stage: Option<GatewayTimeoutStage>,
+    stream_cancellation: Option<GatewayCancellation>,
+    stream_completion: Option<oneshot::Receiver<()>>,
 }
 
 impl GatewayHttpResponse {
@@ -71,6 +83,13 @@ impl GatewayHttpResponse {
             retry_after: None,
             usage: None,
             retry_count: 0,
+            streaming: false,
+            ttft_ms: None,
+            upstream_status: None,
+            outcome_code: None,
+            timeout_stage: None,
+            stream_cancellation: None,
+            stream_completion: None,
         }
     }
 
@@ -82,6 +101,13 @@ impl GatewayHttpResponse {
             retry_after: None,
             usage: None,
             retry_count: 0,
+            streaming: false,
+            ttft_ms: None,
+            upstream_status: None,
+            outcome_code: None,
+            timeout_stage: None,
+            stream_cancellation: None,
+            stream_completion: None,
         }
     }
 
@@ -93,6 +119,35 @@ impl GatewayHttpResponse {
     pub fn with_metrics(mut self, usage: Option<RequestUsageMetadata>, attempts: u8) -> Self {
         self.usage = usage;
         self.retry_count = attempts.saturating_sub(1);
+        self
+    }
+
+    pub fn streaming(mut self) -> Self {
+        self.streaming = true;
+        self
+    }
+
+    pub fn with_upstream_metrics(mut self, status: u16, ttft_ms: u64) -> Self {
+        self.upstream_status = Some(status);
+        self.ttft_ms = Some(ttft_ms);
+        self
+    }
+
+    pub fn with_outcome_code(mut self, code: impl Into<String>) -> Self {
+        let code = code.into();
+        self.timeout_stage = Some(GatewayTimeoutStage::from_code(&code))
+            .filter(|stage| *stage != GatewayTimeoutStage::Other);
+        self.outcome_code = Some(code);
+        self
+    }
+
+    pub fn with_stream_lifecycle(
+        mut self,
+        cancellation: GatewayCancellation,
+        completion: oneshot::Receiver<()>,
+    ) -> Self {
+        self.stream_cancellation = Some(cancellation);
+        self.stream_completion = Some(completion);
         self
     }
 
@@ -112,6 +167,18 @@ impl GatewayHttpResponse {
         self.usage.as_ref()
     }
 
+    pub fn ttft_ms(&self) -> Option<u64> {
+        self.ttft_ms
+    }
+
+    pub fn upstream_status(&self) -> Option<u16> {
+        self.upstream_status
+    }
+
+    pub fn outcome_code(&self) -> Option<&str> {
+        self.outcome_code.as_deref()
+    }
+
     pub async fn collect_bytes(self) -> Result<Vec<u8>> {
         to_bytes(self.body, 32 * 1024 * 1024)
             .await
@@ -124,8 +191,19 @@ impl GatewayHttpResponse {
             })
     }
 
-    fn into_response(self) -> Response {
-        let mut response = Response::new(self.body);
+    fn into_response(mut self, activity: &GatewayServerActivity) -> Response {
+        if let Some(completion) = self.stream_completion.take() {
+            activity.track_upstream_stream(completion);
+        }
+        let body = if self.streaming {
+            Body::from_stream(TrackedBodyStream::new(
+                self.body.into_data_stream(),
+                activity.begin_stream(self.stream_cancellation.take()),
+            ))
+        } else {
+            self.body
+        };
+        let mut response = Response::new(body);
         *response.status_mut() = self.status;
         if let Ok(value) = HeaderValue::from_str(&self.content_type) {
             response.headers_mut().insert("content-type", value);
@@ -243,6 +321,25 @@ pub struct RequestLogMetadata {
     pub status: u16,
     pub latency_ms: u64,
     pub binding_hash: String,
+    pub provider_hash: String,
+    pub capacity_hash: String,
+    pub queue_wait_ms: u64,
+    pub queued_body_bytes: usize,
+    pub global_running: usize,
+    pub global_queued: usize,
+    pub binding_running: usize,
+    pub binding_queued: usize,
+    pub active_streams: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_status: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_stage: Option<GatewayTimeoutStage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection_reason: Option<GatewayRejectionReason>,
     pub retry_count: u8,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<RequestUsageMetadata>,
@@ -317,6 +414,35 @@ struct ServerState {
 struct BindingLimits {
     inflight: Arc<Semaphore>,
     queued: Arc<AtomicUsize>,
+    running: Arc<AtomicUsize>,
+}
+
+struct GatewayAdmissionPermits {
+    _binding: OwnedSemaphorePermit,
+    _global: OwnedSemaphorePermit,
+}
+
+impl GatewayAdmissionPermits {
+    fn try_acquire(binding: Arc<Semaphore>, global: Arc<Semaphore>) -> Option<Self> {
+        let binding = binding.try_acquire_owned().ok()?;
+        let global = global.try_acquire_owned().ok()?;
+        Some(Self {
+            _binding: binding,
+            _global: global,
+        })
+    }
+
+    async fn acquire(
+        binding: Arc<Semaphore>,
+        global: Arc<Semaphore>,
+    ) -> std::result::Result<Self, tokio::sync::AcquireError> {
+        let binding = binding.acquire_owned().await?;
+        let global = global.acquire_owned().await?;
+        Ok(Self {
+            _binding: binding,
+            _global: global,
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -326,6 +452,13 @@ struct GatewayServerActivityInner {
     epoch: Instant,
     last_activity_ms: AtomicU64,
     inflight: AtomicUsize,
+    running: AtomicUsize,
+    queued: AtomicUsize,
+    queued_body_bytes: AtomicUsize,
+    active_streams: AtomicUsize,
+    active_upstream_streams: AtomicUsize,
+    client_cancellations: AtomicU64,
+    stream_interruptions: AtomicU64,
 }
 
 impl GatewayServerActivity {
@@ -334,11 +467,31 @@ impl GatewayServerActivity {
             epoch: Instant::now(),
             last_activity_ms: AtomicU64::new(0),
             inflight: AtomicUsize::new(0),
+            running: AtomicUsize::new(0),
+            queued: AtomicUsize::new(0),
+            queued_body_bytes: AtomicUsize::new(0),
+            active_streams: AtomicUsize::new(0),
+            active_upstream_streams: AtomicUsize::new(0),
+            client_cancellations: AtomicU64::new(0),
+            stream_interruptions: AtomicU64::new(0),
         }))
     }
 
     pub fn inflight_requests(&self) -> usize {
         self.0.inflight.load(Ordering::Acquire)
+    }
+
+    pub fn snapshot(&self) -> GatewayActivitySnapshot {
+        GatewayActivitySnapshot {
+            inflight_requests: self.0.inflight.load(Ordering::Acquire),
+            running_requests: self.0.running.load(Ordering::Acquire),
+            queued_requests: self.0.queued.load(Ordering::Acquire),
+            queued_body_bytes: self.0.queued_body_bytes.load(Ordering::Acquire),
+            active_streams: self.0.active_streams.load(Ordering::Acquire),
+            active_upstream_streams: self.0.active_upstream_streams.load(Ordering::Acquire),
+            client_cancellations: self.0.client_cancellations.load(Ordering::Acquire),
+            stream_interruptions: self.0.stream_interruptions.load(Ordering::Acquire),
+        }
     }
 
     pub fn idle_for(&self) -> Duration {
@@ -350,6 +503,52 @@ impl GatewayServerActivity {
         self.touch();
         self.0.inflight.fetch_add(1, Ordering::AcqRel);
         GatewayActivityGuard(self.clone())
+    }
+
+    fn begin_running(&self, binding: Arc<AtomicUsize>) -> GatewayRunningGuard {
+        self.0.running.fetch_add(1, Ordering::AcqRel);
+        binding.fetch_add(1, Ordering::AcqRel);
+        GatewayRunningGuard {
+            activity: self.clone(),
+            binding,
+        }
+    }
+
+    fn begin_queue(&self, body_bytes: usize) {
+        self.0.queued.fetch_add(1, Ordering::AcqRel);
+        self.0
+            .queued_body_bytes
+            .fetch_add(body_bytes, Ordering::AcqRel);
+    }
+
+    fn end_queue(&self, body_bytes: usize) {
+        self.0.queued.fetch_sub(1, Ordering::AcqRel);
+        self.0
+            .queued_body_bytes
+            .fetch_sub(body_bytes, Ordering::AcqRel);
+    }
+
+    fn begin_stream(&self, cancellation: Option<GatewayCancellation>) -> GatewayStreamGuard {
+        self.0.active_streams.fetch_add(1, Ordering::AcqRel);
+        GatewayStreamGuard {
+            activity: self.clone(),
+            cancellation,
+            finished: false,
+        }
+    }
+
+    fn track_upstream_stream(&self, completion: oneshot::Receiver<()>) {
+        self.0
+            .active_upstream_streams
+            .fetch_add(1, Ordering::AcqRel);
+        let activity = self.clone();
+        tokio::spawn(async move {
+            let _ = completion.await;
+            activity
+                .0
+                .active_upstream_streams
+                .fetch_sub(1, Ordering::AcqRel);
+        });
     }
 
     fn touch(&self) {
@@ -364,6 +563,90 @@ impl Drop for GatewayActivityGuard {
     fn drop(&mut self) {
         (self.0).0.inflight.fetch_sub(1, Ordering::AcqRel);
         self.0.touch();
+    }
+}
+
+struct GatewayRunningGuard {
+    activity: GatewayServerActivity,
+    binding: Arc<AtomicUsize>,
+}
+
+impl Drop for GatewayRunningGuard {
+    fn drop(&mut self) {
+        self.activity.0.running.fetch_sub(1, Ordering::AcqRel);
+        self.binding.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+struct GatewayStreamGuard {
+    activity: GatewayServerActivity,
+    cancellation: Option<GatewayCancellation>,
+    finished: bool,
+}
+
+impl GatewayStreamGuard {
+    fn complete(&mut self, interrupted: bool) {
+        if self.finished {
+            return;
+        }
+        self.finished = true;
+        self.activity
+            .0
+            .active_streams
+            .fetch_sub(1, Ordering::AcqRel);
+        if interrupted {
+            if let Some(cancellation) = &self.cancellation {
+                cancellation.cancel();
+            }
+            self.activity
+                .0
+                .stream_interruptions
+                .fetch_add(1, Ordering::AcqRel);
+        }
+    }
+}
+
+impl Drop for GatewayStreamGuard {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        if let Some(cancellation) = &self.cancellation {
+            cancellation.cancel();
+        }
+        self.activity
+            .0
+            .active_streams
+            .fetch_sub(1, Ordering::AcqRel);
+        self.activity
+            .0
+            .client_cancellations
+            .fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+struct TrackedBodyStream {
+    inner: BodyDataStream,
+    guard: GatewayStreamGuard,
+}
+
+impl TrackedBodyStream {
+    fn new(inner: BodyDataStream, guard: GatewayStreamGuard) -> Self {
+        Self { inner, guard }
+    }
+}
+
+impl Stream for TrackedBodyStream {
+    type Item = std::result::Result<Bytes, axum::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let result = Pin::new(&mut self.inner).poll_next(context);
+        match &result {
+            Poll::Ready(None) => self.guard.complete(false),
+            Poll::Ready(Some(Err(_))) => self.guard.complete(true),
+            _ => {}
+        }
+        result
     }
 }
 
@@ -413,62 +696,115 @@ impl GatewayLoopbackServer {
         health_key: Arc<HealthProofKey>,
         observer: Arc<dyn RequestObserver>,
     ) -> Result<RunningGatewayServer> {
-        if config.bind_addr.ip() != IpAddr::V4(Ipv4Addr::LOCALHOST) {
-            return Err(AppError::new(
-                "GATEWAY_BIND_ADDRESS_FORBIDDEN",
-                "Gateway must bind only IPv4 loopback",
-            ));
-        }
-        if config.max_body_bytes == 0
-            || config.max_inflight == 0
-            || config.max_inflight_per_binding == 0
-        {
-            return Err(AppError::new(
-                "GATEWAY_SERVER_LIMIT_INVALID",
-                "Gateway limits must be non-zero",
-            ));
-        }
+        validate_server_config(&config)?;
         let listener = TcpListener::bind(config.bind_addr)
             .await
             .map_err(|_| AppError::new("GATEWAY_PORT_IN_USE", "Gateway port is unavailable"))?;
-        let local_addr = listener
-            .local_addr()
-            .map_err(|_| AppError::new("GATEWAY_SERVER_IO", "Gateway socket identity failed"))?;
-        let activity = GatewayServerActivity::new();
-        let state = ServerState {
-            inflight: Arc::new(Semaphore::new(config.max_inflight)),
-            queued: Arc::new(AtomicUsize::new(0)),
-            binding_limits: Arc::new(Mutex::new(BTreeMap::new())),
+        Self::start_with_listener(
             config,
+            listener,
             authenticator,
             handler,
             health_key,
             observer,
-            activity: activity.clone(),
-        };
-        let router = Router::new()
-            .route("/healthz", get(health))
-            .route("/v1/models", get(dispatch_empty))
-            .route("/v1/responses", post(dispatch_body))
-            .fallback(route_not_found)
-            .method_not_allowed_fallback(method_not_allowed)
-            .with_state(state.clone())
-            .layer(middleware::from_fn_with_state(state, authenticate_request));
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let task = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-        });
-        Ok(RunningGatewayServer {
-            local_addr,
-            shutdown: Some(shutdown_tx),
-            task,
-            activity,
-        })
+        )
+        .await
     }
+
+    pub async fn start_with_listener(
+        config: GatewayServerConfig,
+        listener: TcpListener,
+        authenticator: Arc<dyn GatewayAuthenticator>,
+        handler: Arc<dyn GatewayRouteHandler>,
+        health_key: Arc<HealthProofKey>,
+        observer: Arc<dyn RequestObserver>,
+    ) -> Result<RunningGatewayServer> {
+        validate_server_config(&config)?;
+        let local_addr = listener
+            .local_addr()
+            .map_err(|_| AppError::new("GATEWAY_SERVER_IO", "Gateway socket identity failed"))?;
+        if local_addr.ip() != config.bind_addr.ip()
+            || (config.bind_addr.port() != 0 && local_addr.port() != config.bind_addr.port())
+        {
+            return Err(AppError::new(
+                "GATEWAY_LISTENER_IDENTITY_INVALID",
+                "Gateway listener does not match configured loopback identity",
+            ));
+        }
+        start_on_listener(
+            config,
+            listener,
+            local_addr,
+            authenticator,
+            handler,
+            health_key,
+            observer,
+        )
+    }
+}
+
+fn validate_server_config(config: &GatewayServerConfig) -> Result<()> {
+    if config.bind_addr.ip() != IpAddr::V4(Ipv4Addr::LOCALHOST) {
+        return Err(AppError::new(
+            "GATEWAY_BIND_ADDRESS_FORBIDDEN",
+            "Gateway must bind only IPv4 loopback",
+        ));
+    }
+    if config.max_body_bytes == 0
+        || config.max_inflight == 0
+        || config.max_inflight_per_binding == 0
+    {
+        return Err(AppError::new(
+            "GATEWAY_SERVER_LIMIT_INVALID",
+            "Gateway limits must be non-zero",
+        ));
+    }
+    Ok(())
+}
+
+fn start_on_listener(
+    config: GatewayServerConfig,
+    listener: TcpListener,
+    local_addr: SocketAddr,
+    authenticator: Arc<dyn GatewayAuthenticator>,
+    handler: Arc<dyn GatewayRouteHandler>,
+    health_key: Arc<HealthProofKey>,
+    observer: Arc<dyn RequestObserver>,
+) -> Result<RunningGatewayServer> {
+    let activity = GatewayServerActivity::new();
+    let state = ServerState {
+        inflight: Arc::new(Semaphore::new(config.max_inflight)),
+        queued: Arc::new(AtomicUsize::new(0)),
+        binding_limits: Arc::new(Mutex::new(BTreeMap::new())),
+        config,
+        authenticator,
+        handler,
+        health_key,
+        observer,
+        activity: activity.clone(),
+    };
+    let router = Router::new()
+        .route("/healthz", get(health))
+        .route("/v1/models", get(dispatch_empty))
+        .route("/v1/responses", post(dispatch_body))
+        .fallback(route_not_found)
+        .method_not_allowed_fallback(method_not_allowed)
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(state, authenticate_request));
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
+            .await
+    });
+    Ok(RunningGatewayServer {
+        local_addr,
+        shutdown: Some(shutdown_tx),
+        task,
+        activity,
+    })
 }
 
 async fn authenticate_request(
@@ -570,50 +906,60 @@ async fn dispatch(
                 Arc::new(BindingLimits {
                     inflight: Arc::new(Semaphore::new(state.config.max_inflight_per_binding)),
                     queued: Arc::new(AtomicUsize::new(0)),
+                    running: Arc::new(AtomicUsize::new(0)),
                 })
             })
             .clone()
     };
-    let immediate = state
-        .inflight
-        .clone()
-        .try_acquire_owned()
-        .ok()
-        .and_then(|global| {
-            binding_limits
-                .inflight
-                .clone()
-                .try_acquire_owned()
-                .ok()
-                .map(|binding| (global, binding))
-        });
-    let (permit, binding_permit) = if let Some(permits) = immediate {
+    let observation = RequestObservation::new(&request_id, &path, &binding, started);
+    let immediate = GatewayAdmissionPermits::try_acquire(
+        binding_limits.inflight.clone(),
+        state.inflight.clone(),
+    );
+    let mut queue_wait_ms = 0;
+    let mut queued_body_bytes = 0;
+    let permits = if let Some(permits) = immediate {
         permits
     } else {
+        let queue_started = Instant::now();
         let queue = match QueueGuard::enter(
             state.queued.clone(),
             state.config.max_queue,
             binding_limits.queued.clone(),
             state.config.max_queue_per_binding,
+            state.activity.clone(),
+            body.len(),
         ) {
-            Some(queue) => queue,
-            None => {
-                return gateway_error(StatusCode::TOO_MANY_REQUESTS, "GATEWAY_CONCURRENCY_LIMIT")
+            Ok(queue) => queue,
+            Err(reason) => {
+                observation.record(&state, &binding_limits, RequestOutcome::rejected(reason));
+                return gateway_error(StatusCode::TOO_MANY_REQUESTS, "GATEWAY_CONCURRENCY_LIMIT");
             }
         };
-        let permits = tokio::time::timeout(state.config.request_timeout, async {
-            let global = state.inflight.clone().acquire_owned().await;
-            let binding = binding_limits.inflight.clone().acquire_owned().await;
-            (global, binding)
-        })
+        queued_body_bytes = body.len();
+        let permits = tokio::time::timeout(
+            state.config.request_timeout,
+            GatewayAdmissionPermits::acquire(
+                binding_limits.inflight.clone(),
+                state.inflight.clone(),
+            ),
+        )
         .await;
+        queue_wait_ms = elapsed_ms(queue_started);
         drop(queue);
         match permits {
-            Ok((Ok(global), Ok(binding))) => (global, binding),
-            _ => return gateway_error(StatusCode::GATEWAY_TIMEOUT, "GATEWAY_REQUEST_TIMEOUT"),
+            Ok(Ok(permits)) => permits,
+            _ => {
+                observation.record(
+                    &state,
+                    &binding_limits,
+                    RequestOutcome::queue_timeout(queue_wait_ms, queued_body_bytes),
+                );
+                return gateway_error(StatusCode::GATEWAY_TIMEOUT, "GATEWAY_REQUEST_TIMEOUT");
+            }
         }
     };
-    let binding_hash = short_hash(&binding.binding_id);
+    let _running = state.activity.begin_running(binding_limits.running.clone());
     let remaining = state
         .config
         .request_timeout
@@ -629,36 +975,187 @@ async fn dispatch(
         }),
     )
     .await;
-    drop(permit);
-    drop(binding_permit);
-    let (response, usage, retry_count) = match result {
+    drop(permits);
+    let (response, outcome) = match result {
         Ok(Ok(response)) => {
-            let usage = response.usage.clone();
-            let retry_count = response.retry_count;
-            (response.into_response(), usage, retry_count)
+            let outcome =
+                RequestOutcome::from_gateway_response(&response, queue_wait_ms, queued_body_bytes);
+            (response.into_response(&state.activity), outcome)
         }
-        Ok(Err(error)) => (gateway_error(StatusCode::BAD_GATEWAY, &error.code), None, 0),
-        Err(_) => (
-            gateway_error(StatusCode::GATEWAY_TIMEOUT, "GATEWAY_REQUEST_TIMEOUT"),
-            None,
-            0,
-        ),
+        Ok(Err(error)) => {
+            let outcome =
+                RequestOutcome::handler_error(&error.code, queue_wait_ms, queued_body_bytes);
+            (gateway_error(StatusCode::BAD_GATEWAY, &error.code), outcome)
+        }
+        Err(_) => {
+            let outcome = RequestOutcome::handler_timeout(queue_wait_ms, queued_body_bytes);
+            (
+                gateway_error(StatusCode::GATEWAY_TIMEOUT, "GATEWAY_REQUEST_TIMEOUT"),
+                outcome,
+            )
+        }
     };
-    state.observer.observe(RequestLogMetadata {
-        request_id,
-        route: path,
-        status: response.status().as_u16(),
-        latency_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
-        binding_hash,
-        retry_count,
-        usage,
-    });
+    observation.record(&state, &binding_limits, outcome);
     response
+}
+
+struct RequestObservation {
+    request_id: String,
+    route: String,
+    binding_hash: String,
+    provider_hash: String,
+    capacity_hash: String,
+    started: Instant,
+}
+
+impl RequestObservation {
+    fn new(
+        request_id: &str,
+        route: &str,
+        binding: &GatewayBindingSnapshot,
+        started: Instant,
+    ) -> Self {
+        Self {
+            request_id: request_id.into(),
+            route: route.into(),
+            binding_hash: short_hash(&binding.binding_id),
+            provider_hash: short_hash(&binding.provider_id),
+            capacity_hash: capacity_identity_hash(
+                &binding.provider.base_url,
+                &binding.provider.upstream_auth,
+            )
+            .unwrap_or_else(|_| "invalid".into()),
+            started,
+        }
+    }
+
+    fn record(&self, state: &ServerState, binding: &BindingLimits, outcome: RequestOutcome) {
+        let activity = state.activity.snapshot();
+        state.observer.observe(RequestLogMetadata {
+            request_id: self.request_id.clone(),
+            route: self.route.clone(),
+            status: outcome.status,
+            latency_ms: elapsed_ms(self.started),
+            binding_hash: self.binding_hash.clone(),
+            provider_hash: self.provider_hash.clone(),
+            capacity_hash: self.capacity_hash.clone(),
+            queue_wait_ms: outcome.queue_wait_ms,
+            queued_body_bytes: outcome.queued_body_bytes,
+            global_running: activity.running_requests,
+            global_queued: activity.queued_requests,
+            binding_running: binding.running.load(Ordering::Acquire),
+            binding_queued: binding.queued.load(Ordering::Acquire),
+            active_streams: activity.active_streams,
+            ttft_ms: outcome.ttft_ms,
+            upstream_status: outcome.upstream_status,
+            outcome_code: outcome.outcome_code,
+            timeout_stage: outcome.timeout_stage,
+            rejection_reason: outcome.rejection_reason,
+            retry_count: outcome.retry_count,
+            usage: outcome.usage,
+        });
+    }
+}
+
+struct RequestOutcome {
+    status: u16,
+    queue_wait_ms: u64,
+    queued_body_bytes: usize,
+    ttft_ms: Option<u64>,
+    upstream_status: Option<u16>,
+    outcome_code: Option<String>,
+    timeout_stage: Option<GatewayTimeoutStage>,
+    rejection_reason: Option<GatewayRejectionReason>,
+    retry_count: u8,
+    usage: Option<RequestUsageMetadata>,
+}
+
+impl RequestOutcome {
+    fn from_gateway_response(
+        response: &GatewayHttpResponse,
+        queue_wait_ms: u64,
+        queued_body_bytes: usize,
+    ) -> Self {
+        let rejection_reason = response
+            .outcome_code()
+            .filter(|code| *code == "GATEWAY_UPSTREAM_CONCURRENCY_LIMIT")
+            .map(|_| GatewayRejectionReason::UpstreamConcurrency);
+        Self {
+            status: response.status(),
+            queue_wait_ms,
+            queued_body_bytes,
+            ttft_ms: response.ttft_ms,
+            upstream_status: response.upstream_status,
+            outcome_code: response.outcome_code.clone(),
+            timeout_stage: response.timeout_stage,
+            rejection_reason,
+            retry_count: response.retry_count,
+            usage: response.usage.clone(),
+        }
+    }
+
+    fn rejected(reason: GatewayRejectionReason) -> Self {
+        Self::failure(429, "GATEWAY_CONCURRENCY_LIMIT", None, Some(reason), 0, 0)
+    }
+
+    fn queue_timeout(queue_wait_ms: u64, queued_body_bytes: usize) -> Self {
+        Self::failure(
+            504,
+            "GATEWAY_REQUEST_TIMEOUT",
+            Some(GatewayTimeoutStage::Queue),
+            None,
+            queue_wait_ms,
+            queued_body_bytes,
+        )
+    }
+
+    fn handler_timeout(queue_wait_ms: u64, queued_body_bytes: usize) -> Self {
+        Self::failure(
+            504,
+            "GATEWAY_REQUEST_TIMEOUT",
+            Some(GatewayTimeoutStage::Handler),
+            None,
+            queue_wait_ms,
+            queued_body_bytes,
+        )
+    }
+
+    fn handler_error(code: &str, queue_wait_ms: u64, queued_body_bytes: usize) -> Self {
+        Self::failure(502, code, None, None, queue_wait_ms, queued_body_bytes)
+    }
+
+    fn failure(
+        status: u16,
+        code: &str,
+        timeout_stage: Option<GatewayTimeoutStage>,
+        rejection_reason: Option<GatewayRejectionReason>,
+        queue_wait_ms: u64,
+        queued_body_bytes: usize,
+    ) -> Self {
+        Self {
+            status,
+            queue_wait_ms,
+            queued_body_bytes,
+            ttft_ms: None,
+            upstream_status: None,
+            outcome_code: Some(code.into()),
+            timeout_stage,
+            rejection_reason,
+            retry_count: 0,
+            usage: None,
+        }
+    }
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u64::MAX as u128) as u64
 }
 
 struct QueueGuard {
     global: Arc<AtomicUsize>,
     binding: Arc<AtomicUsize>,
+    activity: GatewayServerActivity,
+    body_bytes: usize,
 }
 
 impl QueueGuard {
@@ -667,15 +1164,23 @@ impl QueueGuard {
         global_limit: usize,
         binding: Arc<AtomicUsize>,
         binding_limit: usize,
-    ) -> Option<Self> {
+        activity: GatewayServerActivity,
+        body_bytes: usize,
+    ) -> std::result::Result<Self, GatewayRejectionReason> {
         if !try_increment_below(&global, global_limit) {
-            return None;
+            return Err(GatewayRejectionReason::GlobalQueueFull);
         }
         if !try_increment_below(&binding, binding_limit) {
             global.fetch_sub(1, Ordering::AcqRel);
-            return None;
+            return Err(GatewayRejectionReason::BindingQueueFull);
         }
-        Some(Self { global, binding })
+        activity.begin_queue(body_bytes);
+        Ok(Self {
+            global,
+            binding,
+            activity,
+            body_bytes,
+        })
     }
 }
 
@@ -683,6 +1188,7 @@ impl Drop for QueueGuard {
     fn drop(&mut self) {
         self.global.fetch_sub(1, Ordering::AcqRel);
         self.binding.fetch_sub(1, Ordering::AcqRel);
+        self.activity.end_queue(self.body_bytes);
     }
 }
 
@@ -701,6 +1207,49 @@ fn try_increment_below(counter: &AtomicUsize, limit: usize) -> bool {
             Ok(_) => return true,
             Err(next) => current = next,
         }
+    }
+}
+
+#[cfg(test)]
+mod gateway_admission_tests {
+    use super::*;
+
+    #[test]
+    fn gateway_admission_immediate_failure_releases_binding_permit() {
+        let binding = Arc::new(Semaphore::new(1));
+        let global = Arc::new(Semaphore::new(0));
+
+        assert!(GatewayAdmissionPermits::try_acquire(binding.clone(), global).is_none());
+        assert_eq!(binding.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn gateway_admission_cancellation_releases_binding_permit() {
+        let binding = Arc::new(Semaphore::new(1));
+        let global = Arc::new(Semaphore::new(0));
+
+        assert!(tokio::time::timeout(
+            Duration::from_millis(20),
+            GatewayAdmissionPermits::acquire(binding.clone(), global),
+        )
+        .await
+        .is_err());
+        assert_eq!(binding.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn gateway_admission_drop_releases_both_permits() {
+        let binding = Arc::new(Semaphore::new(1));
+        let global = Arc::new(Semaphore::new(1));
+
+        let permits = GatewayAdmissionPermits::acquire(binding.clone(), global.clone())
+            .await
+            .unwrap();
+        assert_eq!(binding.available_permits(), 0);
+        assert_eq!(global.available_permits(), 0);
+        drop(permits);
+        assert_eq!(binding.available_permits(), 1);
+        assert_eq!(global.available_permits(), 1);
     }
 }
 

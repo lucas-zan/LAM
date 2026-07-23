@@ -966,6 +966,10 @@ Stage 验收：见 2.7，并要求所有调用者和契约测试完成更新。
 - [x] 启动前验证旧实例退出、stable port、control socket 和 state claim。
 - [x] 补 PID 复用、瞬时 control timeout、未知进程不得误杀和 split-brain 测试。
 
+补充修正（2026-07-17）：stable port 不再执行 bind/drop 检查，而是由
+Supervisor/CLI 持有 reservation 到子进程 spawn，并通过 child-only FD 3 交给
+sidecar 校验和接管，消除了检查到启动之间的端口竞争窗口。
+
 禁止事项：
 
 - 一次 health/control 失败后不得直接启动新实例。
@@ -978,15 +982,23 @@ Stage 验收：见 2.7，并要求所有调用者和契约测试完成更新。
 
 ### Stage 3：Gateway 最小并发隔离
 
+**状态**：验证成功（2026-07-17）。执行和测试记录见
+`docs/todo-provider-gateway-stage3-concurrency-isolation.md`。
+
 目标：只消除等待中的繁忙 Binding 占用 global permit，不改变容量。
 
 任务：
 
-- [ ] 即时和排队路径统一为先 Binding、后 global。
-- [ ] 覆盖第二 permit 失败、timeout、取消和 handler error 的 RAII 释放。
-- [ ] 保持 global=32、binding=4、global queue=64、binding queue=8、upstream=16。
-- [ ] 保持现有上游 `try_acquire_owned()` 和错误码，避免在同一 Stage 引入双重行为变化。
-- [ ] 与 Stage 0 基线对比吞吐和错误分布。
+- [x] 即时和排队路径统一为先 Binding、后 global。
+- [x] 覆盖第二 permit 失败、timeout、取消和 handler error 的 RAII 释放。
+- [x] 保持 global=32、binding=4、global queue=64、binding queue=8、upstream=16。
+- [x] 保持现有上游 `try_acquire_owned()` 和错误码，避免在同一 Stage 引入双重行为变化。
+- [x] 与 Stage 0 基线对比吞吐和错误分布。
+
+验证记录：旧实现的确定性双 Binding 场景中，Binding A 的 waiter 占用第二个
+global permit，Binding B 在 150ms 隔离窗口内完成数为 0；Binding-first 实现中
+Binding B 完成数为 1。原有 queue overflow 429、total deadline 504 和相关 Gateway
+回归测试保持通过。未改变容量、timeout、错误码或 upstream fail-fast admission。
 
 回滚条件：
 
@@ -995,17 +1007,29 @@ Stage 验收：见 2.7，并要求所有调用者和契约测试完成更新。
 
 ### Stage 4：观测与负载验证
 
+**状态**：验证成功（2026-07-17）。执行、测试和 RSS 记录见
+`docs/todo-provider-gateway-stage4-observability-load.md`。
+
 目标：在替换调度器前获得决定 CapacityKey、burst、queue timeout 和 stream 限制所需的数据。
 
 任务：
 
-- [ ] 增加脱敏 running/queued/queue bytes/active streams 指标。
-- [ ] 记录 TTFT、429、5xx、timeout 阶段和 client cancellation。
-- [ ] 对同一 endpoint 的不同 credential identity 验证容量隔离假设。
-- [ ] 测试 4 MiB Body × 队列上限时的 RSS。
-- [ ] 确定 global/per-Binding queued body byte limits。
-- [ ] 确定初始 queue timeout，但不得复用 15 分钟 total timeout。
-- [ ] 验证指标 label 基数和日志脱敏。
+- [x] 增加脱敏 running/queued/queue bytes/active streams 指标。
+- [x] 记录 TTFT、429、5xx、timeout 阶段和 client cancellation。
+- [x] 对同一 endpoint 的不同 credential identity 验证容量隔离假设。
+- [x] 测试 4 MiB Body × 队列上限时的 RSS。
+- [x] 确定 global/per-Binding queued body byte limits。
+- [x] 确定初始 queue timeout，但不得复用 15 分钟 total timeout。
+- [x] 验证指标 label 基数和日志脱敏。
+
+验证记录：当前 4 MiB × 64 的理论 retained-body 包络为 256 MiB；macOS
+显式探针的峰值 RSS 增量为 264,421,376 字节（约 252.17 MiB）。Stage 5 建议
+采用 global 32 MiB、per-Binding 8 MiB queued-body 限制和独立 30 秒 queue
+timeout。本 Stage 只输出观测与建议，未改变 32/4/64/8/16 容量、调度或错误码。
+
+补充修正（2026-07-17）：streaming response 现在携带 cancellation/completion
+生命周期；客户端断开会立即取消上游任务，`active_upstream_streams` 直到后台任务
+退出并释放 upstream permit 后才归零。
 
 进入 Stage 5 的门槛：
 

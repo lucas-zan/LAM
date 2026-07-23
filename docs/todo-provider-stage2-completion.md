@@ -260,6 +260,16 @@ identity observation/reconciliation path, and macOS process status inspection
 treats zombies as exited. Focused regression and a real `codex-welfare
 --version` smoke test pass. See `docs/todo-provider-stage2-cli-readiness-fix.md`.
 
+### Post-completion stable listener handoff correction (2026-07-17)
+
+The original start preflight bound and immediately released the stable port,
+leaving a check-to-spawn race. Reconciliation now returns an owned listener
+reservation. Desktop and `lam codex` launch paths retain it through `spawn`, copy
+it to child FD 3 only inside `pre_exec`, and the sidecar validates and adopts the
+inherited IPv4 loopback listener. A real child-FD test and the packaged
+launcher/sidecar/Codex/upstream process test pass. See
+`docs/todo-provider-gateway-stage2-stage4-lifecycle-handoff-fix.md`.
+
 ## STOP conditions
 
 - Identity proof would require exposing a secret or weakening loopback authentication.

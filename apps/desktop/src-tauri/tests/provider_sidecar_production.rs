@@ -50,6 +50,10 @@ fn production_binaries_wire_bounded_restart_idle_and_dual_stream_budgets() {
     assert!(supervisor.contains("binding_requires_gateway"));
     assert!(supervisor.contains("InstallManifestVerifier"));
     assert!(supervisor.contains("restart_decision"));
+    assert!(supervisor.contains("configure_listener_handoff"));
+    assert!(launcher.contains("configure_listener_handoff"));
+    assert!(sidecar.contains("take_inherited_gateway_listener"));
+    assert!(sidecar.contains("start_with_listener"));
     assert!(launcher.contains("GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV"));
     assert!(supervisor.contains("GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV"));
     assert!(sidecar.contains("gateway_first_response_timeout_from_env"));

@@ -184,7 +184,11 @@ async fn controlled_join_preserves_prefix_and_injects_bearer_only_at_send() {
         .and(header("authorization", "Bearer LAM_TEST_UPSTREAM_SECRET"))
         .and(header("user-agent", "codex_exec/0.144.5"))
         .and(header("originator", "codex_exec"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_millis(20))
+                .set_body_json(serde_json::json!({"ok": true})),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -208,6 +212,7 @@ async fn controlled_join_preserves_prefix_and_injects_bearer_only_at_send() {
     let response = client(&server, credentials).send(request).await.unwrap();
     assert_eq!(response.status, 200);
     assert_eq!(response.attempts, 1);
+    assert!(response.first_byte_ms >= 10);
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&response.body).unwrap()["ok"],
         true

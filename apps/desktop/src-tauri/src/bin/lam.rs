@@ -4,6 +4,7 @@ use localagentmanager_core::gateway::launcher::{
     CodexLaunchRequest, CodexLauncher, DirectCodexLauncher, GatewayReadiness, InstallManifest,
     InstallManifestVerifier, MacCodeSignIdentityVerifier, VerifiedInstallation,
 };
+use localagentmanager_core::gateway::listener_handoff::configure_listener_handoff;
 use localagentmanager_core::gateway::recovery::SystemGatewayProcessControl;
 use localagentmanager_core::gateway::server::{HealthDocument, HealthProofKey};
 use localagentmanager_core::gateway::sidecar::{
@@ -12,8 +13,8 @@ use localagentmanager_core::gateway::sidecar::{
 };
 use localagentmanager_core::gateway::supervisor::{
     inspect_gateway_claim, reconcile_gateway_claim, GatewayReconcileContext,
-    GatewayReconcileOutcome, GatewaySupervisorMachine, GatewaySupervisorObservation,
-    SystemGatewayIdentityProbe,
+    GatewayReconcileOutcome, GatewayStartReservation, GatewaySupervisorMachine,
+    GatewaySupervisorObservation, SystemGatewayIdentityProbe,
 };
 use localagentmanager_core::provider_binding::{
     ProfileBindingCollection, ProfileBindingRepository, ProfileProviderBinding, RouteKind,
@@ -172,6 +173,11 @@ struct PackagedReadiness {
     owned_child: Mutex<Option<Child>>,
 }
 
+enum GatewayPreparation {
+    Healthy,
+    ReadyToStart(GatewayStartReservation),
+}
+
 impl PackagedReadiness {
     fn new(
         root: PathBuf,
@@ -279,7 +285,10 @@ impl PackagedReadiness {
         Ok(())
     }
 
-    async fn prepare_gateway(&self, profile_id: &str) -> localagentmanager_core::Result<bool> {
+    async fn prepare_gateway(
+        &self,
+        profile_id: &str,
+    ) -> localagentmanager_core::Result<GatewayPreparation> {
         let binding = self.active_binding(profile_id)?;
         let token = self.test_or_keychain_gateway_token(profile_id, &binding.binding_id)?;
         let probe =
@@ -296,7 +305,7 @@ impl PackagedReadiness {
                 })
                 .await?;
             if observation == GatewaySupervisorObservation::IdentityHealthy {
-                return Ok(true);
+                return Ok(GatewayPreparation::Healthy);
             }
             let action = machine.observe(observation);
             let now = chrono::Utc::now().to_rfc3339();
@@ -314,8 +323,8 @@ impl PackagedReadiness {
                     termination_timeout: Duration::from_secs(2),
                 },
             )?;
-            if matches!(outcome, GatewayReconcileOutcome::ReadyToStart(_)) {
-                return Ok(false);
+            if let GatewayReconcileOutcome::ReadyToStart(reservation) = outcome {
+                return Ok(GatewayPreparation::ReadyToStart(reservation));
             }
             if attempt < 3 {
                 std::thread::sleep(Duration::from_millis(100));
@@ -365,7 +374,11 @@ impl PackagedReadiness {
         self.bindings.token_for_helper(profile_id, binding_id)
     }
 
-    fn start_sidecar(&self, profile_id: &str) -> localagentmanager_core::Result<Child> {
+    fn start_sidecar(
+        &self,
+        profile_id: &str,
+        reservation: &GatewayStartReservation,
+    ) -> localagentmanager_core::Result<Child> {
         let binding = self.active_binding(profile_id)?;
         let mut command = Command::new(&self.installation.component("gateway")?.path);
         command
@@ -405,6 +418,7 @@ impl PackagedReadiness {
         if let Some(value) = std::env::var_os("LAM_GATEWAY_TEST_UPSTREAM_ADDR") {
             command.env("LAM_GATEWAY_TEST_UPSTREAM_ADDR", value);
         }
+        configure_listener_handoff(&mut command, reservation.listener())?;
         let mut child = command.spawn().map_err(|_| {
             localagentmanager_core::AppError::new(
                 "GATEWAY_START_FAILED",
@@ -505,9 +519,10 @@ impl GatewayReadiness for PackagedReadiness {
                     "Gateway readiness runtime failed",
                 )
             })?;
-        if runtime.block_on(self.prepare_gateway(profile_id))? {
-            return Ok(());
-        }
+        let mut reservation = match runtime.block_on(self.prepare_gateway(profile_id))? {
+            GatewayPreparation::Healthy => return Ok(()),
+            GatewayPreparation::ReadyToStart(reservation) => reservation,
+        };
         let policy = SupervisorPolicy::new(
             3,
             Duration::from_millis(100),
@@ -515,7 +530,8 @@ impl GatewayReadiness for PackagedReadiness {
             Duration::from_secs(30),
         )?;
         for failure_count in 1..=4 {
-            let mut child = self.start_sidecar(profile_id)?;
+            let mut child = self.start_sidecar(profile_id, &reservation)?;
+            drop(reservation);
             for _ in 0..50 {
                 if runtime.block_on(self.verify(profile_id)).is_ok() {
                     return self.retain_child(child);
@@ -539,7 +555,13 @@ impl GatewayReadiness for PackagedReadiness {
                 let _ = child.wait();
             }
             match policy.restart_decision(failure_count, rand::random()) {
-                RestartDecision::RestartAfter(delay) => std::thread::sleep(delay),
+                RestartDecision::RestartAfter(delay) => {
+                    std::thread::sleep(delay);
+                    reservation = match runtime.block_on(self.prepare_gateway(profile_id))? {
+                        GatewayPreparation::Healthy => return Ok(()),
+                        GatewayPreparation::ReadyToStart(reservation) => reservation,
+                    };
+                }
                 RestartDecision::Failed => break,
             }
         }

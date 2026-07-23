@@ -368,6 +368,12 @@ async fn responses_provider_wraps_nonstream_upstream_503_with_clear_source() {
     assert_eq!(response.status(), 503);
     assert_eq!(response.content_type(), "application/json");
     assert_eq!(response.retry_after(), Some("12"));
+    assert_eq!(response.upstream_status(), Some(503));
+    assert_eq!(
+        response.outcome_code(),
+        Some("UPSTREAM_SERVICE_UNAVAILABLE")
+    );
+    assert!(response.ttft_ms().is_some());
     let body: serde_json::Value =
         serde_json::from_slice(&response.collect_bytes().await.unwrap()).unwrap();
     assert_eq!(body["error"]["type"], "upstream_error");
