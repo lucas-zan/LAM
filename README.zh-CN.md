@@ -50,6 +50,15 @@ LAM 可能不适合：
 - 希望直接在 LAM 窗口内运行 Codex 的人；或
 - 不熟悉 PAT、Session JSON 和认证文件风险的用户。
 
+### 两种账号模式怎么选？
+
+| 如果你需要…… | 适合的模式 |
+| --- | --- |
+| 一个活动空间、同一个 Codex CLI 和 App，并在活动的 `~/.codex` 中按需顺序切换账号 | **PAT 模式** — 高级功能；切换时会替换活动认证文件 |
+| 多个项目或任务并发运行，让多个账号同时存在于相互独立的 `CODEX_HOME` 中 | **Profile 模式** — 推荐用于 LAM 的核心工作流 |
+
+Profile 模式按目录隔离账号状态和 Session。PAT 模式保留一个活动 Codex 空间，并切换写入其中的账号认证；它适合已经理解认证文件风险的用户。
+
 ## 核心流程
 
 1. **发现 Profile。** LAM 扫描 `~/.codex` 和 `~/.codex-*`，展示账号、Session 数量、额度和最近的本地 Session。
@@ -160,6 +169,8 @@ LAM 提供 OAuth/Profile 和 PAT 两类账号工作流。两种模式对认证�
 Settings 可以控制界面显示 Profile、PAT 或两种模式，也可以选择 Handoff、Resume 和 Login 使用的终端。
 
 ![Profile/PAT 显示模式与 Handoff 终端设置](docs/assets/lam-settings.png)
+
+需要多个独立账号和 `CODEX_HOME` 并发工作时，选择 **Profile 模式**；明确需要一个 Codex CLI/App 活动空间，并愿意切换写入 `~/.codex` 的认证信息时，选择 **PAT 模式**。
 
 ### OAuth / Profile 模式
 

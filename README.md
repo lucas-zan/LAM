@@ -47,6 +47,15 @@ LAM is probably not a good fit if you:
 - expect to run Codex inside the LAM window; or
 - are not comfortable handling PATs, session JSON, or authentication files.
 
+### Which account mode fits you?
+
+| If you want... | Use |
+| --- | --- |
+| One active workspace, the same Codex CLI and app, and sequential account switching in the active `~/.codex` | **PAT Mode** — advanced; switching replaces active authentication files |
+| Multiple projects or tasks running concurrently, with several accounts available at the same time in independent `CODEX_HOME` directories | **Profile Mode** — recommended for the core LAM workflow |
+
+Profile Mode isolates account state and sessions by directory. PAT Mode keeps one active Codex space and changes which stored account authentication is written into it; it is intended for users who understand authentication-file risks.
+
 ## Core workflow
 
 1. **Discover profiles.** LAM scans `~/.codex` and `~/.codex-*`, then shows accounts, session counts, quota, and the latest local sessions.
@@ -157,6 +166,8 @@ LAM exposes OAuth/Profile and PAT-oriented account workflows. These modes have d
 Mode visibility and the terminal used for handoff, resume, and login are configurable in Settings.
 
 ![LAM Settings for Profile or PAT visibility and handoff terminal selection](docs/assets/lam-settings.png)
+
+Use **Profile Mode** for parallel work across independent accounts and `CODEX_HOME` directories. Use **PAT Mode** when you intentionally want one active Codex CLI/app space and are comfortable switching the authentication written into `~/.codex`.
 
 ### OAuth / Profile mode
 
