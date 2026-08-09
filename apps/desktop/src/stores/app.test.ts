@@ -1,13 +1,36 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAppStore } from './app';
+import * as api from '../lib/api';
+
+vi.mock('../lib/api', () => ({
+  getHideDockIcon: vi.fn(),
+  setHideDockIcon: vi.fn(),
+  listTerminalTargets: vi.fn(),
+  getSelectedTerminalTarget: vi.fn(),
+  setSelectedTerminalTarget: vi.fn(),
+  getGatewayFirstResponseTimeoutSeconds: vi.fn(),
+  setGatewayFirstResponseTimeoutSeconds: vi.fn(),
+  getAntigravityPort: vi.fn(),
+  setAntigravityPort: vi.fn(),
+}));
+
+const TERMINAL_APP = {
+  id: 'terminal',
+  displayName: 'Terminal.app',
+  kind: 'terminal',
+  installed: true,
+};
+const CMUX = { id: 'cmux', displayName: 'cmux', kind: 'terminal', installed: true };
 
 beforeEach(() => {
+  vi.clearAllMocks();
   useAppStore.setState({
     route: 'overview',
     status: 'Ready',
     error: '',
     appReady: false,
     modal: null,
+    terminalTargets: [],
   });
 });
 
@@ -41,5 +64,24 @@ describe('useAppStore', () => {
     expect(useAppStore.getState().appReady).toBe(false);
     useAppStore.getState().setAppReady();
     expect(useAppStore.getState().appReady).toBe(true);
+  });
+
+  it('re-probes terminal targets so newly installed terminals appear', async () => {
+    useAppStore.setState({ terminalTargets: [TERMINAL_APP] });
+    vi.mocked(api.listTerminalTargets).mockResolvedValue([TERMINAL_APP, CMUX]);
+
+    await useAppStore.getState().refreshTerminalTargets();
+
+    expect(api.listTerminalTargets).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().terminalTargets).toEqual([TERMINAL_APP, CMUX]);
+  });
+
+  it('keeps the previous terminal targets when re-probing fails', async () => {
+    useAppStore.setState({ terminalTargets: [TERMINAL_APP] });
+    vi.mocked(api.listTerminalTargets).mockRejectedValue(new Error('probe failed'));
+
+    await useAppStore.getState().refreshTerminalTargets();
+
+    expect(useAppStore.getState().terminalTargets).toEqual([TERMINAL_APP]);
   });
 });

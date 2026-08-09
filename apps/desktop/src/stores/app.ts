@@ -44,6 +44,7 @@ interface AppState {
   setGatewayFirstResponseTimeoutSeconds: (seconds: number) => Promise<void>;
   setAntigravityPort: (port: number | null) => Promise<void>;
   loadSettings: () => Promise<void>;
+  refreshTerminalTargets: () => Promise<void>;
 }
 
 export const useAppStore = create<AppState>()(
@@ -141,6 +142,13 @@ export const useAppStore = create<AppState>()(
         });
       } catch (err) {
         console.error('Failed to load settings:', err);
+      }
+    },
+    refreshTerminalTargets: async () => {
+      try {
+        set({ terminalTargets: await api.listTerminalTargets() });
+      } catch (err) {
+        console.error('Failed to probe terminal targets:', err);
       }
     },
   })),

@@ -262,6 +262,12 @@ export function App() {
     useAppStore.getState().loadSettings();
   }, []);
 
+  // Terminals installed while LAM is running only show up if we probe again.
+  useEffect(() => {
+    if (route !== 'settings') return;
+    useAppStore.getState().refreshTerminalTargets();
+  }, [route]);
+
   // Save auth mode when changed
   const handleSetAuthMode = useCallback(
     (mode: AuthMode) => {

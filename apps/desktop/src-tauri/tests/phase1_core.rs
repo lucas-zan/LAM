@@ -463,6 +463,122 @@ fn repair_managed_wrappers_replaces_stale_and_missing_files_only() {
 }
 
 #[test]
+fn new_profile_wrapper_lands_in_the_first_path_visible_dir() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("wrapper-prefers-local-bin");
+    let original = std::env::var_os("LAM_LOGIN_SHELL_PATH");
+    std::env::set_var(
+        "LAM_LOGIN_SHELL_PATH",
+        format!("/usr/bin:{}", home.join(".local/bin").display()),
+    );
+
+    let result = execute_create_account(
+        &home,
+        &CreateAccountRequest {
+            name: "luna".into(),
+            copy_config_from: None,
+            overwrite_wrapper: false,
+        },
+    );
+
+    restore_env_var("LAM_LOGIN_SHELL_PATH", original);
+
+    let result = result.unwrap();
+    assert_eq!(result.wrapper_path, home.join(".local/bin/codex-luna"));
+    assert!(home.join(".local/bin/codex-luna").exists());
+    assert!(!home.join("bin/codex-luna").exists());
+    assert!(result.warnings.is_empty());
+}
+
+#[test]
+fn creating_a_profile_warns_when_no_wrapper_dir_is_on_path() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("wrapper-path-warning");
+    let original = std::env::var_os("LAM_LOGIN_SHELL_PATH");
+    std::env::set_var("LAM_LOGIN_SHELL_PATH", "/usr/bin:/bin");
+
+    let result = execute_create_account(
+        &home,
+        &CreateAccountRequest {
+            name: "luna".into(),
+            copy_config_from: None,
+            overwrite_wrapper: false,
+        },
+    );
+
+    restore_env_var("LAM_LOGIN_SHELL_PATH", original);
+
+    let result = result.unwrap();
+    assert_eq!(result.wrapper_path, home.join("bin/codex-luna"));
+    assert!(result
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("export PATH=\"$HOME/bin:$PATH\"")));
+}
+
+#[test]
+fn importing_a_session_profile_warns_when_no_wrapper_dir_is_on_path() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("session-profile-path-warning");
+    let original = std::env::var_os("LAM_LOGIN_SHELL_PATH");
+    std::env::set_var("LAM_LOGIN_SHELL_PATH", "/usr/bin:/bin");
+
+    let result = localagentmanager_core::add_session_profile_account(
+        &home,
+        &localagentmanager_core::AddSessionProfileAccountRequest {
+            account_id: "luna".into(),
+            session_json: serde_json::json!({ "accessToken": "at-luna" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            overwrite_wrapper: false,
+        },
+    );
+
+    restore_env_var("LAM_LOGIN_SHELL_PATH", original);
+
+    let result = result.unwrap();
+    assert_eq!(result.wrapper_path, home.join("bin/codex-luna"));
+    assert!(result
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("export PATH=\"$HOME/bin:$PATH\"")));
+}
+
+#[test]
+fn repair_managed_wrappers_migrates_wrappers_into_the_path_visible_dir() {
+    let _guard = env_lock().lock().unwrap();
+    let home = temp_home("wrapper-migration");
+    let original = std::env::var_os("LAM_LOGIN_SHELL_PATH");
+    std::env::set_var("LAM_LOGIN_SHELL_PATH", "/usr/bin:/bin");
+    execute_create_account(
+        &home,
+        &CreateAccountRequest {
+            name: "luna".into(),
+            copy_config_from: None,
+            overwrite_wrapper: false,
+        },
+    )
+    .unwrap();
+    let created_in_legacy_dir = home.join("bin/codex-luna").exists();
+
+    std::env::set_var(
+        "LAM_LOGIN_SHELL_PATH",
+        format!("/usr/bin:{}", home.join(".local/bin").display()),
+    );
+    let repaired = repair_managed_wrappers(&home);
+    let idempotent = repair_managed_wrappers(&home);
+
+    restore_env_var("LAM_LOGIN_SHELL_PATH", original);
+
+    assert!(created_in_legacy_dir);
+    assert_eq!(repaired.unwrap(), vec![home.join(".local/bin/codex-luna")]);
+    assert!(home.join(".local/bin/codex-luna").exists());
+    assert!(!home.join("bin/codex-luna").exists());
+    assert!(idempotent.unwrap().is_empty());
+}
+
+#[test]
 fn renames_managed_account_home_wrapper_and_metadata() {
     let home = temp_home("rename-account");
     execute_create_account(

@@ -6,6 +6,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::SystemTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -414,12 +415,14 @@ pub(crate) fn execute_create_account_with_route(
             .ok_or_else(|| AppError::new("WRAPPER_PATH_INVALID", "missing wrapper parent"))?,
     )?;
     write_executable(&wrapper, &wrapper_contents)?;
+    let mut warnings = plan.warnings;
+    warnings.extend(wrapper_path_hint(home_root));
     Ok(CreateResult {
         profile_id: name,
         home_path: home,
         wrapper_path: wrapper,
         operations: plan.operations,
-        warnings: plan.warnings,
+        warnings,
     })
 }
 
@@ -432,19 +435,25 @@ pub fn repair_managed_wrappers(home_root: &Path) -> Result<Vec<PathBuf>> {
     if managed.is_empty() {
         return Ok(Vec::new());
     }
+    let preferred_dir = wrapper_dir(home_root);
     let mut repaired = Vec::new();
     for account in managed {
         let path = account
             .wrapper_path
             .unwrap_or_else(|| wrapper_path(home_root, &account.id));
+        let preferred = preferred_dir.join(format!("codex-{}", account.id));
+        let relocating = path != preferred;
         let route_kind =
             super::gateway::launch_planner::resolve_profile_route(home_root, &account.id)?;
         let expected = wrapper_script_for_route(&account.id, route_kind)?;
-        if fs::read_to_string(&path).ok().as_deref() == Some(&expected) {
+        if !relocating && fs::read_to_string(&path).ok().as_deref() == Some(&expected) {
             continue;
         }
-        replace_wrapper(&path, &expected)?;
-        repaired.push(path);
+        replace_wrapper(&preferred, &expected)?;
+        if relocating && path.exists() {
+            fs::remove_file(&path)?;
+        }
+        repaired.push(preferred);
     }
     Ok(repaired)
 }
@@ -850,12 +859,14 @@ pub fn execute_create_relay(home_root: &Path, req: &CreateRelayRequest) -> Resul
             .ok_or_else(|| AppError::new("WRAPPER_PATH_INVALID", "missing wrapper parent"))?,
     )?;
     write_executable(&wrapper, &wrapper_contents)?;
+    let mut warnings = plan.warnings;
+    warnings.extend(wrapper_path_hint(home_root));
     Ok(CreateResult {
         profile_id: name,
         home_path: home,
         wrapper_path: wrapper,
         operations: plan.operations,
-        warnings: plan.warnings,
+        warnings,
     })
 }
 
@@ -934,8 +945,130 @@ fn account_id_from_dir_name(name: &str) -> String {
     }
 }
 
+/// Directories a wrapper may live in, most preferred first.
+const WRAPPER_DIR_CANDIDATES: [&str; 2] = [".local/bin", "bin"];
+const LEGACY_WRAPPER_DIR: &str = "bin";
+
+struct WrapperDir {
+    path: PathBuf,
+    in_path: bool,
+}
+
+/// A GUI process inherits macOS's minimal PATH, which never matches the PATH the
+/// user's terminal will use to resolve `codex-<name>`. Ask an interactive login
+/// shell instead — many users put `~/.local/bin` in `.zshrc`, which plain `-lc`
+/// never sources.
+fn login_shell_path() -> Option<String> {
+    if let Ok(value) = std::env::var("LAM_LOGIN_SHELL_PATH") {
+        return Some(value).filter(|value| !value.is_empty());
+    }
+    static CACHE: OnceLock<Option<String>> = OnceLock::new();
+    CACHE.get_or_init(probe_login_shell_path).clone()
+}
+
+fn probe_login_shell_path() -> Option<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let output = Command::new(&shell)
+        .args(["-lic", "printf %s \"$PATH\""])
+        .env("HOME", dirs_home())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .or_else(|| {
+            Command::new(shell)
+                .args(["-lc", "printf %s \"$PATH\""])
+                .env("HOME", dirs_home())
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+        })?;
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!path.is_empty()).then_some(path)
+}
+
+fn dirs_home() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
+fn resolve_wrapper_dir(home_root: &Path, path_env: Option<&str>) -> WrapperDir {
+    let visible = path_env.and_then(|path_env| {
+        WRAPPER_DIR_CANDIDATES
+            .iter()
+            .map(|dir| home_root.join(dir))
+            .find(|dir| path_env_contains(path_env, dir))
+    });
+    if let Some(path) = visible {
+        return WrapperDir {
+            path,
+            in_path: true,
+        };
+    }
+    // Prefer the XDG user bin when it already exists: interactive terminals
+    // almost always put it on PATH even when a non-interactive probe misses it.
+    let local_bin = home_root.join(".local/bin");
+    if local_bin.is_dir() {
+        return WrapperDir {
+            path: local_bin,
+            in_path: false,
+        };
+    }
+    WrapperDir {
+        path: home_root.join(LEGACY_WRAPPER_DIR),
+        in_path: false,
+    }
+}
+
+fn path_env_contains(path_env: &str, dir: &Path) -> bool {
+    path_env
+        .split(':')
+        .filter(|entry| !entry.is_empty())
+        .any(|entry| Path::new(entry.trim_end_matches('/')) == dir)
+}
+
+fn wrapper_dir(home_root: &Path) -> PathBuf {
+    resolve_wrapper_dir(home_root, login_shell_path().as_deref()).path
+}
+
+/// An already installed wrapper keeps its location so rename, delete and repair
+/// still find profiles created before the preferred directory changed.
+fn wrapper_file_path(home_root: &Path, name: &str, preferred_dir: &Path) -> PathBuf {
+    let file = format!("codex-{name}");
+    let preferred = preferred_dir.join(&file);
+    if preferred.exists() {
+        return preferred;
+    }
+    WRAPPER_DIR_CANDIDATES
+        .iter()
+        .map(|dir| home_root.join(dir).join(&file))
+        .find(|path| path.exists())
+        .unwrap_or(preferred)
+}
+
 fn wrapper_path(home_root: &Path, name: &str) -> PathBuf {
-    home_root.join("bin").join(format!("codex-{name}"))
+    wrapper_file_path(home_root, name, &wrapper_dir(home_root))
+}
+
+fn wrapper_path_warning(home_root: &Path, path_env: Option<&str>) -> Option<String> {
+    let resolved = resolve_wrapper_dir(home_root, path_env);
+    if resolved.in_path {
+        return None;
+    }
+    let shell_form = resolved
+        .path
+        .strip_prefix(home_root)
+        .map(|dir| format!("$HOME/{}", dir.display()))
+        .unwrap_or_else(|_| resolved.path.display().to_string());
+    Some(format!(
+        "{} is not on your terminal PATH, so the codex-<name> command will not resolve. \
+         Add it with: export PATH=\"{shell_form}:$PATH\"",
+        resolved.path.display()
+    ))
+}
+
+fn wrapper_path_hint(home_root: &Path) -> Option<String> {
+    wrapper_path_warning(home_root, login_shell_path().as_deref())
 }
 
 fn relay_name(req: &CreateRelayRequest) -> Result<String> {
@@ -1428,7 +1561,7 @@ pub fn add_session_profile_account(
             "write converted auth.json".to_string(),
             "write wrapper".to_string(),
         ],
-        warnings: Vec::new(),
+        warnings: wrapper_path_hint(home_root).into_iter().collect(),
     })
 }
 
@@ -2171,6 +2304,119 @@ fn detect_auth_mode(
 
     // Priority 3: Fall back to config.toml detection
     config.auth_mode.clone()
+}
+
+#[cfg(test)]
+mod wrapper_location_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn path_env(dirs: &[&Path]) -> String {
+        let mut entries = vec!["/usr/bin".to_string(), "/bin".to_string()];
+        entries.extend(dirs.iter().map(|dir| dir.display().to_string()));
+        entries.join(":")
+    }
+
+    #[test]
+    fn prefers_local_bin_when_it_is_on_the_login_path() {
+        let home = Path::new("/home/tester");
+        let env = path_env(&[&home.join(".local/bin")]);
+
+        let resolved = resolve_wrapper_dir(home, Some(&env));
+
+        assert_eq!(resolved.path, home.join(".local/bin"));
+        assert!(resolved.in_path);
+    }
+
+    #[test]
+    fn prefers_local_bin_over_legacy_bin_when_both_are_on_the_login_path() {
+        let home = Path::new("/home/tester");
+        let env = path_env(&[&home.join("bin"), &home.join(".local/bin")]);
+
+        assert_eq!(
+            resolve_wrapper_dir(home, Some(&env)).path,
+            home.join(".local/bin")
+        );
+    }
+
+    #[test]
+    fn uses_legacy_bin_when_it_is_the_only_candidate_on_the_login_path() {
+        let home = Path::new("/home/tester");
+        let env = path_env(&[&home.join("bin")]);
+
+        let resolved = resolve_wrapper_dir(home, Some(&env));
+
+        assert_eq!(resolved.path, home.join("bin"));
+        assert!(resolved.in_path);
+    }
+
+    #[test]
+    fn falls_back_to_legacy_bin_and_reports_missing_path_entry() {
+        let home = Path::new("/home/tester");
+
+        let resolved = resolve_wrapper_dir(home, Some("/usr/bin:/bin"));
+
+        assert_eq!(resolved.path, home.join("bin"));
+        assert!(!resolved.in_path);
+        assert!(!resolve_wrapper_dir(home, None).in_path);
+    }
+
+    #[test]
+    fn prefers_existing_local_bin_when_probe_misses_path() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path();
+        fs::create_dir_all(home.join(".local/bin")).unwrap();
+
+        let resolved = resolve_wrapper_dir(home, Some("/usr/bin:/bin"));
+
+        assert_eq!(resolved.path, home.join(".local/bin"));
+        assert!(!resolved.in_path);
+    }
+
+    #[test]
+    fn path_entries_match_despite_trailing_separators_and_blank_fields() {
+        let home = Path::new("/home/tester");
+        let env = format!("/usr/bin::{}/.local/bin/", home.display());
+
+        assert_eq!(
+            resolve_wrapper_dir(home, Some(&env)).path,
+            home.join(".local/bin")
+        );
+    }
+
+    #[test]
+    fn wrapper_file_path_reuses_an_existing_wrapper_outside_the_preferred_dir() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path();
+        let legacy = home.join("bin/codex-luna");
+        write_executable(&legacy, "#!/bin/sh\nexit 0\n").unwrap();
+
+        let resolved = wrapper_file_path(home, "luna", &home.join(".local/bin"));
+
+        assert_eq!(resolved, legacy);
+    }
+
+    #[test]
+    fn wrapper_file_path_uses_the_preferred_dir_for_a_brand_new_profile() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path();
+
+        let resolved = wrapper_file_path(home, "luna", &home.join(".local/bin"));
+
+        assert_eq!(resolved, home.join(".local/bin/codex-luna"));
+    }
+
+    #[test]
+    fn wrapper_path_hint_is_actionable_only_when_the_dir_is_missing_from_path() {
+        let home = Path::new("/home/tester");
+        let env = path_env(&[&home.join(".local/bin")]);
+
+        assert!(wrapper_path_warning(home, Some(&env)).is_none());
+
+        let warning = wrapper_path_warning(home, Some("/usr/bin:/bin")).unwrap();
+        assert!(warning.contains("/home/tester/bin"));
+        assert!(warning.contains("export PATH=\"$HOME/bin:$PATH\""));
+    }
 }
 
 #[cfg(test)]
