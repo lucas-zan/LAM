@@ -2,7 +2,7 @@ use super::account::{list_accounts, CodexAccount};
 use super::quota::spawn_codex_app_server;
 use crate::{AppError, Result};
 use chrono::{Datelike, Duration as ChronoDuration, Local, NaiveDate, TimeZone, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -15,6 +15,62 @@ use std::sync::Mutex;
 const PARSER_ADAPTER_VERSION: &str = "lam-codex-jsonl-v1";
 const CODEX_APP_SERVER_USAGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 static REFRESH_LOCK: Mutex<()> = Mutex::new(());
+const COLLECT_AFFECTED_USAGE_RECORDS_SQL: &str = "
+    INSERT OR IGNORE INTO affected_usage_records (record_id)
+    SELECT events.record_id
+    FROM affected_usage_threads affected
+    CROSS JOIN usage_events events INDEXED BY idx_usage_events_named_partition
+    WHERE events.workspace_id IS NULLIF(affected.workspace_id, '')
+      AND events.attributed_account_id IS NULLIF(affected.account_id, '')
+      AND events.thread_name = affected.logical_thread_key
+    UNION ALL
+    SELECT events.record_id
+    FROM affected_usage_threads affected
+    CROSS JOIN usage_events events INDEXED BY idx_usage_events_session_partition
+    WHERE events.workspace_id IS NULLIF(affected.workspace_id, '')
+      AND events.attributed_account_id IS NULLIF(affected.account_id, '')
+      AND events.thread_name IS NULL
+      AND events.session_id = affected.logical_thread_key
+";
+const COLLECT_AFFECTED_MODEL_RECORDS_SQL: &str = "
+    INSERT OR IGNORE INTO affected_usage_model_records (record_id)
+    SELECT events.record_id
+    FROM affected_usage_models affected
+    CROSS JOIN usage_events events INDEXED BY idx_usage_events_unknown_model
+    WHERE events.pricing_confidence = 'unknown'
+      AND events.model = affected.model_name
+    UNION ALL
+    SELECT events.record_id
+    FROM affected_usage_models affected
+    CROSS JOIN usage_events events INDEXED BY idx_usage_events_unknown_model
+    WHERE affected.model_name = 'unknown'
+      AND events.pricing_confidence = 'unknown'
+      AND events.model IS NULL
+";
+const REBUILD_AFFECTED_MODEL_FACTS_SQL: &str = "
+    INSERT INTO aggregate_diagnostic_facts (
+        record_id, fact_type, fact_name, fact_category, event_count, confidence,
+        first_event_timestamp, last_event_timestamp, first_source_line,
+        last_source_line, evidence_scope, raw_content_included
+    )
+    SELECT
+        'unknown-model:' || COALESCE(events.model, 'unknown'),
+        'pricing',
+        COALESCE(events.model, 'unknown'),
+        'unknown_model',
+        COUNT(*),
+        1.0,
+        MIN(events.event_timestamp),
+        MAX(events.event_timestamp),
+        MIN(events.line_number),
+        MAX(events.line_number),
+        'aggregate',
+        0
+    FROM affected_usage_model_records affected
+    CROSS JOIN usage_events events
+    WHERE events.record_id = affected.record_id
+    GROUP BY COALESCE(events.model, 'unknown')
+";
 const KNOWN_NON_TOKEN_EVENT_MSG_TYPES: &[&str] = &[
     "agent_message",
     "context_compacted",
@@ -483,7 +539,6 @@ fn refresh_usage_index_unlocked(
         session_index.extend(load_session_index(&workspace.home));
     }
     let logs = find_session_logs(&workspaces, include_archived)?;
-    backfill_workspace_metadata(&mut conn, &logs)?;
     let plans = source_logs_requiring_parse(&conn, &logs)?;
     let mut parsed = Vec::new();
     let mut diagnostics = BTreeMap::new();
@@ -501,7 +556,7 @@ fn refresh_usage_index_unlocked(
         .sum::<usize>();
     let skipped_events = diagnostics.get("skipped_events").copied().unwrap_or(0) as usize;
     let (inserted_or_updated_events, deleted_rows) =
-        apply_parsed_sources(&mut conn, &parsed, logs.len(), skipped_events)?;
+        apply_parsed_sources(&mut conn, &logs, &parsed, logs.len(), skipped_events)?;
     compact_usage_db_after_refresh(&mut conn, deleted_rows > 0)?;
 
     Ok(UsageRefreshResult {
@@ -1223,6 +1278,9 @@ pub fn init_usage_db(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_usage_events_effort_time ON usage_events(effort, event_timestamp)",
         "CREATE INDEX IF NOT EXISTS idx_usage_events_pricing_time ON usage_events(pricing_confidence, event_timestamp)",
         "CREATE INDEX IF NOT EXISTS idx_usage_events_thread_time ON usage_events(thread_key, event_timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_usage_events_named_partition ON usage_events(workspace_id, attributed_account_id, thread_name)",
+        "CREATE INDEX IF NOT EXISTS idx_usage_events_session_partition ON usage_events(workspace_id, attributed_account_id, session_id) WHERE thread_name IS NULL",
+        "CREATE INDEX IF NOT EXISTS idx_usage_events_unknown_model ON usage_events(model) WHERE pricing_confidence = 'unknown'",
     ] {
         conn.execute(sql, []).map_err(db_error)?;
     }
@@ -1392,13 +1450,73 @@ fn source_logs_requiring_parse(
     Ok(plans)
 }
 
-fn backfill_workspace_metadata(conn: &mut Connection, logs: &[SourceLog]) -> Result<usize> {
-    let tx = conn.transaction().map_err(db_error)?;
+fn backfill_workspace_metadata(
+    tx: &rusqlite::Transaction<'_>,
+    logs: &[SourceLog],
+) -> Result<usize> {
     let mut updated = 0;
     for log in logs {
         let source_file = log.path.to_string_lossy().to_string();
         let workspace_home = log.workspace_home.to_string_lossy().to_string();
         let account_label = log.account_id.as_deref().map(account_label_from_id);
+        let values = params![
+            source_file,
+            log.workspace_id,
+            log.workspace_label,
+            workspace_home,
+            log.account_id.as_deref(),
+            account_label.as_deref(),
+            "profile_workspace"
+        ];
+        let mismatch = "source_file = ?1
+            AND (workspace_id IS NULL
+              OR workspace_id != ?2
+              OR workspace_label IS NULL
+              OR workspace_label != ?3
+              OR workspace_home IS NULL
+              OR workspace_home != ?4
+              OR COALESCE(attributed_account_id, '') != COALESCE(?5, '')
+              OR COALESCE(attributed_account_label, '') != COALESCE(?6, '')
+              OR attribution_source IS NULL
+              OR attribution_source != ?7)";
+        tx.execute(
+            &format!(
+                "INSERT OR IGNORE INTO affected_usage_threads
+                    (workspace_id, account_id, logical_thread_key)
+                 SELECT
+                    COALESCE(workspace_id, ''),
+                    COALESCE(attributed_account_id, ''),
+                    COALESCE(thread_name, session_id)
+                 FROM usage_events
+                 WHERE {mismatch}"
+            ),
+            values,
+        )
+        .map_err(db_error)?;
+        tx.execute(
+            &format!(
+                "INSERT OR IGNORE INTO affected_usage_threads
+                    (workspace_id, account_id, logical_thread_key)
+                 SELECT
+                    ?2,
+                    COALESCE(?5, ''),
+                    COALESCE(thread_name, session_id)
+                 FROM usage_events
+                 WHERE {mismatch}"
+            ),
+            values,
+        )
+        .map_err(db_error)?;
+        tx.execute(
+            &format!(
+                "INSERT OR IGNORE INTO affected_usage_models (model_name)
+                 SELECT COALESCE(model, 'unknown')
+                 FROM usage_events
+                 WHERE {mismatch}"
+            ),
+            values,
+        )
+        .map_err(db_error)?;
         updated += tx
             .execute(
                 "UPDATE usage_events
@@ -1412,18 +1530,14 @@ fn backfill_workspace_metadata(conn: &mut Connection, logs: &[SourceLog]) -> Res
                    AND (workspace_id IS NULL
                      OR workspace_id != ?2
                      OR workspace_label IS NULL
+                     OR workspace_label != ?3
                      OR workspace_home IS NULL
-                     OR attributed_account_id IS NULL
-                     OR attribution_source IS NULL)",
-                params![
-                    source_file,
-                    log.workspace_id,
-                    log.workspace_label,
-                    workspace_home,
-                    log.account_id.as_deref(),
-                    account_label.as_deref(),
-                    "profile_workspace"
-                ],
+                     OR workspace_home != ?4
+                     OR COALESCE(attributed_account_id, '') != COALESCE(?5, '')
+                     OR COALESCE(attributed_account_label, '') != COALESCE(?6, '')
+                     OR attribution_source IS NULL
+                     OR attribution_source != ?7)",
+                values,
             )
             .map_err(db_error)?;
         tx.execute(
@@ -1431,12 +1545,14 @@ fn backfill_workspace_metadata(conn: &mut Connection, logs: &[SourceLog]) -> Res
              SET workspace_id = ?2,
                  workspace_home = ?3
              WHERE source_file = ?1
-               AND (workspace_id IS NULL OR workspace_id != ?2 OR workspace_home IS NULL)",
+               AND (workspace_id IS NULL
+                 OR workspace_id != ?2
+                 OR workspace_home IS NULL
+                 OR workspace_home != ?3)",
             params![source_file, log.workspace_id, workspace_home],
         )
         .map_err(db_error)?;
     }
-    tx.commit().map_err(db_error)?;
     Ok(updated)
 }
 
@@ -1781,13 +1897,104 @@ fn parse_envelope(
     state.last_cumulative_total = cumulative_total_tokens;
 }
 
+fn collect_changed_usage_partitions(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    let has_changes = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM changed_usage_records)
+                 OR EXISTS(SELECT 1 FROM replaced_usage_sources)",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(db_error)?;
+    if !has_changes {
+        return Ok(());
+    }
+    tx.execute_batch(
+        "
+        INSERT OR IGNORE INTO affected_usage_threads
+            (workspace_id, account_id, logical_thread_key)
+        SELECT
+            COALESCE(workspace_id, ''),
+            COALESCE(attributed_account_id, ''),
+            COALESCE(thread_name, session_id)
+        FROM usage_events
+        WHERE record_id IN (SELECT record_id FROM changed_usage_records)
+           OR source_file IN (SELECT source_file FROM replaced_usage_sources);
+
+        INSERT OR IGNORE INTO affected_usage_models (model_name)
+        SELECT COALESCE(model, 'unknown')
+        FROM usage_events
+        WHERE record_id IN (SELECT record_id FROM changed_usage_records)
+           OR source_file IN (SELECT source_file FROM replaced_usage_sources);
+        ",
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+fn begin_usage_refresh_transaction(conn: &mut Connection) -> Result<rusqlite::Transaction<'_>> {
+    conn.transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db_error)
+}
+
 fn apply_parsed_sources(
     conn: &mut Connection,
+    logs: &[SourceLog],
     parsed: &[(SourceParsePlan, ParsedSource)],
     scanned_files: usize,
     skipped_events: usize,
 ) -> Result<(usize, usize)> {
-    let tx = conn.transaction().map_err(db_error)?;
+    let tx = begin_usage_refresh_transaction(conn)?;
+    tx.execute_batch(
+        "
+        CREATE TEMP TABLE IF NOT EXISTS changed_usage_records (
+            record_id TEXT PRIMARY KEY
+        );
+        CREATE TEMP TABLE IF NOT EXISTS replaced_usage_sources (
+            source_file TEXT PRIMARY KEY
+        );
+        CREATE TEMP TABLE IF NOT EXISTS affected_usage_threads (
+            workspace_id TEXT NOT NULL,
+            account_id TEXT NOT NULL,
+            logical_thread_key TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, account_id, logical_thread_key)
+        );
+        CREATE TEMP TABLE IF NOT EXISTS affected_usage_models (
+            model_name TEXT PRIMARY KEY
+        );
+        CREATE TEMP TABLE IF NOT EXISTS affected_usage_records (
+            record_id TEXT PRIMARY KEY
+        );
+        CREATE TEMP TABLE IF NOT EXISTS affected_usage_model_records (
+            record_id TEXT PRIMARY KEY
+        );
+        DELETE FROM changed_usage_records;
+        DELETE FROM replaced_usage_sources;
+        DELETE FROM affected_usage_threads;
+        DELETE FROM affected_usage_models;
+        DELETE FROM affected_usage_records;
+        DELETE FROM affected_usage_model_records;
+        ",
+    )
+    .map_err(db_error)?;
+    for (plan, source) in parsed {
+        if plan.replace_existing {
+            tx.execute(
+                "INSERT OR IGNORE INTO replaced_usage_sources (source_file) VALUES (?)",
+                [source.path.to_string_lossy().to_string()],
+            )
+            .map_err(db_error)?;
+        }
+        for event in &source.events {
+            tx.execute(
+                "INSERT OR IGNORE INTO changed_usage_records (record_id) VALUES (?)",
+                [&event.record_id],
+            )
+            .map_err(db_error)?;
+        }
+    }
+    collect_changed_usage_partitions(&tx)?;
+    backfill_workspace_metadata(&tx, logs)?;
     let now = chrono::Utc::now().to_rfc3339();
     let mut inserted = 0;
     let mut deleted = 0;
@@ -1980,6 +2187,7 @@ fn apply_parsed_sources(
         )
         .map_err(db_error)?;
     }
+    collect_changed_usage_partitions(&tx)?;
     rebuild_usage_aggregates(&tx, &now)?;
     set_meta_tx(&tx, "refreshed_at", &now)?;
     set_meta_tx(&tx, "scanned_files", &scanned_files.to_string())?;
@@ -1993,156 +2201,179 @@ fn apply_parsed_sources(
 }
 
 fn rebuild_usage_aggregates(tx: &rusqlite::Transaction<'_>, now: &str) -> Result<()> {
-    tx.execute_batch(
-        "
-        UPDATE usage_events
-        SET thread_key = COALESCE(thread_name, session_id),
-            thread_call_index = NULL,
-            previous_record_id = NULL,
-            next_record_id = NULL;
-        ",
-    )
-    .map_err(db_error)?;
-
-    let rows = {
-        let mut stmt = tx
-            .prepare(
-                "SELECT record_id,
-                    COALESCE(workspace_id, '') || '|' ||
-                    COALESCE(attributed_account_id, '') || '|' ||
-                    COALESCE(thread_key, thread_name, session_id)
-                 FROM usage_events
-                 ORDER BY
-                    COALESCE(workspace_id, ''),
-                    COALESCE(attributed_account_id, ''),
-                    COALESCE(thread_key, thread_name, session_id),
-                    event_timestamp,
-                    record_id",
-            )
+    let has_threads = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM affected_usage_threads)",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(db_error)?;
+    if has_threads {
+        tx.execute(COLLECT_AFFECTED_USAGE_RECORDS_SQL, [])
             .map_err(db_error)?;
-        let collected = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(db_error)?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(db_error)?;
-        collected
-    };
-    let mut previous_thread = String::new();
-    let mut previous_record: Option<String> = None;
-    let mut index = 0_i64;
-    for (record_id, thread_key) in rows {
-        if thread_key != previous_thread {
-            previous_thread = thread_key;
-            previous_record = None;
-            index = 0;
-        }
         tx.execute(
             "UPDATE usage_events
-             SET thread_call_index = ?2, previous_record_id = ?3
-             WHERE record_id = ?1",
-            params![record_id, index, previous_record],
+             SET thread_key = COALESCE(thread_name, session_id),
+                 thread_call_index = NULL,
+                 previous_record_id = NULL,
+                 next_record_id = NULL
+             WHERE record_id IN (SELECT record_id FROM affected_usage_records)",
+            [],
         )
         .map_err(db_error)?;
-        if let Some(prev) = previous_record {
+
+        let rows = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT events.record_id,
+                        COALESCE(events.workspace_id, '') || '|' ||
+                            COALESCE(events.attributed_account_id, '') || '|' ||
+                            COALESCE(events.thread_name, events.session_id)
+                     FROM affected_usage_records affected
+                     CROSS JOIN usage_events events
+                     WHERE events.record_id = affected.record_id
+                     ORDER BY COALESCE(events.workspace_id, ''),
+                        COALESCE(events.attributed_account_id, ''),
+                        COALESCE(events.thread_name, events.session_id),
+                        events.event_timestamp,
+                        events.record_id",
+                )
+                .map_err(db_error)?;
+            let collected = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(db_error)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(db_error)?;
+            collected
+        };
+        let mut previous_thread = String::new();
+        let mut previous_record: Option<String> = None;
+        let mut index = 0_i64;
+        for (record_id, thread_key) in rows {
+            if thread_key != previous_thread {
+                previous_thread = thread_key;
+                previous_record = None;
+                index = 0;
+            }
             tx.execute(
-                "UPDATE usage_events SET next_record_id = ?2 WHERE record_id = ?1",
-                params![prev, record_id],
+                "UPDATE usage_events
+                 SET thread_call_index = ?2, previous_record_id = ?3
+                 WHERE record_id = ?1",
+                params![record_id, index, previous_record],
             )
             .map_err(db_error)?;
+            if let Some(prev) = previous_record {
+                tx.execute(
+                    "UPDATE usage_events SET next_record_id = ?2 WHERE record_id = ?1",
+                    params![prev, record_id],
+                )
+                .map_err(db_error)?;
+            }
+            previous_record = Some(record_id);
+            index += 1;
         }
-        previous_record = Some(record_id);
-        index += 1;
+
+        tx.execute(
+            "DELETE FROM thread_summaries
+             WHERE thread_key IN (
+                 SELECT workspace_id || '|' || account_id || '|' || logical_thread_key
+                 FROM affected_usage_threads
+             )",
+            [],
+        )
+        .map_err(db_error)?;
+        tx.execute(
+            "
+            INSERT INTO thread_summaries (
+                thread_key, workspace_id, workspace_label, attributed_account_id,
+                is_archived_scope, thread_label, first_event_timestamp,
+                latest_event_timestamp, call_count, session_count, input_tokens,
+                cached_input_tokens, uncached_input_tokens, output_tokens,
+                reasoning_output_tokens, total_tokens, estimated_cost_usd, usage_credits,
+                avg_cache_ratio, max_context_window_percent, max_recommendation_score,
+                primary_recommendation, call_initiator_summary, archived_call_count, updated_at
+            )
+            SELECT
+                COALESCE(events.workspace_id, '') || '|' ||
+                    COALESCE(events.attributed_account_id, '') || '|' ||
+                    COALESCE(events.thread_name, events.session_id),
+                events.workspace_id,
+                MAX(events.workspace_label),
+                events.attributed_account_id,
+                MAX(events.is_archived),
+                COALESCE(events.thread_name, events.session_id),
+                MIN(events.event_timestamp),
+                MAX(events.event_timestamp),
+                COUNT(*),
+                COUNT(DISTINCT events.session_id),
+                COALESCE(SUM(events.input_tokens), 0),
+                COALESCE(SUM(events.cached_input_tokens), 0),
+                COALESCE(SUM(events.uncached_input_tokens), 0),
+                COALESCE(SUM(events.output_tokens), 0),
+                COALESCE(SUM(events.reasoning_output_tokens), 0),
+                COALESCE(SUM(events.total_tokens), 0),
+                COALESCE(SUM(events.estimated_cost_usd), 0),
+                COALESCE(SUM(events.usage_credits), 0),
+                CASE WHEN COALESCE(SUM(events.input_tokens), 0) > 0
+                    THEN CAST(COALESCE(SUM(events.cached_input_tokens), 0) AS REAL) /
+                        COALESCE(SUM(events.input_tokens), 0)
+                    ELSE 0 END,
+                MAX(events.context_window_percent),
+                MAX(CASE
+                    WHEN events.input_tokens >= 50000 AND events.cache_ratio < 0.2 THEN 90
+                    WHEN events.context_window_percent >= 0.8 THEN 75
+                    ELSE 0
+                END),
+                CASE
+                    WHEN MAX(events.context_window_percent) >= 0.8
+                        THEN 'Inspect high context usage'
+                    WHEN COALESCE(SUM(events.input_tokens), 0) >= 50000
+                        AND CAST(COALESCE(SUM(events.cached_input_tokens), 0) AS REAL) /
+                            COALESCE(SUM(events.input_tokens), 1) < 0.2
+                        THEN 'Inspect low cache reuse'
+                    ELSE NULL
+                END,
+                MAX(events.call_initiator),
+                SUM(CASE WHEN events.is_archived != 0 THEN 1 ELSE 0 END),
+                ?1
+            FROM affected_usage_records affected
+            CROSS JOIN usage_events events
+            WHERE events.record_id = affected.record_id
+            GROUP BY events.workspace_id,
+                events.attributed_account_id,
+                COALESCE(events.thread_name, events.session_id)",
+            [now],
+        )
+        .map_err(db_error)?;
     }
 
-    tx.execute("DELETE FROM thread_summaries", [])
-        .map_err(db_error)?;
-    tx.execute(
-        "
-        INSERT INTO thread_summaries (
-            thread_key, workspace_id, workspace_label, attributed_account_id,
-            is_archived_scope, thread_label, first_event_timestamp,
-            latest_event_timestamp, call_count, session_count, input_tokens,
-            cached_input_tokens, uncached_input_tokens, output_tokens,
-            reasoning_output_tokens, total_tokens, estimated_cost_usd, usage_credits,
-            avg_cache_ratio, max_context_window_percent, max_recommendation_score,
-            primary_recommendation, call_initiator_summary, archived_call_count, updated_at
+    let has_models = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM affected_usage_models)",
+            [],
+            |row| row.get::<_, bool>(0),
         )
-        SELECT
-            COALESCE(workspace_id, '') || '|' ||
-                COALESCE(attributed_account_id, '') || '|' ||
-                COALESCE(thread_key, thread_name, session_id),
-            workspace_id,
-            MAX(workspace_label),
-            attributed_account_id,
-            MAX(is_archived),
-            COALESCE(thread_name, session_id),
-            MIN(event_timestamp),
-            MAX(event_timestamp),
-            COUNT(*),
-            COUNT(DISTINCT session_id),
-            COALESCE(SUM(input_tokens), 0),
-            COALESCE(SUM(cached_input_tokens), 0),
-            COALESCE(SUM(uncached_input_tokens), 0),
-            COALESCE(SUM(output_tokens), 0),
-            COALESCE(SUM(reasoning_output_tokens), 0),
-            COALESCE(SUM(total_tokens), 0),
-            COALESCE(SUM(estimated_cost_usd), 0),
-            COALESCE(SUM(usage_credits), 0),
-            CASE WHEN COALESCE(SUM(input_tokens), 0) > 0
-                THEN CAST(COALESCE(SUM(cached_input_tokens), 0) AS REAL) / COALESCE(SUM(input_tokens), 0)
-                ELSE 0 END,
-            MAX(context_window_percent),
-            MAX(CASE
-                WHEN input_tokens >= 50000 AND cache_ratio < 0.2 THEN 90
-                WHEN context_window_percent >= 0.8 THEN 75
-                ELSE 0
-            END),
-            CASE
-                WHEN MAX(context_window_percent) >= 0.8 THEN 'Inspect high context usage'
-                WHEN COALESCE(SUM(input_tokens), 0) >= 50000
-                    AND CAST(COALESCE(SUM(cached_input_tokens), 0) AS REAL) / COALESCE(SUM(input_tokens), 1) < 0.2
-                    THEN 'Inspect low cache reuse'
-                ELSE NULL
-            END,
-            MAX(call_initiator),
-            SUM(CASE WHEN is_archived != 0 THEN 1 ELSE 0 END),
-            ?1
-        FROM usage_events
-        GROUP BY COALESCE(thread_key, thread_name, session_id), workspace_id, attributed_account_id",
-        [now],
-    )
-    .map_err(db_error)?;
-
-    tx.execute("DELETE FROM aggregate_diagnostic_facts", [])
         .map_err(db_error)?;
-    tx.execute(
-        "
-        INSERT INTO aggregate_diagnostic_facts (
-            record_id, fact_type, fact_name, fact_category, event_count, confidence,
-            first_event_timestamp, last_event_timestamp, first_source_line,
-            last_source_line, evidence_scope, raw_content_included
+    if has_models {
+        tx.execute(COLLECT_AFFECTED_MODEL_RECORDS_SQL, [])
+            .map_err(db_error)?;
+        tx.execute(
+            "DELETE FROM aggregate_diagnostic_facts
+             WHERE fact_category = 'unknown_model'
+               AND EXISTS (
+                   SELECT 1
+                   FROM affected_usage_models affected
+                   WHERE aggregate_diagnostic_facts.record_id =
+                       'unknown-model:' || affected.model_name
+               )",
+            [],
         )
-        SELECT
-            'unknown-model:' || COALESCE(model, 'unknown'),
-            'pricing',
-            COALESCE(model, 'unknown'),
-            'unknown_model',
-            COUNT(*),
-            1.0,
-            MIN(event_timestamp),
-            MAX(event_timestamp),
-            MIN(line_number),
-            MAX(line_number),
-            'aggregate',
-            0
-        FROM usage_events
-        WHERE pricing_confidence = 'unknown'
-        GROUP BY COALESCE(model, 'unknown')",
-        [],
-    )
-    .map_err(db_error)?;
+        .map_err(db_error)?;
+        tx.execute(REBUILD_AFFECTED_MODEL_FACTS_SQL, [])
+            .map_err(db_error)?;
+    }
     Ok(())
 }
 
@@ -3976,6 +4207,218 @@ mod tests {
             .unwrap()
     }
 
+    fn install_mutation_audit(conn: &Connection) {
+        conn.execute_batch(
+            "
+            CREATE TABLE mutation_audit (
+                table_name TEXT NOT NULL,
+                action TEXT NOT NULL,
+                identity TEXT NOT NULL
+            );
+            CREATE TRIGGER audit_usage_events_insert AFTER INSERT ON usage_events BEGIN
+                INSERT INTO mutation_audit VALUES (
+                    'usage_events', 'insert',
+                    COALESCE(NEW.workspace_id, '') || '|' ||
+                        COALESCE(NEW.attributed_account_id, '') || '|' ||
+                        COALESCE(NEW.thread_name, NEW.session_id) || '|' ||
+                        COALESCE(NEW.model, 'unknown')
+                );
+            END;
+            CREATE TRIGGER audit_usage_events_update AFTER UPDATE ON usage_events BEGIN
+                INSERT INTO mutation_audit VALUES (
+                    'usage_events', 'update',
+                    COALESCE(NEW.workspace_id, '') || '|' ||
+                        COALESCE(NEW.attributed_account_id, '') || '|' ||
+                        COALESCE(NEW.thread_name, NEW.session_id) || '|' ||
+                        COALESCE(NEW.model, 'unknown')
+                );
+            END;
+            CREATE TRIGGER audit_usage_events_delete AFTER DELETE ON usage_events BEGIN
+                INSERT INTO mutation_audit VALUES (
+                    'usage_events', 'delete',
+                    COALESCE(OLD.workspace_id, '') || '|' ||
+                        COALESCE(OLD.attributed_account_id, '') || '|' ||
+                        COALESCE(OLD.thread_name, OLD.session_id) || '|' ||
+                        COALESCE(OLD.model, 'unknown')
+                );
+            END;
+            CREATE TRIGGER audit_thread_summaries_insert AFTER INSERT ON thread_summaries BEGIN
+                INSERT INTO mutation_audit VALUES (
+                    'thread_summaries', 'insert', NEW.thread_key
+                );
+            END;
+            CREATE TRIGGER audit_thread_summaries_update AFTER UPDATE ON thread_summaries BEGIN
+                INSERT INTO mutation_audit VALUES (
+                    'thread_summaries', 'update', NEW.thread_key
+                );
+            END;
+            CREATE TRIGGER audit_thread_summaries_delete AFTER DELETE ON thread_summaries BEGIN
+                INSERT INTO mutation_audit VALUES (
+                    'thread_summaries', 'delete', OLD.thread_key
+                );
+            END;
+            CREATE TRIGGER audit_aggregate_facts_insert
+            AFTER INSERT ON aggregate_diagnostic_facts BEGIN
+                INSERT INTO mutation_audit VALUES (
+                    'aggregate_diagnostic_facts', 'insert', NEW.record_id
+                );
+            END;
+            CREATE TRIGGER audit_aggregate_facts_update
+            AFTER UPDATE ON aggregate_diagnostic_facts BEGIN
+                INSERT INTO mutation_audit VALUES (
+                    'aggregate_diagnostic_facts', 'update', NEW.record_id
+                );
+            END;
+            CREATE TRIGGER audit_aggregate_facts_delete
+            AFTER DELETE ON aggregate_diagnostic_facts BEGIN
+                INSERT INTO mutation_audit VALUES (
+                    'aggregate_diagnostic_facts', 'delete', OLD.record_id
+                );
+            END;
+            ",
+        )
+        .unwrap();
+    }
+
+    fn mutation_audit(conn: &Connection) -> Vec<(String, String, String)> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT table_name, action, identity
+                 FROM mutation_audit
+                 ORDER BY rowid",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn write_session_index(home: &Path, sessions: &[(&str, &str)]) {
+        fs::create_dir_all(home.join(".codex")).unwrap();
+        let body = sessions
+            .iter()
+            .map(|(id, thread)| json!({"id": id, "thread_name": thread}).to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(home.join(".codex/session_index.jsonl"), format!("{body}\n")).unwrap();
+    }
+
+    fn append_usage_event(path: &Path, timestamp: &str, cumulative_input: i64) {
+        let mut body = fs::read_to_string(path).unwrap();
+        body.push_str(
+            &json!({
+                "type": "event_msg",
+                "timestamp": timestamp,
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "last_token_usage": {
+                            "input_tokens": 20,
+                            "cached_input_tokens": 5,
+                            "output_tokens": 4,
+                            "reasoning_output_tokens": 1,
+                            "total_tokens": 24
+                        },
+                        "total_token_usage": {
+                            "input_tokens": cumulative_input,
+                            "cached_input_tokens": 10,
+                            "output_tokens": 14,
+                            "reasoning_output_tokens": 4,
+                            "total_tokens": cumulative_input + 14
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        );
+        body.push('\n');
+        fs::write(path, body).unwrap();
+    }
+
+    #[test]
+    fn affected_partition_queries_use_targeted_indexes() {
+        let temp = TempDir::new().unwrap();
+        let db_path = usage_db_path(temp.path());
+        prepare_usage_dir(&db_path).unwrap();
+        let conn = open_usage_db(&db_path).unwrap();
+        init_usage_db(&conn).unwrap();
+        conn.execute_batch(
+            "
+            CREATE TEMP TABLE affected_usage_threads (
+                workspace_id TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                logical_thread_key TEXT NOT NULL,
+                PRIMARY KEY (workspace_id, account_id, logical_thread_key)
+            );
+            CREATE TEMP TABLE affected_usage_models (model_name TEXT PRIMARY KEY);
+            CREATE TEMP TABLE affected_usage_records (record_id TEXT PRIMARY KEY);
+            CREATE TEMP TABLE affected_usage_model_records (record_id TEXT PRIMARY KEY);
+            ",
+        )
+        .unwrap();
+
+        for (sql, indexes) in [
+            (
+                COLLECT_AFFECTED_USAGE_RECORDS_SQL,
+                &[
+                    "idx_usage_events_named_partition",
+                    "idx_usage_events_session_partition",
+                ][..],
+            ),
+            (
+                COLLECT_AFFECTED_MODEL_RECORDS_SQL,
+                &["idx_usage_events_unknown_model"][..],
+            ),
+        ] {
+            let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            let plan = stmt
+                .query_map([], |row| row.get::<_, String>(3))
+                .unwrap()
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .unwrap();
+            for index in indexes {
+                assert!(plan.iter().any(|line| line.contains(index)), "{plan:?}");
+            }
+            assert!(
+                plan.iter().all(|line| !line.contains("SCAN events")),
+                "{plan:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn refresh_transaction_reserves_writer_before_reading() {
+        let temp = TempDir::new().unwrap();
+        let db_path = usage_db_path(temp.path());
+        prepare_usage_dir(&db_path).unwrap();
+        let mut refresh_conn = open_usage_db(&db_path).unwrap();
+        init_usage_db(&refresh_conn).unwrap();
+        let competing_conn = open_usage_db(&db_path).unwrap();
+        competing_conn
+            .busy_timeout(std::time::Duration::ZERO)
+            .unwrap();
+
+        let tx = begin_usage_refresh_transaction(&mut refresh_conn).unwrap();
+        tx.query_row("SELECT COUNT(*) FROM usage_events", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap();
+        let err = competing_conn
+            .execute(
+                "INSERT INTO refresh_meta (key, value) VALUES ('competing', 'write')",
+                [],
+            )
+            .unwrap_err();
+        match err {
+            rusqlite::Error::SqliteFailure(error, _) => {
+                assert_eq!(error.code, rusqlite::ErrorCode::DatabaseBusy)
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        tx.rollback().unwrap();
+    }
+
     #[test]
     fn old_usage_db_migrates_to_parity_schema() {
         let temp = TempDir::new().unwrap();
@@ -4352,12 +4795,71 @@ mod tests {
         let temp = TempDir::new().unwrap();
         write_log(temp.path(), &fixture(100, 50));
         assert_eq!(refresh_usage_index(temp.path()).unwrap().parsed_files, 1);
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        install_mutation_audit(&conn);
+        drop(conn);
+
         assert_eq!(refresh_usage_index(temp.path()).unwrap().parsed_files, 0);
         assert_eq!(
             get_usage_summary(temp.path(), summary_request("all"))
                 .unwrap()
                 .total_calls,
             1
+        );
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        assert!(mutation_audit(&conn).is_empty());
+    }
+
+    #[test]
+    fn append_refresh_mutates_only_affected_thread_and_model() {
+        let temp = TempDir::new().unwrap();
+        let session_a = "00000000-0000-0000-0000-00000000000a";
+        let session_b = "00000000-0000-0000-0000-00000000000b";
+        write_session_index(
+            temp.path(),
+            &[(session_a, "thread-a"), (session_b, "thread-b")],
+        );
+        let path_a = write_log_at(
+            temp.path(),
+            "sessions",
+            &format!("source-a-{session_a}"),
+            &fixture_at(
+                session_a,
+                "2026-06-28T00:00:02Z",
+                100,
+                50,
+                "unknown-model-a",
+            ),
+        );
+        write_log_at(
+            temp.path(),
+            "sessions",
+            &format!("source-b-{session_b}"),
+            &fixture_at(
+                session_b,
+                "2026-06-28T00:00:03Z",
+                200,
+                60,
+                "unknown-model-b",
+            ),
+        );
+        refresh_usage_index(temp.path()).unwrap();
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        install_mutation_audit(&conn);
+        drop(conn);
+
+        append_usage_event(&path_a, "2026-06-28T00:00:04Z", 120);
+        refresh_usage_index(temp.path()).unwrap();
+
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        let audit = mutation_audit(&conn);
+        assert!(!audit.is_empty());
+        assert!(
+            audit
+                .iter()
+                .all(|(_, _, identity)| !identity.contains("thread-b")
+                    && !identity.contains("unknown-model-b")),
+            "{audit:?}"
         );
     }
 
@@ -4376,14 +4878,18 @@ mod tests {
     #[test]
     fn refresh_backfills_workspace_metadata_for_unchanged_sources() {
         let temp = TempDir::new().unwrap();
+        write_session_index(
+            temp.path(),
+            &[("00000000-0000-0000-0000-000000000001", "metadata-thread")],
+        );
         write_log(temp.path(), &fixture(100, 50));
         refresh_usage_index(temp.path()).unwrap();
 
         let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
         conn.execute(
             "UPDATE usage_events
-             SET workspace_id = NULL,
-                 workspace_label = NULL,
+             SET workspace_id = 'workspace:old',
+                 workspace_label = 'old',
                  workspace_home = NULL,
                  attributed_account_id = NULL,
                  attributed_account_label = NULL,
@@ -4392,7 +4898,16 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "UPDATE source_files SET workspace_id = NULL, workspace_home = NULL",
+            "UPDATE source_files
+             SET workspace_id = 'workspace:old', workspace_home = NULL",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE thread_summaries
+             SET thread_key = 'workspace:old||metadata-thread',
+                 workspace_id = 'workspace:old',
+                 workspace_label = 'old'",
             [],
         )
         .unwrap();
@@ -4414,6 +4929,27 @@ mod tests {
         assert_eq!(
             summary.recent_calls[0].workspace_label.as_deref(),
             Some("main")
+        );
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM thread_summaries
+                 WHERE thread_key = 'workspace:old||metadata-thread'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM thread_summaries
+                 WHERE thread_key = 'workspace:main|main|metadata-thread'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
         );
     }
 
@@ -4472,6 +5008,65 @@ mod tests {
     }
 
     #[test]
+    fn append_relinks_complete_thread_across_source_files() {
+        let temp = TempDir::new().unwrap();
+        let session_a = "00000000-0000-0000-0000-00000000000a";
+        let session_b = "00000000-0000-0000-0000-00000000000b";
+        write_session_index(
+            temp.path(),
+            &[(session_a, "shared-thread"), (session_b, "shared-thread")],
+        );
+        let path_a = write_log_at(
+            temp.path(),
+            "sessions",
+            &format!("source-a-{session_a}"),
+            &fixture_at(session_a, "2026-06-28T00:00:02Z", 100, 50, "gpt-5"),
+        );
+        write_log_at(
+            temp.path(),
+            "sessions",
+            &format!("source-b-{session_b}"),
+            &fixture_at(session_b, "2026-06-28T00:00:03Z", 200, 60, "gpt-5"),
+        );
+        refresh_usage_index(temp.path()).unwrap();
+
+        append_usage_event(&path_a, "2026-06-28T00:00:04Z", 120);
+        refresh_usage_index(temp.path()).unwrap();
+
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT record_id, thread_call_index, previous_record_id, next_record_id
+                 FROM usage_events
+                 WHERE thread_name = 'shared-thread'
+                 ORDER BY event_timestamp, record_id",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].1, 0);
+        assert_eq!(rows[0].2, None);
+        assert_eq!(rows[0].3.as_deref(), Some(rows[1].0.as_str()));
+        assert_eq!(rows[1].1, 1);
+        assert_eq!(rows[1].2.as_deref(), Some(rows[0].0.as_str()));
+        assert_eq!(rows[1].3.as_deref(), Some(rows[2].0.as_str()));
+        assert_eq!(rows[2].1, 2);
+        assert_eq!(rows[2].2.as_deref(), Some(rows[1].0.as_str()));
+        assert_eq!(rows[2].3, None);
+    }
+
+    #[test]
     fn partial_trailing_line_is_not_committed() {
         let temp = TempDir::new().unwrap();
         let partial = json!({"type":"event_msg","timestamp":"2026-06-28T00:00:02Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":20,"cached_input_tokens":5,"output_tokens":4,"reasoning_output_tokens":1,"total_tokens":24},"total_token_usage":{"input_tokens":20,"cached_input_tokens":5,"output_tokens":4,"reasoning_output_tokens":1,"total_tokens":24}}}}).to_string();
@@ -4500,17 +5095,147 @@ mod tests {
     #[test]
     fn rewrite_replaces_source_rows() {
         let temp = TempDir::new().unwrap();
-        let path = write_log(temp.path(), &fixture(100, 50));
+        let session_id = "00000000-0000-0000-0000-000000000001";
+        write_session_index(temp.path(), &[(session_id, "old-thread")]);
+        let path = write_log(
+            temp.path(),
+            &fixture_at(
+                session_id,
+                "2026-06-28T00:00:02Z",
+                100,
+                50,
+                "unknown-old-model",
+            ),
+        );
         refresh_usage_index(temp.path()).unwrap();
+        write_session_index(temp.path(), &[(session_id, "new-thread")]);
         fs::write(
             path,
-            format!("{}\n", json!({"type":"event_msg","timestamp":"2026-06-28T00:00:02Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":8,"cached_input_tokens":3,"output_tokens":2,"reasoning_output_tokens":1,"total_tokens":10},"total_token_usage":{"input_tokens":8,"cached_input_tokens":3,"output_tokens":2,"reasoning_output_tokens":1,"total_tokens":10}}}})),
+            fixture_at(
+                session_id,
+                "2026-06-28T00:00:03Z",
+                8,
+                8,
+                "unknown-new-model",
+            ),
         )
         .unwrap();
         refresh_usage_index(temp.path()).unwrap();
         let summary = get_usage_summary(temp.path(), summary_request("all")).unwrap();
         assert_eq!(summary.total_calls, 1);
         assert_eq!(summary.recent_calls[0].input_tokens, 8);
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM thread_summaries
+                 WHERE thread_key LIKE '%|old-thread'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM thread_summaries
+                 WHERE thread_key LIKE '%|new-thread'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM aggregate_diagnostic_facts
+                 WHERE record_id = 'unknown-model:unknown-old-model'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM aggregate_diagnostic_facts
+                 WHERE record_id = 'unknown-model:unknown-new-model'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn refresh_failure_rolls_back_source_event_and_derived_changes() {
+        let temp = TempDir::new().unwrap();
+        let path = write_log(
+            temp.path(),
+            &fixture_at(
+                "00000000-0000-0000-0000-000000000001",
+                "2026-06-28T00:00:02Z",
+                100,
+                50,
+                "unknown-rollback-model",
+            ),
+        );
+        refresh_usage_index(temp.path()).unwrap();
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        let before = conn
+            .query_row(
+                "SELECT
+                    (SELECT parsed_until_byte FROM source_files),
+                    (SELECT COUNT(*) FROM usage_events),
+                    (SELECT call_count FROM thread_summaries),
+                    (SELECT event_count FROM aggregate_diagnostic_facts
+                     WHERE record_id = 'unknown-model:unknown-rollback-model')",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        conn.execute_batch(
+            "
+            CREATE TRIGGER force_thread_summary_failure
+            BEFORE INSERT ON thread_summaries BEGIN
+                SELECT RAISE(ABORT, 'forced thread summary failure');
+            END;
+            ",
+        )
+        .unwrap();
+        drop(conn);
+
+        append_usage_event(&path, "2026-06-28T00:00:03Z", 120);
+        assert!(refresh_usage_index(temp.path()).is_err());
+
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        let after = conn
+            .query_row(
+                "SELECT
+                    (SELECT parsed_until_byte FROM source_files),
+                    (SELECT COUNT(*) FROM usage_events),
+                    (SELECT call_count FROM thread_summaries),
+                    (SELECT event_count FROM aggregate_diagnostic_facts
+                     WHERE record_id = 'unknown-model:unknown-rollback-model')",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(after, before);
     }
 
     #[test]
@@ -4601,6 +5326,9 @@ mod tests {
                 .total_calls,
             1
         );
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        install_mutation_audit(&conn);
+        drop(conn);
 
         let result = refresh_usage_index_with_options(temp.path(), true).unwrap();
         let mut req = summary_request("all");
@@ -4617,6 +5345,15 @@ mod tests {
         assert_eq!(archived.pricing_model.as_deref(), Some("gpt-5.3-codex"));
         assert!(!archived.pricing_estimated);
         assert_eq!(result.parsed_files, 1);
+        let conn = open_usage_db(&usage_db_path(temp.path())).unwrap();
+        let audit = mutation_audit(&conn);
+        assert!(
+            audit
+                .iter()
+                .all(|(_, _, identity)| !identity.contains("00000000-0000-0000-0000-000000000001")),
+            "{audit:?}"
+        );
+        drop(conn);
         assert_eq!(
             refresh_usage_index_with_options(temp.path(), true)
                 .unwrap()
@@ -5006,6 +5743,24 @@ mod tests {
         assert!(!home.join(".codex/sessions/usage.sqlite3").exists());
         assert!(!home.join(".codex/logs/usage.sqlite3").exists());
         assert!(!home.join(".codex/cache/usage.sqlite3").exists());
+    }
+
+    #[test]
+    #[ignore]
+    fn real_home_usage_refresh_performance_smoke() {
+        use std::time::Instant;
+
+        let home = PathBuf::from(std::env::var("HOME").expect("HOME is required"));
+        let started = Instant::now();
+        let refresh = refresh_usage_index(&home).unwrap();
+        println!(
+            "refresh_index: elapsed={}ms scanned_files={} parsed_files={} parsed_events={} inserted_or_updated={}",
+            started.elapsed().as_millis(),
+            refresh.scanned_files,
+            refresh.parsed_files,
+            refresh.parsed_events,
+            refresh.inserted_or_updated_events
+        );
     }
 
     #[test]
