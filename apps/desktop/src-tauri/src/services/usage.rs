@@ -47,6 +47,45 @@ const COLLECT_AFFECTED_MODEL_RECORDS_SQL: &str = "
       AND events.pricing_confidence = 'unknown'
       AND events.model IS NULL
 ";
+const COLLECT_MISMATCHED_WORKSPACE_METADATA_SQL: &str = "
+    INSERT OR IGNORE INTO mismatched_workspace_metadata (
+        record_id, source_file, old_workspace_id, old_account_id, old_thread_key,
+        old_model, workspace_id, workspace_label, workspace_home, account_id,
+        account_label, attribution_source
+    )
+    SELECT
+        events.record_id,
+        events.source_file,
+        events.workspace_id,
+        events.attributed_account_id,
+        COALESCE(events.thread_name, events.session_id),
+        events.model,
+        metadata.workspace_id,
+        metadata.workspace_label,
+        metadata.workspace_home,
+        metadata.account_id,
+        metadata.account_label,
+        metadata.attribution_source
+    FROM refresh_workspace_metadata metadata
+    LEFT JOIN source_files sources ON sources.source_file = metadata.source_file
+    CROSS JOIN usage_events events INDEXED BY idx_usage_events_source
+    WHERE events.source_file = metadata.source_file
+      AND (sources.source_file IS NULL
+        OR sources.workspace_id IS NULL
+        OR sources.workspace_id != metadata.workspace_id
+        OR sources.workspace_home IS NULL
+        OR sources.workspace_home != metadata.workspace_home)
+      AND (events.workspace_id IS NULL
+        OR events.workspace_id != metadata.workspace_id
+        OR events.workspace_label IS NULL
+        OR events.workspace_label != metadata.workspace_label
+        OR events.workspace_home IS NULL
+        OR events.workspace_home != metadata.workspace_home
+        OR COALESCE(events.attributed_account_id, '') != COALESCE(metadata.account_id, '')
+        OR COALESCE(events.attributed_account_label, '') != COALESCE(metadata.account_label, '')
+        OR events.attribution_source IS NULL
+        OR events.attribution_source != metadata.attribution_source)
+";
 const REBUILD_AFFECTED_MODEL_FACTS_SQL: &str = "
     INSERT INTO aggregate_diagnostic_facts (
         record_id, fact_type, fact_name, fact_category, event_count, confidence,
@@ -1454,106 +1493,126 @@ fn backfill_workspace_metadata(
     tx: &rusqlite::Transaction<'_>,
     logs: &[SourceLog],
 ) -> Result<usize> {
-    let mut updated = 0;
+    let mut metadata_stmt = tx
+        .prepare(
+            "INSERT OR REPLACE INTO refresh_workspace_metadata (
+                source_file, workspace_id, workspace_label, workspace_home,
+                account_id, account_label, attribution_source
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )
+        .map_err(db_error)?;
     for log in logs {
         let source_file = log.path.to_string_lossy().to_string();
         let workspace_home = log.workspace_home.to_string_lossy().to_string();
         let account_label = log.account_id.as_deref().map(account_label_from_id);
-        let values = params![
-            source_file,
-            log.workspace_id,
-            log.workspace_label,
-            workspace_home,
-            log.account_id.as_deref(),
-            account_label.as_deref(),
-            "profile_workspace"
-        ];
-        let mismatch = "source_file = ?1
-            AND (workspace_id IS NULL
-              OR workspace_id != ?2
-              OR workspace_label IS NULL
-              OR workspace_label != ?3
-              OR workspace_home IS NULL
-              OR workspace_home != ?4
-              OR COALESCE(attributed_account_id, '') != COALESCE(?5, '')
-              OR COALESCE(attributed_account_label, '') != COALESCE(?6, '')
-              OR attribution_source IS NULL
-              OR attribution_source != ?7)";
-        tx.execute(
-            &format!(
-                "INSERT OR IGNORE INTO affected_usage_threads
-                    (workspace_id, account_id, logical_thread_key)
-                 SELECT
-                    COALESCE(workspace_id, ''),
-                    COALESCE(attributed_account_id, ''),
-                    COALESCE(thread_name, session_id)
-                 FROM usage_events
-                 WHERE {mismatch}"
-            ),
-            values,
-        )
-        .map_err(db_error)?;
-        tx.execute(
-            &format!(
-                "INSERT OR IGNORE INTO affected_usage_threads
-                    (workspace_id, account_id, logical_thread_key)
-                 SELECT
-                    ?2,
-                    COALESCE(?5, ''),
-                    COALESCE(thread_name, session_id)
-                 FROM usage_events
-                 WHERE {mismatch}"
-            ),
-            values,
-        )
-        .map_err(db_error)?;
-        tx.execute(
-            &format!(
-                "INSERT OR IGNORE INTO affected_usage_models (model_name)
-                 SELECT COALESCE(model, 'unknown')
-                 FROM usage_events
-                 WHERE {mismatch}"
-            ),
-            values,
-        )
-        .map_err(db_error)?;
-        updated += tx
-            .execute(
-                "UPDATE usage_events
-                 SET workspace_id = ?2,
-                     workspace_label = ?3,
-                     workspace_home = ?4,
-                     attributed_account_id = ?5,
-                     attributed_account_label = ?6,
-                     attribution_source = ?7
-                 WHERE source_file = ?1
-                   AND (workspace_id IS NULL
-                     OR workspace_id != ?2
-                     OR workspace_label IS NULL
-                     OR workspace_label != ?3
-                     OR workspace_home IS NULL
-                     OR workspace_home != ?4
-                     OR COALESCE(attributed_account_id, '') != COALESCE(?5, '')
-                     OR COALESCE(attributed_account_label, '') != COALESCE(?6, '')
-                     OR attribution_source IS NULL
-                     OR attribution_source != ?7)",
-                values,
-            )
+        metadata_stmt
+            .execute(params![
+                source_file,
+                log.workspace_id,
+                log.workspace_label,
+                workspace_home,
+                log.account_id.as_deref(),
+                account_label.as_deref(),
+                "profile_workspace"
+            ])
             .map_err(db_error)?;
-        tx.execute(
-            "UPDATE source_files
-             SET workspace_id = ?2,
-                 workspace_home = ?3
-             WHERE source_file = ?1
-               AND (workspace_id IS NULL
-                 OR workspace_id != ?2
-                 OR workspace_home IS NULL
-                 OR workspace_home != ?3)",
-            params![source_file, log.workspace_id, workspace_home],
+    }
+    drop(metadata_stmt);
+
+    let metadata_changed = tx
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1
+                FROM refresh_workspace_metadata metadata
+                LEFT JOIN source_files sources ON sources.source_file = metadata.source_file
+                WHERE sources.source_file IS NULL
+                   OR sources.workspace_id IS NULL
+                   OR sources.workspace_id != metadata.workspace_id
+                   OR sources.workspace_home IS NULL
+                   OR sources.workspace_home != metadata.workspace_home
+            )",
+            [],
+            |row| row.get::<_, bool>(0),
         )
         .map_err(db_error)?;
+    if !metadata_changed {
+        return Ok(0);
     }
-    Ok(updated)
+
+    tx.execute(COLLECT_MISMATCHED_WORKSPACE_METADATA_SQL, [])
+        .map_err(db_error)?;
+    tx.execute_batch(
+        "
+        INSERT OR IGNORE INTO affected_usage_threads
+            (workspace_id, account_id, logical_thread_key)
+        SELECT COALESCE(old_workspace_id, ''), COALESCE(old_account_id, ''), old_thread_key
+        FROM mismatched_workspace_metadata
+        UNION ALL
+        SELECT COALESCE(workspace_id, ''), COALESCE(account_id, ''), old_thread_key
+        FROM mismatched_workspace_metadata;
+
+        INSERT OR IGNORE INTO affected_usage_models (model_name)
+        SELECT COALESCE(old_model, 'unknown')
+        FROM mismatched_workspace_metadata;
+
+        UPDATE usage_events
+        SET workspace_id = (
+                SELECT workspace_id FROM mismatched_workspace_metadata
+                WHERE record_id = usage_events.record_id
+            ),
+            workspace_label = (
+                SELECT workspace_label FROM mismatched_workspace_metadata
+                WHERE record_id = usage_events.record_id
+            ),
+            workspace_home = (
+                SELECT workspace_home FROM mismatched_workspace_metadata
+                WHERE record_id = usage_events.record_id
+            ),
+            attributed_account_id = (
+                SELECT account_id FROM mismatched_workspace_metadata
+                WHERE record_id = usage_events.record_id
+            ),
+            attributed_account_label = (
+                SELECT account_label FROM mismatched_workspace_metadata
+                WHERE record_id = usage_events.record_id
+            ),
+            attribution_source = (
+                SELECT attribution_source FROM mismatched_workspace_metadata
+                WHERE record_id = usage_events.record_id
+            )
+        WHERE record_id IN (SELECT record_id FROM mismatched_workspace_metadata);
+
+        UPDATE source_files
+        SET workspace_id = (
+                SELECT workspace_id FROM refresh_workspace_metadata
+                WHERE source_file = source_files.source_file
+            ),
+            workspace_home = (
+                SELECT workspace_home FROM refresh_workspace_metadata
+                WHERE source_file = source_files.source_file
+            )
+        WHERE source_file IN (SELECT source_file FROM refresh_workspace_metadata)
+          AND (workspace_id IS NULL
+            OR workspace_id != (
+                SELECT workspace_id FROM refresh_workspace_metadata
+                WHERE source_file = source_files.source_file
+            )
+            OR workspace_home IS NULL
+            OR workspace_home != (
+                SELECT workspace_home FROM refresh_workspace_metadata
+                WHERE source_file = source_files.source_file
+            ));
+        ",
+    )
+    .map_err(db_error)?;
+    let updated = tx
+        .query_row(
+            "SELECT COUNT(*) FROM mismatched_workspace_metadata",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(db_error)?;
+    Ok(updated as usize)
 }
 
 fn parse_source_file(
@@ -1968,12 +2027,37 @@ fn apply_parsed_sources(
         CREATE TEMP TABLE IF NOT EXISTS affected_usage_model_records (
             record_id TEXT PRIMARY KEY
         );
+        CREATE TEMP TABLE IF NOT EXISTS refresh_workspace_metadata (
+            source_file TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            workspace_label TEXT NOT NULL,
+            workspace_home TEXT NOT NULL,
+            account_id TEXT,
+            account_label TEXT,
+            attribution_source TEXT NOT NULL
+        );
+        CREATE TEMP TABLE IF NOT EXISTS mismatched_workspace_metadata (
+            record_id TEXT PRIMARY KEY,
+            source_file TEXT NOT NULL,
+            old_workspace_id TEXT,
+            old_account_id TEXT,
+            old_thread_key TEXT NOT NULL,
+            old_model TEXT,
+            workspace_id TEXT NOT NULL,
+            workspace_label TEXT NOT NULL,
+            workspace_home TEXT NOT NULL,
+            account_id TEXT,
+            account_label TEXT,
+            attribution_source TEXT NOT NULL
+        );
         DELETE FROM changed_usage_records;
         DELETE FROM replaced_usage_sources;
         DELETE FROM affected_usage_threads;
         DELETE FROM affected_usage_models;
         DELETE FROM affected_usage_records;
         DELETE FROM affected_usage_model_records;
+        DELETE FROM refresh_workspace_metadata;
+        DELETE FROM mismatched_workspace_metadata;
         ",
     )
     .map_err(db_error)?;
@@ -4354,6 +4438,29 @@ mod tests {
             CREATE TEMP TABLE affected_usage_models (model_name TEXT PRIMARY KEY);
             CREATE TEMP TABLE affected_usage_records (record_id TEXT PRIMARY KEY);
             CREATE TEMP TABLE affected_usage_model_records (record_id TEXT PRIMARY KEY);
+            CREATE TEMP TABLE refresh_workspace_metadata (
+                source_file TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                workspace_label TEXT NOT NULL,
+                workspace_home TEXT NOT NULL,
+                account_id TEXT,
+                account_label TEXT,
+                attribution_source TEXT NOT NULL
+            );
+            CREATE TEMP TABLE mismatched_workspace_metadata (
+                record_id TEXT PRIMARY KEY,
+                source_file TEXT NOT NULL,
+                old_workspace_id TEXT,
+                old_account_id TEXT,
+                old_thread_key TEXT NOT NULL,
+                old_model TEXT,
+                workspace_id TEXT NOT NULL,
+                workspace_label TEXT NOT NULL,
+                workspace_home TEXT NOT NULL,
+                account_id TEXT,
+                account_label TEXT,
+                attribution_source TEXT NOT NULL
+            );
             ",
         )
         .unwrap();
@@ -4369,6 +4476,10 @@ mod tests {
             (
                 COLLECT_AFFECTED_MODEL_RECORDS_SQL,
                 &["idx_usage_events_unknown_model"][..],
+            ),
+            (
+                COLLECT_MISMATCHED_WORKSPACE_METADATA_SQL,
+                &["idx_usage_events_source"][..],
             ),
         ] {
             let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
