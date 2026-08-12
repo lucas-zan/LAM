@@ -3998,6 +3998,69 @@ pub fn compact_usage_db(home_root: &Path) -> Result<()> {
     compact_usage_db_after_refresh(&mut conn, true)
 }
 
+pub fn delete_usage_sources(home_root: &Path, source_paths: &[PathBuf]) -> Result<()> {
+    if source_paths.is_empty() {
+        return Ok(());
+    }
+    let _guard = REFRESH_LOCK
+        .lock()
+        .map_err(|_| AppError::new("USAGE_REFRESH_LOCK", "usage refresh lock is poisoned"))?;
+    let db_path = usage_db_path(home_root);
+    if !db_path.exists() {
+        return Ok(());
+    }
+    let mut conn = open_usage_db(&db_path)?;
+    init_usage_db(&conn)?;
+    let tx = begin_usage_refresh_transaction(&mut conn)?;
+    tx.execute_batch(
+        "
+        CREATE TEMP TABLE IF NOT EXISTS replaced_usage_sources (source_file TEXT PRIMARY KEY);
+        CREATE TEMP TABLE IF NOT EXISTS changed_usage_records (record_id TEXT PRIMARY KEY);
+        CREATE TEMP TABLE IF NOT EXISTS affected_usage_threads (
+            workspace_id TEXT NOT NULL,
+            account_id TEXT NOT NULL,
+            logical_thread_key TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, account_id, logical_thread_key)
+        );
+        CREATE TEMP TABLE IF NOT EXISTS affected_usage_models (model_name TEXT PRIMARY KEY);
+        CREATE TEMP TABLE IF NOT EXISTS affected_usage_records (record_id TEXT PRIMARY KEY);
+        CREATE TEMP TABLE IF NOT EXISTS affected_usage_model_records (record_id TEXT PRIMARY KEY);
+        DELETE FROM replaced_usage_sources;
+        DELETE FROM changed_usage_records;
+        DELETE FROM affected_usage_threads;
+        DELETE FROM affected_usage_models;
+        DELETE FROM affected_usage_records;
+        DELETE FROM affected_usage_model_records;
+        ",
+    )
+    .map_err(db_error)?;
+    for path in source_paths {
+        tx.execute(
+            "INSERT OR IGNORE INTO replaced_usage_sources (source_file) VALUES (?1)",
+            [path.to_string_lossy().to_string()],
+        )
+        .map_err(db_error)?;
+    }
+    collect_changed_usage_partitions(&tx)?;
+    tx.execute(
+        "DELETE FROM source_files WHERE source_file IN (SELECT source_file FROM replaced_usage_sources)",
+        [],
+    )
+    .map_err(db_error)?;
+    tx.execute(
+        "DELETE FROM usage_events WHERE source_file IN (SELECT source_file FROM replaced_usage_sources)",
+        [],
+    )
+    .map_err(db_error)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    rebuild_usage_aggregates(&tx, &now)?;
+    let count: i64 = tx
+        .query_row("SELECT COUNT(*) FROM usage_events", [], |row| row.get(0))
+        .map_err(db_error)?;
+    set_meta_tx(&tx, "parsed_events", &count.to_string())?;
+    tx.commit().map_err(db_error)
+}
+
 fn compact_usage_db_after_refresh(conn: &mut Connection, vacuum: bool) -> Result<()> {
     if vacuum {
         conn.execute_batch("VACUUM").map_err(db_error)?;

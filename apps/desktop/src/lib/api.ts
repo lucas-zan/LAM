@@ -2,6 +2,13 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   CodexAccount,
   CodexSession,
+  SessionPage,
+  SessionPageRequest,
+  SessionQueryRequest,
+  SessionSelectionRequest,
+  SessionStorageSummary,
+  DeleteSessionsRequest,
+  DeleteSessionsResult,
   AccountNoteUpdate,
   AttachProviderRequest,
   AttachProviderResult,
@@ -111,6 +118,49 @@ export async function listCachedAccounts(): Promise<CodexAccount[]> {
 export async function listSessions(accountId: string): Promise<CodexSession[]> {
   if (!inTauri()) return [];
   return invoke<CodexSession[]>('list_sessions', { accountId });
+}
+
+export async function listSessionsPage(
+  accountId: string,
+  req: SessionPageRequest = {},
+): Promise<SessionPage> {
+  if (!inTauri()) return { items: [], nextCursor: null };
+  return invoke<SessionPage>('list_sessions_page', { accountId, req });
+}
+
+export async function querySessionsPage(
+  accountId: string,
+  req: SessionQueryRequest = {},
+): Promise<SessionPage> {
+  if (!inTauri()) return { items: [], nextCursor: null };
+  return invoke<SessionPage>('query_sessions_page', { accountId, req });
+}
+
+export async function queryDeletableSessionPaths(
+  accountId: string,
+  req: SessionSelectionRequest = {},
+): Promise<string[]> {
+  if (!inTauri()) return [];
+  return invoke<string[]>('query_deletable_session_paths', { accountId, req });
+}
+
+export async function getSessionStorageSummary(accountId: string): Promise<SessionStorageSummary> {
+  if (!inTauri()) {
+    return {
+      evaluatedAt: 0,
+      activeCount: 0,
+      activeBytes: 0,
+      eligibleCount: 0,
+      eligibleBytes: 0,
+      retainedRecentCount: 20,
+      minimumAgeDays: 7,
+    };
+  }
+  return invoke<SessionStorageSummary>('get_session_storage_summary', { accountId });
+}
+
+export async function deleteSessions(req: DeleteSessionsRequest): Promise<DeleteSessionsResult> {
+  return invoke<DeleteSessionsResult>('delete_sessions', { req });
 }
 
 export async function planCreateAccount(req: CreateAccountRequest): Promise<OperationPlan> {

@@ -8,6 +8,11 @@ import {
   updateApiAccountConnectionV2,
   getAntigravityPort,
   setAntigravityPort,
+  listSessionsPage,
+  querySessionsPage,
+  getSessionStorageSummary,
+  deleteSessions,
+  queryDeletableSessionPaths,
 } from './api';
 import type { UploadedCredentials, AuthMetadata, TokenExpirationStatus } from './types';
 
@@ -27,6 +32,74 @@ beforeEach(() => {
 });
 
 describe('PAT API functions', () => {
+  it('uses exact session query and delete command payloads', async () => {
+    mockInvoke.mockResolvedValue({ items: [], nextCursor: null });
+    const descriptor = Object.getOwnPropertyDescriptor(window, '__TAURI_INTERNALS__');
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: { invoke: mockInvoke },
+    });
+
+    try {
+      await querySessionsPage('main', {
+        limit: 20,
+        sort: 'largest',
+        age: 'olderThan30Days',
+      });
+      await getSessionStorageSummary('main');
+      await deleteSessions({ profileId: 'main', paths: ['/tmp/session.jsonl'] });
+      await queryDeletableSessionPaths('main', {
+        age: 'olderThan30Days',
+        query: 'cleanup',
+      });
+
+      expect(mockInvoke).toHaveBeenNthCalledWith(1, 'query_sessions_page', {
+        accountId: 'main',
+        req: { limit: 20, sort: 'largest', age: 'olderThan30Days' },
+      });
+      expect(mockInvoke).toHaveBeenNthCalledWith(2, 'get_session_storage_summary', {
+        accountId: 'main',
+      });
+      expect(mockInvoke).toHaveBeenNthCalledWith(3, 'delete_sessions', {
+        req: { profileId: 'main', paths: ['/tmp/session.jsonl'] },
+      });
+      expect(mockInvoke).toHaveBeenNthCalledWith(4, 'query_deletable_session_paths', {
+        accountId: 'main',
+        req: { age: 'olderThan30Days', query: 'cleanup' },
+      });
+    } finally {
+      if (descriptor) Object.defineProperty(window, '__TAURI_INTERNALS__', descriptor);
+      else delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+
+  it('requests a paged session list with the account and cursor payload', async () => {
+    mockInvoke.mockResolvedValue({ items: [], nextCursor: null });
+    const descriptor = Object.getOwnPropertyDescriptor(window, '__TAURI_INTERNALS__');
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: { invoke: mockInvoke },
+    });
+
+    try {
+      await listSessionsPage('main', {
+        limit: 5,
+        cursor: { modifiedAt: 10, path: '/tmp/main/session.jsonl' },
+      });
+
+      expect(mockInvoke).toHaveBeenCalledWith('list_sessions_page', {
+        accountId: 'main',
+        req: {
+          limit: 5,
+          cursor: { modifiedAt: 10, path: '/tmp/main/session.jsonl' },
+        },
+      });
+    } finally {
+      if (descriptor) Object.defineProperty(window, '__TAURI_INTERNALS__', descriptor);
+      else delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+
   it('uses exact API account detail and update command payloads', async () => {
     mockInvoke.mockResolvedValue({ profileId: 'work-api' });
     await getApiAccountConnectionV2('work-api');

@@ -2393,6 +2393,7 @@ html[data-tray-popover='1'] #root {
 }
 .sessionsTable {
   width: 100%;
+  min-width: 1280px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -2410,25 +2411,32 @@ html[data-tray-popover='1'] #root {
   font-weight: 600;
   color: var(--muted);
 }
+.sessionHeaderSelect {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 .sessionsTable td {
   font-size: 13px;
   max-width: 0;
 }
-.sessionsTable th:nth-child(1),
-.sessionsTable td:nth-child(1) {
-  width: 26%;
+.sessionsTable .sessionColSession {
+  width: 22%;
 }
-.sessionsTable th:nth-child(2),
-.sessionsTable td:nth-child(2) {
-  width: 36%;
+.sessionsTable .sessionColSize {
+  width: 7%;
 }
-.sessionsTable th:nth-child(3),
-.sessionsTable td:nth-child(3) {
-  width: 18%;
+.sessionsTable .sessionColLastActive {
+  width: 13%;
 }
-.sessionsTable th:nth-child(4),
-.sessionsTable td:nth-child(4) {
-  width: 20%;
+.sessionsTable .sessionColCwd {
+  width: 16%;
+}
+.sessionsTable .sessionColProvider {
+  width: 12%;
+}
+.sessionsTable .sessionColActions {
+  width: 30%;
 }
 .sessionIdCell {
   display: flex;
@@ -2478,11 +2486,73 @@ html[data-tray-popover='1'] #root {
   gap: 6px;
   flex-wrap: wrap;
 }
+.sessionsTable .rowActions {
+  flex-wrap: nowrap;
+}
+.sessionsTable .rowActions > button {
+  flex: 0 0 auto;
+}
+.sessionLastActive {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .sessionsTools {
   display: grid;
   grid-template-columns: minmax(160px, 200px) minmax(220px, 1fr);
   gap: 10px;
   width: min(520px, 100%);
+}
+.sessionsPageActions {
+  display: flex;
+  justify-content: center;
+  padding-top: 12px;
+}
+.sessionResultsMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -2px 2px 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.sessionStorageBar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(260px, 1fr);
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface2);
+}
+.sessionStorageStats {
+  display: grid;
+  gap: 3px;
+}
+.sessionStorageStats span,
+.sessionArchiveActions span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.sessionScopeTabs {
+  margin: 0;
+}
+.sessionArchiveActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  text-align: right;
+}
+.sessionArchiveButtons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* Bottom dock — frosted floating island */
@@ -3656,6 +3726,11 @@ html[data-tray-popover='1'] #root {
   gap: 8px;
   margin-left: auto;
 }
+.modalInlineActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
 .uploadPatTextarea {
   width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -3892,6 +3967,13 @@ pre {
   .sessionsTools {
     grid-template-columns: 1fr;
     width: 100%;
+  }
+  .sessionStorageBar {
+    grid-template-columns: 1fr;
+  }
+  .sessionArchiveActions {
+    justify-content: space-between;
+    text-align: left;
   }
   .rows div,
   .bindingRow {

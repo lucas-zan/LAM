@@ -1,18 +1,20 @@
 use localagentmanager_core::{
     antigravity_port, attach_provider_to_profile, build_resume_command, create_account_plan,
-    create_provider, create_relay_plan, delete_provider, execute_attach_provider_to_profile,
-    execute_create_account, execute_create_relay, execute_rename_account,
-    gateway_first_response_timeout_seconds, get_live_antigravity_quota, get_profile_quota,
-    list_accounts, list_cached_accounts, list_cached_quotas, list_providers, list_sessions,
-    list_terminal_targets, plan_attach_provider_to_profile, refresh_all_quotas,
+    create_provider, create_relay_plan, delete_provider, delete_sessions,
+    execute_attach_provider_to_profile, execute_create_account, execute_create_relay,
+    execute_rename_account, gateway_first_response_timeout_seconds, get_live_antigravity_quota,
+    get_profile_quota, list_accounts, list_cached_accounts, list_cached_quotas, list_providers,
+    list_sessions, list_sessions_page, list_terminal_targets, plan_attach_provider_to_profile,
+    query_deletable_session_paths, query_sessions_page, refresh_all_quotas, refresh_usage_index,
     relay_resume_session, rename_account_plan, repair_managed_wrappers, reset_profile_quota,
     resolve_home_root, selected_terminal_target_id, set_antigravity_port,
     set_gateway_first_response_timeout_seconds, set_selected_terminal_target_id,
     terminal_applescript, update_account_note, AccountNoteUpdate, AttachProviderRequest,
-    CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, InstallationLock,
-    ManagedConfigProjection, ProfileBindingCollection, ProfileProviderBinding, ProjectionOwnership,
-    ProviderHubPaths, RelayResumeRequest, RenameAccountRequest, ResumeCommandRequest, SecretInput,
-    StoreOptions, VersionedFileStore,
+    CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, DeleteSessionsRequest,
+    InstallationLock, ManagedConfigProjection, ProfileBindingCollection, ProfileProviderBinding,
+    ProjectionOwnership, ProviderHubPaths, RelayResumeRequest, RenameAccountRequest,
+    ResumeCommandRequest, SecretInput, SessionAgeFilter, SessionPageRequest, SessionQueryRequest,
+    SessionSelectionRequest, SessionSort, StoreOptions, VersionedFileStore,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -252,6 +254,393 @@ fn static_fake_home_fixture_scans_expected_profiles() {
     assert!(sessions.iter().any(|s| s.id == "sid-a"));
     assert!(sessions.iter().any(|s| s.id == "broken"));
     assert!(sessions.iter().any(|s| s.id == "empty"));
+}
+
+#[test]
+fn session_listing_ignores_non_jsonl_binary_artifacts() {
+    let home = temp_home("session-binary-artifacts");
+    let profile = seed_codex_home(&home, "a");
+    fs::write(profile.join("sessions/.DS_Store"), [0xff, 0xfe, 0x00, 0x01]).unwrap();
+
+    let sessions = list_sessions(&home, "a").unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, "sid-a");
+}
+
+#[test]
+fn session_listing_tolerates_invalid_utf8_in_a_jsonl_header() {
+    let home = temp_home("session-invalid-utf8");
+    let profile = seed_codex_home(&home, "a");
+    fs::write(
+        profile.join("sessions/2026/06/01/session-invalid.jsonl"),
+        [0xff, 0xfe, b'\n'],
+    )
+    .unwrap();
+
+    let sessions = list_sessions(&home, "a").unwrap();
+
+    assert!(sessions
+        .iter()
+        .any(|session| session.id == "session-invalid"));
+    assert!(sessions.iter().any(|session| session.id == "sid-a"));
+}
+
+fn seed_old_session_set(home: &Path, profile_id: &str) -> (PathBuf, Vec<PathBuf>) {
+    let profile = seed_codex_home(home, profile_id);
+    let mut paths = vec![profile.join("sessions/2026/06/01/session-a.jsonl")];
+    for suffix in 'b'..='v' {
+        let path = profile.join(format!("sessions/2026/06/01/session-{suffix}.jsonl"));
+        write(
+            &path,
+            &format!(r#"{{"session_id":"sid-{suffix}","cwd":"/tmp/{suffix}"}}"#),
+        );
+        paths.push(path);
+    }
+    let old = SystemTime::now() - Duration::from_secs(10 * 24 * 60 * 60);
+    for path in &paths {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(old))
+            .unwrap();
+    }
+    (profile, paths)
+}
+
+#[test]
+fn queries_sessions_by_age_and_size_with_stable_pagination() {
+    let home = temp_home("session-query-sort");
+    let profile = seed_codex_home(&home, "a");
+    let now = SystemTime::now();
+    let cases = [
+        ("recent-small", 2, 80usize),
+        ("recent-large", 6, 256usize),
+        ("month", 20, 128usize),
+        ("old", 40, 512usize),
+    ];
+    for (id, age_days, bytes) in cases {
+        let path = profile.join(format!("sessions/2026/06/01/{id}.jsonl"));
+        write(
+            &path,
+            &format!("{{\"session_id\":\"{id}\"}}{}", " ".repeat(bytes)),
+        );
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(
+                fs::FileTimes::new()
+                    .set_modified(now - Duration::from_secs(age_days * 24 * 60 * 60)),
+            )
+            .unwrap();
+    }
+
+    let recent = query_sessions_page(
+        &home,
+        "a",
+        &SessionQueryRequest {
+            limit: Some(1),
+            cursor: None,
+            sort: Some(SessionSort::Largest),
+            age: Some(SessionAgeFilter::Last7Days),
+        },
+    )
+    .unwrap();
+    assert_eq!(recent.items[0].id, "recent-large");
+    let recent_second = query_sessions_page(
+        &home,
+        "a",
+        &SessionQueryRequest {
+            limit: Some(1),
+            cursor: recent.next_cursor,
+            sort: Some(SessionSort::Largest),
+            age: Some(SessionAgeFilter::Last7Days),
+        },
+    )
+    .unwrap();
+    assert_eq!(recent_second.items[0].id, "recent-small");
+
+    let old = query_sessions_page(
+        &home,
+        "a",
+        &SessionQueryRequest {
+            limit: Some(20),
+            cursor: None,
+            sort: Some(SessionSort::Smallest),
+            age: Some(SessionAgeFilter::OlderThan30Days),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        old.items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["old"]
+    );
+}
+
+#[test]
+fn selects_all_deletable_sessions_across_pages_for_the_current_filters() {
+    let home = temp_home("session-select-all-filtered");
+    let (_profile, paths) = seed_old_session_set(&home, "a");
+
+    let selected = query_deletable_session_paths(
+        &home,
+        "a",
+        &SessionSelectionRequest {
+            age: Some(SessionAgeFilter::Last30Days),
+            query: Some("sid-v".into()),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(selected, vec![paths.last().unwrap().clone()]);
+}
+
+#[test]
+fn deletes_an_eligible_session_and_removes_usage_sqlite_rows() {
+    let home = temp_home("session-direct-delete");
+    let (profile, paths) = seed_old_session_set(&home, "a");
+    let source = paths.last().unwrap().clone();
+    write(
+        &source,
+        "{\"type\":\"session_meta\",\"timestamp\":\"2026-06-28T00:00:00Z\",\"payload\":{\"id\":\"sid-v\"}}\n{\"type\":\"turn_context\",\"timestamp\":\"2026-06-28T00:00:01Z\",\"payload\":{\"turn_id\":\"turn-1\",\"cwd\":\"/repo/LAM\",\"model\":\"gpt-5\"}}\n{\"type\":\"event_msg\",\"timestamp\":\"2026-06-28T00:00:02Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":50,\"cached_input_tokens\":20,\"output_tokens\":10,\"total_tokens\":60},\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":40,\"output_tokens\":10,\"total_tokens\":110}}}}\n",
+    );
+    fs::File::options()
+        .write(true)
+        .open(&source)
+        .unwrap()
+        .set_times(
+            fs::FileTimes::new()
+                .set_modified(SystemTime::now() - Duration::from_secs(10 * 24 * 60 * 60)),
+        )
+        .unwrap();
+    refresh_usage_index(&home).unwrap();
+    write(
+        &profile.join("session_index.jsonl"),
+        "{\"id\":\"sid-v\",\"thread_name\":\"delete me\"}\n{\"id\":\"sid-a\",\"thread_name\":\"keep me\"}\n",
+    );
+    fs::remove_file(profile.join("state_5.sqlite")).unwrap();
+    let codex_db = rusqlite::Connection::open(profile.join("state_5.sqlite")).unwrap();
+    codex_db
+        .execute_batch(
+            "PRAGMA foreign_keys=ON;
+             CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL);
+             CREATE TABLE thread_dynamic_tools (thread_id TEXT NOT NULL, position INTEGER NOT NULL, PRIMARY KEY(thread_id, position));
+             CREATE TABLE thread_spawn_edges (parent_thread_id TEXT NOT NULL, child_thread_id TEXT NOT NULL PRIMARY KEY);
+             INSERT INTO threads VALUES ('sid-v', 'placeholder');
+             INSERT INTO thread_dynamic_tools VALUES ('sid-v', 0);
+             INSERT INTO thread_spawn_edges VALUES ('sid-v', 'child');",
+        )
+        .unwrap();
+    drop(codex_db);
+    let db = home.join(".codex/lam/usage/usage.sqlite3");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let before: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM usage_events WHERE source_file = ?1",
+            [source.to_string_lossy().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(before, 1);
+    drop(conn);
+
+    let deleted = delete_sessions(
+        &home,
+        &DeleteSessionsRequest {
+            profile_id: "a".into(),
+            paths: vec![source.clone()],
+        },
+    )
+    .unwrap();
+    assert_eq!(deleted.deleted_count, 1);
+    assert!(!source.exists());
+
+    let conn = rusqlite::Connection::open(db).unwrap();
+    for table in ["usage_events", "source_files"] {
+        let count: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE source_file = ?1"),
+                [source.to_string_lossy().to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "{table} retained a ghost row");
+    }
+    let thread_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM thread_summaries WHERE thread_label = 'sid-v'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(thread_count, 0, "thread_summaries retained a ghost row");
+    let codex_db = rusqlite::Connection::open(profile.join("state_5.sqlite")).unwrap();
+    for table in ["threads", "thread_dynamic_tools", "thread_spawn_edges"] {
+        let count: i64 = codex_db
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "{table} retained a Codex ghost row");
+    }
+    let index = fs::read_to_string(profile.join("session_index.jsonl")).unwrap();
+    assert!(!index.contains("sid-v"));
+    assert!(index.contains("sid-a"));
+}
+
+#[test]
+fn delete_preflight_and_sqlite_failure_leave_session_files_intact() {
+    let home = temp_home("session-delete-rollback");
+    let (_profile, paths) = seed_old_session_set(&home, "a");
+    let protected = paths.first().unwrap().clone();
+    let eligible = paths.last().unwrap().clone();
+    let protected_error = delete_sessions(
+        &home,
+        &DeleteSessionsRequest {
+            profile_id: "a".into(),
+            paths: vec![eligible.clone(), protected.clone()],
+        },
+    )
+    .unwrap_err();
+    assert_eq!(protected_error.code, "SESSION_DELETE_PROTECTED");
+    assert!(eligible.exists());
+    assert!(protected.exists());
+
+    refresh_usage_index(&home).unwrap();
+    let db = home.join(".codex/lam/usage/usage.sqlite3");
+    rusqlite::Connection::open(db)
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER fail_session_delete BEFORE DELETE ON source_files BEGIN SELECT RAISE(ABORT, 'forced delete failure'); END;",
+        )
+        .unwrap();
+    let db_error = delete_sessions(
+        &home,
+        &DeleteSessionsRequest {
+            profile_id: "a".into(),
+            paths: vec![eligible.clone()],
+        },
+    )
+    .unwrap_err();
+    assert_eq!(db_error.code, "USAGE_DB_ERROR");
+    assert!(eligible.exists());
+}
+
+#[test]
+fn codex_state_delete_failure_restores_file_and_usage_index() {
+    let home = temp_home("session-codex-db-rollback");
+    let (profile, paths) = seed_old_session_set(&home, "a");
+    let eligible = paths.last().unwrap().clone();
+    refresh_usage_index(&home).unwrap();
+    write(
+        &profile.join("session_index.jsonl"),
+        "{\"id\":\"sid-v\",\"thread_name\":\"must survive rollback\"}\n",
+    );
+    fs::remove_file(profile.join("state_5.sqlite")).unwrap();
+    let codex_db = rusqlite::Connection::open(profile.join("state_5.sqlite")).unwrap();
+    codex_db
+        .execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL);
+             CREATE TABLE thread_dynamic_tools (thread_id TEXT NOT NULL, position INTEGER NOT NULL, PRIMARY KEY(thread_id, position));
+             CREATE TABLE thread_spawn_edges (parent_thread_id TEXT NOT NULL, child_thread_id TEXT NOT NULL PRIMARY KEY);
+             INSERT INTO threads VALUES ('sid-v', 'placeholder');
+             CREATE TRIGGER fail_thread_delete BEFORE DELETE ON threads BEGIN SELECT RAISE(ABORT, 'forced Codex delete failure'); END;",
+        )
+        .unwrap();
+    drop(codex_db);
+
+    let error = delete_sessions(
+        &home,
+        &DeleteSessionsRequest {
+            profile_id: "a".into(),
+            paths: vec![eligible.clone()],
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "CODEX_SESSION_DB_ERROR");
+    assert!(eligible.exists());
+    let usage_db = rusqlite::Connection::open(home.join(".codex/lam/usage/usage.sqlite3")).unwrap();
+    let source_count: i64 = usage_db
+        .query_row(
+            "SELECT COUNT(*) FROM source_files WHERE source_file = ?1",
+            [eligible.to_string_lossy().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(source_count, 1);
+    assert!(fs::read_to_string(profile.join("session_index.jsonl"))
+        .unwrap()
+        .contains("sid-v"));
+}
+
+#[test]
+fn paginates_sessions_latest_first_with_a_stable_cursor() {
+    let home = temp_home("session-pagination");
+    let profile = seed_codex_home(&home, "a");
+    for id in ["b", "c", "d", "e", "f", "g"] {
+        write(
+            &profile.join(format!("sessions/2026/06/01/session-{id}.jsonl")),
+            &format!(r#"{{"session_id":"sid-{id}","cwd":"/tmp/{id}"}}"#),
+        );
+    }
+
+    let first = list_sessions_page(
+        &home,
+        "a",
+        &SessionPageRequest {
+            limit: Some(5),
+            cursor: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(first.items.len(), 5);
+    assert!(first.next_cursor.is_some());
+
+    let second = list_sessions_page(
+        &home,
+        "a",
+        &SessionPageRequest {
+            limit: Some(5),
+            cursor: first.next_cursor.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(second.items.len(), 2);
+    assert!(second.next_cursor.is_none());
+
+    let mut ids = first
+        .items
+        .into_iter()
+        .chain(second.items)
+        .map(|session| session.id)
+        .collect::<Vec<_>>();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec!["sid-a", "sid-b", "sid-c", "sid-d", "sid-e", "sid-f", "sid-g"]
+    );
+}
+
+#[test]
+fn rejects_an_invalid_session_page_limit() {
+    let home = temp_home("session-pagination-limit");
+    seed_codex_home(&home, "a");
+
+    let error = list_sessions_page(
+        &home,
+        "a",
+        &SessionPageRequest {
+            limit: Some(0),
+            cursor: None,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "INVALID_SESSION_PAGE_LIMIT");
 }
 
 #[test]

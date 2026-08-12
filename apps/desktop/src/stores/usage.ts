@@ -39,6 +39,7 @@ interface UsageState {
   refreshUsageSection: (section: UsageSection, req?: UsageDashboardRequest) => Promise<void>;
   refreshUsage: (req?: UsageDashboardRequest) => Promise<void>;
   selectUsageScope: (scopeId: string) => void;
+  invalidate: () => void;
 }
 
 const emptySectionLoading = (): UsageSectionLoading => ({
@@ -262,6 +263,17 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       sectionLoading: emptySectionLoading(),
       summaryRequestId: nextRequestId(),
       sectionRequestIds: {},
+    });
+  },
+
+  invalidate: () => {
+    set({
+      summary: null,
+      scopes: [],
+      activeScopeId: null,
+      summaryRequestId: nextRequestId(),
+      sectionRequestIds: {},
+      sectionLoading: emptySectionLoading(),
     });
   },
 

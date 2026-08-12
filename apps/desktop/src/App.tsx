@@ -21,7 +21,7 @@ import { ApiAccountConnectionEditor, ProviderCenter } from './components/provide
 import { ApiAccountFlow } from './components/api-account-flow';
 import { ThemeToggle } from './components/theme-toggle';
 import { UIButton } from './components/ui-button';
-import { sessionDisplayName } from './lib/format';
+import { formatError, relaySessionLabel, sessionDisplayName } from './lib/format';
 import { quotaRefreshProfileIds } from './lib/quota';
 import { routeTitle as routeTitleFromModule } from './routes/types';
 import { UsagePage } from './routes/usage';
@@ -36,6 +36,7 @@ import type {
   ProfileAttachPlanViewV2,
   AntigravityQuotaResponse,
   CodexAccount,
+  SessionPageCursor,
 } from './lib/types';
 import * as Views from './routes/views';
 
@@ -70,6 +71,19 @@ const emptyRenameReq: RenameAccountRequest = {
   toName: '',
   overwriteWrapper: false,
 };
+const HANDOFF_PAGE_SIZE = 5;
+
+function mergeSessionLists(...lists: CodexSession[][]): CodexSession[] {
+  const sessions = new Map<string, CodexSession>();
+  for (const list of lists) {
+    for (const session of list) {
+      sessions.set(`${session.accountId}:${session.id}:${session.path}`, session);
+    }
+  }
+  return [...sessions.values()].sort(
+    (left, right) => right.modifiedAt - left.modifiedAt || left.path.localeCompare(right.path),
+  );
+}
 function chatgptPlanTypeFromIdToken(idToken: unknown) {
   if (typeof idToken !== 'string') return '';
   const payload = idToken.split('.')[1];
@@ -147,8 +161,26 @@ export function App() {
     login,
     saveAccountNote,
   } = useAccountStore();
-  const { query, setQuery, resume, copyResume, openResume, openSessionDetails, filteredSessions } =
-    useSessionStore();
+  const {
+    sessions,
+    query,
+    setQuery,
+    resume,
+    hasMore: hasMoreSessions,
+    loading: loadingSessions,
+    loadMoreSessions,
+    mutationRunning,
+    storageSummary,
+    sort: sessionSort,
+    ageFilter: sessionAgeFilter,
+    setSort: setSessionSort,
+    setAgeFilter: setSessionAgeFilter,
+    selectAllFilteredSessions,
+    deleteSelectedSessions,
+    copyResume,
+    openResume,
+    openSessionDetails,
+  } = useSessionStore();
   const {
     quotas,
     refreshingQuotaIds,
@@ -182,8 +214,6 @@ export function App() {
 
   const selectedAccount = useAccountStore((s) => s.selectedAccount());
   const selectedSession = useSessionStore((s) => s.selectedSession());
-  const filtered = filteredSessions();
-
   const selectedSessionAccount = selectedSession
     ? accounts.find((a) => a.id === selectedSession.accountId)
     : undefined;
@@ -197,6 +227,9 @@ export function App() {
   const [handoffSessionId, setHandoffSessionId] = useState('');
   const [handoffSessions, setHandoffSessions] = useState<CodexSession[]>([]);
   const [handoffLoading, setHandoffLoading] = useState(false);
+  const [handoffCursor, setHandoffCursor] = useState<SessionPageCursor | null>(null);
+  const [handoffHasMore, setHandoffHasMore] = useState(false);
+  const handoffPinnedSessionRef = useRef<CodexSession | null>(null);
   const selectedHandoffSession = handoffSessions.find((s) => s.id === handoffSessionId);
   const [updatePatAccount, setUpdatePatAccount] = useState<CodexAccount | null>(null);
   const [updatePatSessionJson, setUpdatePatSessionJson] = useState('');
@@ -325,7 +358,10 @@ export function App() {
 
   // Reload sessions on account switch
   useEffect(() => {
-    if (selectedAccountId) useSessionStore.getState().loadSessions(selectedAccountId);
+    if (selectedAccountId) {
+      void useSessionStore.getState().loadSessions(selectedAccountId);
+      void useSessionStore.getState().loadSessionManagement(selectedAccountId);
+    }
   }, [selectedAccountId]);
 
   // Auto-refresh quotas — start/stop are stable store actions
@@ -354,7 +390,7 @@ export function App() {
     if (route !== 'usage') return;
     const key = usageSummaryRequestKey(usageRequest);
     const baseKey = usageSummaryBaseRequestKey(usageRequest);
-    if (loadedUsageSummaryKeyRef.current === key) return;
+    if (loadedUsageSummaryKeyRef.current === key && usageSummary) return;
     if (usageRequest.scopeId && defaultScopeUsageSummaryBaseKeyRef.current === baseKey) {
       loadedUsageSummaryKeyRef.current = key;
       return;
@@ -364,7 +400,7 @@ export function App() {
       defaultScopeUsageSummaryBaseKeyRef.current = baseKey;
     }
     void loadUsageSummary(usageRequest);
-  }, [loadUsageSummary, route, usageRequest]);
+  }, [loadUsageSummary, route, usageRequest, usageSummary]);
 
   const setUsageScope = useCallback(
     (scopeId: string) => {
@@ -470,17 +506,24 @@ export function App() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setHandoffLoading(true);
     api
-      .listSessions(handoffSourceId)
-      .then((items) => {
+      .listSessionsPage(handoffSourceId, { limit: HANDOFF_PAGE_SIZE })
+      .then((page) => {
         if (!active) return;
+        const items = mergeSessionLists(
+          page.items,
+          handoffPinnedSessionRef.current ? [handoffPinnedSessionRef.current] : [],
+        );
         setHandoffSessions(items);
+        setHandoffCursor(page.nextCursor ?? null);
+        setHandoffHasMore(Boolean(page.nextCursor));
         setHandoffSessionId((current) =>
           items.some((item) => item.id === current) ? current : (items[0]?.id ?? ''),
         );
       })
       .catch((err) => {
         if (!active) return;
-        useAppStore.getState().setError(String(err));
+        setHandoffHasMore(false);
+        useAppStore.getState().setError(formatError(err));
       })
       .finally(() => {
         if (!active) return;
@@ -492,10 +535,31 @@ export function App() {
     };
   }, [modal, handoffSourceId]);
 
+  async function loadMoreHandoffSessions() {
+    if (!handoffSourceId || !handoffCursor || handoffLoading) return;
+    setHandoffLoading(true);
+    try {
+      const page = await api.listSessionsPage(handoffSourceId, {
+        limit: HANDOFF_PAGE_SIZE,
+        cursor: handoffCursor,
+      });
+      setHandoffSessions((current) => mergeSessionLists(current, page.items));
+      setHandoffCursor(page.nextCursor ?? null);
+      setHandoffHasMore(Boolean(page.nextCursor));
+    } catch (err) {
+      useAppStore.getState().setError(formatError(err));
+    } finally {
+      setHandoffLoading(false);
+    }
+  }
+
   function changeHandoffSource(newSourceId: string) {
+    handoffPinnedSessionRef.current = null;
     setHandoffSourceId(newSourceId);
     setHandoffSessionId('');
     setHandoffSessions([]);
+    setHandoffCursor(null);
+    setHandoffHasMore(false);
     setHandoffLoading(true);
     if (newSourceId === handoffTargetId) {
       const other = accounts.find((a) => a.id !== newSourceId)?.id ?? '';
@@ -512,10 +576,13 @@ export function App() {
     }
     const target =
       requestedTarget ?? accounts.find((a) => a.id !== source)?.id ?? accounts[0]?.id ?? '';
+    handoffPinnedSessionRef.current = opts?.session ?? null;
     setHandoffSourceId(source);
     setHandoffTargetId(target);
     setHandoffSessionId(opts?.session?.id ?? '');
     setHandoffSessions(opts?.session ? [opts.session] : []);
+    setHandoffCursor(null);
+    setHandoffHasMore(false);
     setHandoffLoading(true);
     openModal('handoff');
   }
@@ -923,7 +990,8 @@ export function App() {
         ) : null}
         {appReady && route === 'sessions' ? (
           <Views.Sessions
-            sessions={filtered}
+            sessions={sessions}
+            storageSummary={storageSummary}
             accounts={accounts}
             selectedAccountId={selectedAccountId}
             setSelectedAccountId={setSelectedAccountId}
@@ -933,6 +1001,16 @@ export function App() {
             open={openResume}
             details={openSessionDetails}
             openHandoff={(session) => openHandoffModal({ session })}
+            hasMore={hasMoreSessions}
+            loading={loadingSessions}
+            loadMore={() => void loadMoreSessions()}
+            mutationRunning={mutationRunning}
+            sort={sessionSort}
+            ageFilter={sessionAgeFilter}
+            setSort={(sort) => void setSessionSort(sort)}
+            setAgeFilter={(age) => void setSessionAgeFilter(age)}
+            selectAllFiltered={selectAllFilteredSessions}
+            deleteSelected={(paths) => void deleteSelectedSessions(paths)}
           />
         ) : null}
         {appReady && route === 'usage' ? (
@@ -1652,7 +1730,7 @@ export function App() {
               >
                 {handoffSessions.map((s) => (
                   <option key={`${s.accountId}-${s.id}-${s.path}`} value={s.id}>
-                    {sessionDisplayName(s)} · {s.cwd ?? 'unknown cwd'} · {s.id}
+                    {relaySessionLabel(s)}
                   </option>
                 ))}
               </select>
@@ -1668,6 +1746,18 @@ export function App() {
               </select>
             </label>
           </div>
+          {handoffHasMore ? (
+            <div className="modalInlineActions">
+              <UIButton
+                type="button"
+                variant="ghost"
+                onClick={() => void loadMoreHandoffSessions()}
+                disabled={handoffLoading}
+              >
+                {handoffLoading ? 'Loading...' : 'Load earlier sessions'}
+              </UIButton>
+            </div>
+          ) : null}
           <div className="previewBox">
             <div className="previewLine">
               <span>Source</span>
@@ -1687,7 +1777,7 @@ export function App() {
               <span>Session</span>
               <strong>
                 {selectedHandoffSession
-                  ? sessionDisplayName(selectedHandoffSession)
+                  ? relaySessionLabel(selectedHandoffSession)
                   : handoffLoading
                     ? 'Loading...'
                     : 'No session selected'}

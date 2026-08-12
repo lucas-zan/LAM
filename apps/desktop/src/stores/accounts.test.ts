@@ -13,6 +13,7 @@ vi.mock('../lib/api', () => ({
   listProvidersV2: vi.fn(),
   listProfileProviderBindingsV2: vi.fn(),
   listSessions: vi.fn(),
+  listSessionsPage: vi.fn(),
   getProfileQuota: vi.fn(),
   listCachedQuotas: vi.fn(),
   syncTrayQuota: vi.fn(),
@@ -61,6 +62,7 @@ beforeEach(() => {
   vi.mocked(api.listProvidersV2).mockResolvedValue({ revision: 0, providers: [] });
   vi.mocked(api.listProfileProviderBindingsV2).mockResolvedValue([]);
   vi.mocked(api.listSessions).mockResolvedValue([]);
+  vi.mocked(api.listSessionsPage).mockResolvedValue({ items: [], nextCursor: null });
   vi.mocked(api.listCachedQuotas).mockResolvedValue([]);
   vi.mocked(api.relayResumeSession).mockResolvedValue({
     action: 'copied',
@@ -111,6 +113,34 @@ beforeEach(() => {
 });
 
 describe('useAccountStore', () => {
+  it('reads only the latest session from each account for Active source', async () => {
+    const account = {
+      id: 'a',
+      displayName: 'codex-a',
+      codexHome: '/tmp/.codex-a',
+      wrapperPath: null,
+      hasAuth: true,
+      hasConfig: true,
+      hasHistory: false,
+      sessionCount: 1,
+      latestSessionModifiedAt: 10,
+      managed: false,
+      isRelay: false,
+      relaySource: null,
+      relayIdentity: null,
+      providerId: 'openai',
+      model: 'gpt-5-codex',
+      authMode: 'config' as const,
+      renewalDate: null,
+      note: null,
+    };
+
+    await useAccountStore.getState().refreshActiveSession([account]);
+
+    expect(api.listSessionsPage).toHaveBeenCalledWith('a', { limit: 1 });
+    expect(api.listSessions).not.toHaveBeenCalled();
+  });
+
   it('tracks refresh state while the app refresh button is running', async () => {
     const accounts = deferred<Awaited<ReturnType<typeof api.listAccounts>>>();
     vi.mocked(api.listAccounts).mockReturnValue(accounts.promise);

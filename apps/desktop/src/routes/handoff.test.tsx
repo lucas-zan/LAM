@@ -627,4 +627,111 @@ describe('handoff navigation and entry points', () => {
     expect(screen.getByText('Implement relay session picker')).toBeTruthy();
     expect(screen.getByText('sid-a')).toBeTruthy();
   });
+
+  it('loads an older Sessions page on demand', () => {
+    const loadMore = vi.fn();
+    render(
+      <Sessions
+        sessions={sessions}
+        accounts={accounts}
+        selectedAccountId="a"
+        setSelectedAccountId={vi.fn()}
+        query=""
+        setQuery={vi.fn()}
+        copy={vi.fn()}
+        open={vi.fn()}
+        details={vi.fn()}
+        openHandoff={vi.fn()}
+        hasMore
+        loading={false}
+        loadMore={loadMore}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /load more sessions/i }));
+    expect(loadMore).toHaveBeenCalledTimes(1);
+    expect(screen.getByPlaceholderText('Search loaded sessions')).toBeTruthy();
+  });
+
+  it('filters, size-sorts, and permanently deletes eligible loaded sessions', async () => {
+    tauriDialogConfirm.mockResolvedValue(true);
+    const oldSessions = Array.from({ length: 21 }, (_, index) => ({
+      ...sessions[0],
+      id: `sid-${index + 1}`,
+      path: `/tmp/.codex-a/sessions/sid-${index + 1}.jsonl`,
+      modifiedAt: Math.floor(Date.now() / 1000) - (index === 20 ? 8 * 24 * 60 * 60 : index),
+      deletable: index === 20,
+      deletionProtectionReason: index === 20 ? null : 'Protected',
+    }));
+    const deleteSelected = vi.fn();
+    const selectAllFiltered = vi.fn().mockResolvedValue(['/tmp/.codex-a/sessions/sid-21.jsonl']);
+    const setSort = vi.fn();
+    const setAgeFilter = vi.fn();
+
+    render(
+      <Sessions
+        sessions={oldSessions}
+        storageSummary={{
+          evaluatedAt: Math.floor(Date.now() / 1000),
+          activeCount: 40,
+          activeBytes: 4_000,
+          eligibleCount: 12,
+          eligibleBytes: 1_200,
+          retainedRecentCount: 20,
+          minimumAgeDays: 7,
+        }}
+        accounts={accounts}
+        selectedAccountId="a"
+        setSelectedAccountId={vi.fn()}
+        query=""
+        setQuery={vi.fn()}
+        copy={vi.fn()}
+        open={vi.fn()}
+        details={vi.fn()}
+        openHandoff={vi.fn()}
+        sort="newest"
+        ageFilter="all"
+        setSort={setSort}
+        setAgeFilter={setAgeFilter}
+        deleteSelected={deleteSelected}
+        selectAllFiltered={selectAllFiltered}
+      />,
+    );
+
+    expect(screen.getByText(/40 active/)).toBeTruthy();
+    expect(screen.getByText(/12 deletable/)).toBeTruthy();
+    expect(screen.getAllByText('100 B').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'All time' })).toBeTruthy();
+    expect(screen.getByText('Showing 21 of 40 sessions')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Last active' })).toBeTruthy();
+    expect(document.querySelectorAll('.sessionsTable colgroup col')).toHaveLength(6);
+    expect(document.querySelector('.sessionColActions')).toBeTruthy();
+    expect(document.querySelector('time.sessionLastActive')?.getAttribute('datetime')).toBe(
+      new Date(oldSessions[0].modifiedAt * 1000).toISOString(),
+    );
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select all filtered deletable sessions' }),
+    );
+    await waitFor(() => expect(selectAllFiltered).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: 'Delete selected (1)' })).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select all filtered deletable sessions' }),
+    );
+    expect(screen.getByRole('button', { name: 'Delete selected (0)' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Older than 30 days' }));
+    expect(setAgeFilter).toHaveBeenCalledWith('olderThan30Days');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Sort sessions' }), {
+      target: { value: 'largest' },
+    });
+    expect(setSort).toHaveBeenCalledWith('largest');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select sid-21' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected (1)' }));
+    await waitFor(() =>
+      expect(deleteSelected).toHaveBeenCalledWith(['/tmp/.codex-a/sessions/sid-21.jsonl']),
+    );
+    expect(tauriDialogConfirm).toHaveBeenCalledWith(
+      expect.stringContaining('token and usage statistics will also be removed'),
+      expect.anything(),
+    );
+  });
 });

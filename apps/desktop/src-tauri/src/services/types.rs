@@ -1,6 +1,6 @@
 use super::error::{AppError, Result};
 use std::fs;
-use std::io::{BufRead, Read, Write};
+use std::io::{BufRead, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -175,7 +175,15 @@ pub(crate) fn session_files(root: &Path) -> Result<Vec<PathBuf>> {
             let file_type = entry.file_type()?;
             if file_type.is_dir() {
                 stack.push(path);
-            } else if file_type.is_file() {
+            } else if file_type.is_file()
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| {
+                        extension.eq_ignore_ascii_case("jsonl")
+                            || extension.eq_ignore_ascii_case("json")
+                    })
+            {
                 out.push(path);
             }
         }
@@ -194,18 +202,20 @@ pub(crate) fn modified_secs(path: &Path) -> Result<u64> {
 
 pub(crate) fn read_tail(path: &Path, max_bytes: usize) -> Result<String> {
     let mut file = fs::File::open(path)?;
-    let mut buf = Vec::new();
+    let file_len = file.metadata()?.len();
+    let start = file_len.saturating_sub(max_bytes as u64);
+    file.seek(SeekFrom::Start(start))?;
+    let mut buf = Vec::with_capacity((file_len - start) as usize);
     file.read_to_end(&mut buf)?;
-    let start = buf.len().saturating_sub(max_bytes);
-    Ok(String::from_utf8_lossy(&buf[start..]).to_string())
+    Ok(String::from_utf8_lossy(&buf).to_string())
 }
 
 pub(crate) fn read_first_line(path: &Path) -> Result<String> {
     let file = fs::File::open(path)?;
     let mut reader = std::io::BufReader::new(file);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    Ok(line)
+    let mut line = Vec::new();
+    reader.read_until(b'\n', &mut line)?;
+    Ok(String::from_utf8_lossy(&line).to_string())
 }
 
 pub(crate) fn validate_profile_name(input: &str) -> Result<String> {

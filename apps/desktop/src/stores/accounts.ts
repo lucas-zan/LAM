@@ -121,8 +121,12 @@ export const useAccountStore = create<AccountState>()(
         set({ activeSession: undefined });
         return;
       }
-      const results = await Promise.allSettled(accts.map((a) => api.listSessions(a.id)));
-      const all = results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
+      const results = await Promise.allSettled(
+        accts.map((account) => api.listSessionsPage(account.id, { limit: 1 })),
+      );
+      const all = results.flatMap((result) =>
+        result.status === 'fulfilled' ? result.value.items : [],
+      );
       const latest = all.sort((a, b) => b.modifiedAt - a.modifiedAt)[0];
       set({ activeSession: latest });
     },

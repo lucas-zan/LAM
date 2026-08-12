@@ -31,6 +31,7 @@ vi.mock('../lib/api', () => ({
   listCachedQuotas: vi.fn(),
   listProfileProviderBindingsV2: vi.fn(),
   listSessions: vi.fn(),
+  listSessionsPage: vi.fn(),
   openTerminalWithCommand: vi.fn(),
   openTerminalWithResume: vi.fn(),
   relayResumeSession: vi.fn(),
@@ -61,6 +62,22 @@ const account = {
   providerId: 'openai',
   model: 'gpt-5-codex',
   authMode: 'config',
+};
+
+const traySession = {
+  id: 's1',
+  accountId: 'main',
+  path: '/tmp/session.jsonl',
+  cwd: '/tmp',
+  modifiedAt: 1,
+  sizeBytes: 1,
+  model: 'gpt-5-codex',
+  summary: null,
+  originalProviderId: 'openai',
+  originalModel: 'gpt-5-codex',
+  currentProviderId: 'openai',
+  currentModel: 'gpt-5-codex',
+  providerMismatch: false,
 };
 
 const cachedQuota = {
@@ -127,23 +144,11 @@ beforeEach(() => {
   vi.mocked(api.listCachedAccounts).mockResolvedValue([account]);
   vi.mocked(api.listAccounts).mockResolvedValue([account]);
   vi.mocked(api.listCachedQuotas).mockResolvedValue([cachedQuota]);
-  vi.mocked(api.listSessions).mockResolvedValue([
-    {
-      id: 's1',
-      accountId: 'main',
-      path: '/tmp/session.jsonl',
-      cwd: '/tmp',
-      modifiedAt: 1,
-      sizeBytes: 1,
-      model: 'gpt-5-codex',
-      summary: null,
-      originalProviderId: 'openai',
-      originalModel: 'gpt-5-codex',
-      currentProviderId: 'openai',
-      currentModel: 'gpt-5-codex',
-      providerMismatch: false,
-    },
-  ]);
+  vi.mocked(api.listSessions).mockResolvedValue([traySession]);
+  vi.mocked(api.listSessionsPage).mockResolvedValue({
+    items: [traySession],
+    nextCursor: null,
+  });
   vi.mocked(api.getProfileQuota).mockResolvedValue(freshQuota);
   vi.mocked(api.listProfileProviderBindingsV2).mockResolvedValue([]);
   vi.mocked(api.getAuthMode).mockResolvedValue('oauth');
@@ -159,6 +164,13 @@ afterEach(() => {
 });
 
 describe('TrayQuotaPanel', () => {
+  it('reads only the latest session per account for the active source', async () => {
+    render(<TrayQuotaPanel />);
+
+    await waitFor(() => expect(api.listSessionsPage).toHaveBeenCalledWith('main', { limit: 1 }));
+    expect(api.listSessions).not.toHaveBeenCalled();
+  });
+
   it('does not start overlapping Antigravity auto-refresh requests', async () => {
     const pending = deferred<{ ok: boolean; models: never[] }>();
     vi.mocked(api.getAntigravityQuota).mockReturnValue(pending.promise);

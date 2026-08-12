@@ -50,6 +50,57 @@ export type CodexSession = {
   currentProviderId?: string | null;
   currentModel?: string | null;
   providerMismatch: boolean;
+  deletable?: boolean;
+  deletionProtectionReason?: string | null;
+};
+
+export type SessionPageCursor = {
+  modifiedAt: number;
+  sizeBytes?: number | null;
+  path: string;
+};
+
+export type SessionSort = 'newest' | 'largest' | 'smallest';
+export type SessionAgeFilter = 'all' | 'last7Days' | 'last30Days' | 'olderThan30Days';
+
+export type SessionPageRequest = {
+  limit?: number | null;
+  cursor?: SessionPageCursor | null;
+};
+
+export type SessionQueryRequest = SessionPageRequest & {
+  sort?: SessionSort | null;
+  age?: SessionAgeFilter | null;
+};
+
+export type SessionSelectionRequest = {
+  age?: SessionAgeFilter | null;
+  query?: string | null;
+};
+
+export type SessionPage = {
+  items: CodexSession[];
+  nextCursor?: SessionPageCursor | null;
+};
+
+export type SessionStorageSummary = {
+  evaluatedAt: number;
+  activeCount: number;
+  activeBytes: number;
+  eligibleCount: number;
+  eligibleBytes: number;
+  retainedRecentCount: number;
+  minimumAgeDays: number;
+};
+
+export type DeleteSessionsRequest = {
+  profileId: string;
+  paths: string[];
+};
+
+export type DeleteSessionsResult = {
+  deletedCount: number;
+  deletedBytes: number;
 };
 
 export type OperationPlan = {

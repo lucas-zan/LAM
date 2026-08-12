@@ -16,6 +16,9 @@ import type {
   AccountNoteUpdate,
   CodexAccount,
   CodexSession,
+  SessionAgeFilter,
+  SessionSort,
+  SessionStorageSummary,
   DivergedSessionStrategy,
   HealthCheck,
   ProviderProfileViewV2,
@@ -60,6 +63,18 @@ async function confirmResetQuota(displayName: string): Promise<boolean> {
   if (inTauri()) {
     try {
       return await tauriConfirm(message, { title: 'Reset Quota', kind: 'warning' });
+    } catch (err) {
+      console.warn('Tauri confirm dialog failed; falling back to window.confirm', err);
+    }
+  }
+  return window.confirm(message);
+}
+
+async function confirmSessionDelete(count: number): Promise<boolean> {
+  const message = `Permanently delete ${count} selected session${count === 1 ? '' : 's'}? Associated token and usage statistics will also be removed. This cannot be undone.`;
+  if (inTauri()) {
+    try {
+      return await tauriConfirm(message, { title: 'Delete Sessions', kind: 'warning' });
     } catch (err) {
       console.warn('Tauri confirm dialog failed; falling back to window.confirm', err);
     }
@@ -1106,7 +1121,7 @@ export function Accounts({
                             ? 'Main profile is the active auth slot'
                             : isActiveAccount
                               ? 'This account is already active'
-                            : 'Switch to this account'
+                              : 'Switch to this account'
                         }
                         onClick={(e) => {
                           e.stopPropagation();
@@ -1307,8 +1322,30 @@ function AccountNoteTitle({
   );
 }
 
+function formatStorageBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024;
+  let unit = units[0];
+  for (let index = 1; index < units.length && value >= 1024; index += 1) {
+    value /= 1024;
+    unit = units[index];
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit}`;
+}
+
+const sessionLastActiveFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
+function formatSessionLastActive(modifiedAt: number): string {
+  return sessionLastActiveFormatter.format(new Date(modifiedAt * 1000));
+}
+
 export function Sessions({
   sessions,
+  storageSummary = null,
   accounts,
   selectedAccountId,
   setSelectedAccountId,
@@ -1318,8 +1355,19 @@ export function Sessions({
   open,
   details,
   openHandoff,
+  hasMore = false,
+  loading = false,
+  loadMore = () => {},
+  mutationRunning = false,
+  sort = 'newest',
+  setSort = () => {},
+  ageFilter = 'all',
+  setAgeFilter = () => {},
+  selectAllFiltered = async () => [],
+  deleteSelected = () => {},
 }: {
   sessions: CodexSession[];
+  storageSummary?: SessionStorageSummary | null;
   accounts: CodexAccount[];
   selectedAccountId: string;
   setSelectedAccountId: (id: string) => void;
@@ -1329,7 +1377,76 @@ export function Sessions({
   open: (session: CodexSession) => void;
   details: (session: CodexSession) => void;
   openHandoff: (session: CodexSession) => void;
+  hasMore?: boolean;
+  loading?: boolean;
+  loadMore?: () => void;
+  mutationRunning?: boolean;
+  sort?: SessionSort;
+  setSort?: (sort: SessionSort) => void;
+  ageFilter?: SessionAgeFilter;
+  setAgeFilter?: (age: SessionAgeFilter) => void;
+  selectAllFiltered?: () => Promise<string[]>;
+  deleteSelected?: (paths: string[]) => void;
 }) {
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [allFilteredSelected, setAllFilteredSelected] = useState(false);
+  const [selectionLoading, setSelectionLoading] = useState(false);
+  const selectAllRef = useRef<HTMLInputElement>(null);
+  const visibleSessions = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return sessions;
+    return sessions.filter((session) =>
+      [session.id, session.threadName, session.cwd, session.summary, session.path, session.model]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(needle),
+    );
+  }, [query, sessions]);
+
+  function changeAccount(accountId: string) {
+    setSelectedPaths([]);
+    setAllFilteredSelected(false);
+    setSelectedAccountId(accountId);
+  }
+
+  function isArchivable(session: CodexSession): boolean {
+    return session.deletable === true;
+  }
+
+  function toggleSelected(path: string) {
+    setAllFilteredSelected(false);
+    setSelectedPaths((current) =>
+      current.includes(path) ? current.filter((item) => item !== path) : [...current, path],
+    );
+  }
+
+  const eligibleLoadedPaths = sessions
+    .filter((session) => isArchivable(session))
+    .map((session) => session.path);
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = selectedPaths.length > 0 && !allFilteredSelected;
+    }
+  }, [allFilteredSelected, selectedPaths.length]);
+
+  async function toggleAllFiltered() {
+    if (allFilteredSelected) {
+      setSelectedPaths([]);
+      setAllFilteredSelected(false);
+      return;
+    }
+    setSelectionLoading(true);
+    try {
+      const paths = await selectAllFiltered();
+      setSelectedPaths(paths);
+      setAllFilteredSelected(paths.length > 0);
+    } finally {
+      setSelectionLoading(false);
+    }
+  }
+
   return (
     <section className="panel pagePanel">
       <div className="panelHead panelHead--stack">
@@ -1337,7 +1454,7 @@ export function Sessions({
         <div className="sessionsTools">
           <select
             value={selectedAccountId}
-            onChange={(e) => setSelectedAccountId(e.target.value)}
+            onChange={(e) => changeAccount(e.target.value)}
             aria-label="Filter by account"
           >
             {accounts.map((account) => (
@@ -1347,31 +1464,167 @@ export function Sessions({
             ))}
           </select>
           <input
-            placeholder="Search cwd / summary / id"
+            placeholder="Search loaded sessions"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setSelectedPaths([]);
+              setAllFilteredSelected(false);
+              setQuery(e.target.value);
+            }}
           />
         </div>
       </div>
 
-      {sessions.length ? (
+      <div className="sessionStorageBar">
+        <div className="sessionStorageStats">
+          <strong>
+            {storageSummary
+              ? `${storageSummary.activeCount} active · ${formatStorageBytes(storageSummary.activeBytes)}`
+              : 'Calculating active storage...'}
+          </strong>
+          <span>
+            {storageSummary
+              ? `${storageSummary.eligibleCount} deletable · ${formatStorageBytes(storageSummary.eligibleBytes)}`
+              : 'Safe delete candidates pending'}
+          </span>
+        </div>
+        <div className="usageScopeTabs usageScopeTabs--segmented sessionScopeTabs">
+          {(
+            [
+              ['all', 'All time'],
+              ['last7Days', 'Last 7 days'],
+              ['last30Days', 'Last 30 days'],
+              ['olderThan30Days', 'Older than 30 days'],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={`usageScopeTab ${ageFilter === value ? 'usageScopeTab--active' : ''}`}
+              onClick={() => {
+                setSelectedPaths([]);
+                setAllFilteredSelected(false);
+                setAgeFilter(value);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="sessionArchiveActions">
+          <span>
+            Latest {storageSummary?.retainedRecentCount ?? 20} and last{' '}
+            {storageSummary?.minimumAgeDays ?? 7} days are protected.
+          </span>
+          <div className="sessionArchiveButtons">
+            <select
+              aria-label="Sort sessions"
+              value={sort}
+              onChange={(event) => {
+                setSelectedPaths([]);
+                setSort(event.target.value as SessionSort);
+              }}
+            >
+              <option value="newest">Newest first</option>
+              <option value="largest">Largest first</option>
+              <option value="smallest">Smallest first</option>
+            </select>
+            <UIButton
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={!eligibleLoadedPaths.length || mutationRunning}
+              onClick={() => {
+                setSelectedPaths(eligibleLoadedPaths);
+                setAllFilteredSelected(false);
+              }}
+            >
+              Select deletable loaded
+            </UIButton>
+            <UIButton
+              type="button"
+              variant="danger"
+              size="sm"
+              disabled={!selectedPaths.length || mutationRunning}
+              onClick={async () => {
+                if (!(await confirmSessionDelete(selectedPaths.length))) return;
+                deleteSelected(selectedPaths);
+                setSelectedPaths([]);
+                setAllFilteredSelected(false);
+              }}
+            >
+              Delete selected ({selectedPaths.length})
+            </UIButton>
+          </div>
+        </div>
+      </div>
+
+      <div className="sessionResultsMeta">
+        <span>
+          {storageSummary && ageFilter === 'all'
+            ? `Showing ${sessions.length} of ${storageSummary.activeCount} sessions`
+            : `Showing ${sessions.length} loaded sessions`}
+        </span>
+        <span>
+          {hasMore ? 'More matching sessions are available.' : 'All matching sessions are loaded.'}
+        </span>
+      </div>
+
+      {visibleSessions.length ? (
         <div className="tableWrap">
           <table className="sessionsTable">
+            <colgroup>
+              <col className="sessionColSession" />
+              <col className="sessionColSize" />
+              <col className="sessionColLastActive" />
+              <col className="sessionColCwd" />
+              <col className="sessionColProvider" />
+              <col className="sessionColActions" />
+            </colgroup>
             <thead>
               <tr>
-                <th>Session</th>
+                <th>
+                  <span className="sessionHeaderSelect">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      aria-label="Select all filtered deletable sessions"
+                      checked={allFilteredSelected && selectedPaths.length > 0}
+                      disabled={mutationRunning || selectionLoading}
+                      onChange={() => void toggleAllFiltered()}
+                    />
+                    Session
+                  </span>
+                </th>
+                <th>Size</th>
+                <th>Last active</th>
                 <th>cwd</th>
                 <th>Provider</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {sessions.map((session) => {
+              {visibleSessions.map((session) => {
                 const displayName = sessionDisplayName(session);
+                const archivable = isArchivable(session);
                 return (
                   <tr key={`${session.accountId}-${session.path}`} onClick={() => details(session)}>
                     <td>
                       <div className="sessionIdCell">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${session.id}`}
+                          checked={selectedPaths.includes(session.path)}
+                          disabled={!archivable || mutationRunning}
+                          title={
+                            archivable
+                              ? 'Select for permanent deletion'
+                              : (session.deletionProtectionReason ??
+                                'Protected by recent-session retention policy')
+                          }
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={() => toggleSelected(session.path)}
+                        />
                         <strong className="cellTrunc" title={displayName}>
                           {displayName}
                         </strong>
@@ -1397,6 +1650,16 @@ export function Sessions({
                         <span className="badge warn">provider mismatch</span>
                       ) : null}
                     </td>
+                    <td className="mono">{formatStorageBytes(session.sizeBytes)}</td>
+                    <td>
+                      <time
+                        className="sessionLastActive"
+                        dateTime={new Date(session.modifiedAt * 1000).toISOString()}
+                        title={new Date(session.modifiedAt * 1000).toLocaleString()}
+                      >
+                        {formatSessionLastActive(session.modifiedAt)}
+                      </time>
+                    </td>
                     <td>
                       <span className="mono cellTrunc" title={session.cwd ?? 'unknown'}>
                         {session.cwd ?? 'unknown'}
@@ -1418,42 +1681,44 @@ export function Sessions({
                     </td>
                     <td>
                       <div className="rowActions">
-                        <UIButton
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            copy(session);
-                          }}
-                        >
-                          Copy
-                        </UIButton>
-                        <UIButton
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            open(session);
-                          }}
-                        >
-                          &gt;_ Terminal
-                        </UIButton>
-                        <UIButton
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openHandoff(session);
-                          }}
-                        >
-                          Relay To...
-                        </UIButton>
-                        <UIButton
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            details(session);
-                          }}
-                        >
-                          ⓘ Details
-                        </UIButton>
+                        <>
+                          <UIButton
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copy(session);
+                            }}
+                          >
+                            Copy
+                          </UIButton>
+                          <UIButton
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              open(session);
+                            }}
+                          >
+                            &gt;_ Terminal
+                          </UIButton>
+                          <UIButton
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openHandoff(session);
+                            }}
+                          >
+                            Relay To...
+                          </UIButton>
+                          <UIButton
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              details(session);
+                            }}
+                          >
+                            ⓘ Details
+                          </UIButton>
+                        </>
                       </div>
                     </td>
                   </tr>
@@ -1463,14 +1728,20 @@ export function Sessions({
           </table>
         </div>
       ) : (
-        <div className="emptyBox">No sessions. Unknown cwd values will display as `unknown`.</div>
+        <div className="emptyBox">No sessions match this query.</div>
       )}
+      {hasMore ? (
+        <div className="sessionsPageActions">
+          <UIButton type="button" onClick={loadMore} disabled={loading}>
+            {loading ? 'Loading...' : 'Load more sessions'}
+          </UIButton>
+        </div>
+      ) : null}
     </section>
   );
 }
 
-const ANTIGRAVITY_PORT_COMMAND =
-  `lsof -Pan -p "$(pgrep -f '/Antigravity.app/.*/language_server.*--standalone' | head -n 1)" -iTCP -sTCP:LISTEN`;
+const ANTIGRAVITY_PORT_COMMAND = `lsof -Pan -p "$(pgrep -f '/Antigravity.app/.*/language_server.*--standalone' | head -n 1)" -iTCP -sTCP:LISTEN`;
 
 export function Settings({
   health,

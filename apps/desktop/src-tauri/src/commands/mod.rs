@@ -7,6 +7,7 @@ use localagentmanager_core::{
     compact_usage_db as core_compact_usage_db, create_account_plan as core_create_account_plan,
     create_provider as core_create_provider, create_relay_plan as core_create_relay_plan,
     delete_account as core_delete_account, delete_provider as core_delete_provider,
+    delete_sessions as core_delete_sessions,
     execute_attach_provider_to_profile as core_execute_attach_provider_to_profile,
     execute_create_account as core_execute_create_account,
     execute_create_relay as core_execute_create_relay,
@@ -21,12 +22,15 @@ use localagentmanager_core::{
     get_usage_summary as core_get_usage_summary, get_usage_threads as core_get_usage_threads,
     list_accounts as core_list_accounts, list_cached_accounts as core_list_cached_accounts,
     list_cached_quotas as core_list_cached_quotas, list_providers as core_list_providers,
-    list_sessions as core_list_sessions, list_terminal_targets as core_list_terminal_targets,
+    list_sessions as core_list_sessions, list_sessions_page as core_list_sessions_page,
+    list_terminal_targets as core_list_terminal_targets,
     open_terminal_for_login as core_open_terminal_for_login,
     open_terminal_with_command as core_open_terminal_with_command,
     open_terminal_with_resume as core_open_terminal_with_resume,
     plan_attach_provider_to_profile as core_plan_attach_provider_to_profile,
-    process_uploaded_credentials, read_pat_metadata,
+    process_uploaded_credentials,
+    query_deletable_session_paths as core_query_deletable_session_paths,
+    query_sessions_page as core_query_sessions_page, read_pat_metadata,
     refresh_account_usage_snapshot_index as core_refresh_account_usage_snapshot_index,
     refresh_all_quotas as core_refresh_all_quotas,
     refresh_usage_index_with_options as core_refresh_usage_index,
@@ -34,6 +38,7 @@ use localagentmanager_core::{
     rename_account_plan as core_rename_account_plan,
     reset_profile_quota as core_reset_profile_quota, reset_usage_index as core_reset_usage_index,
     resolve_home_root, selected_terminal_target_id as core_selected_terminal_target_id,
+    session_storage_summary as core_session_storage_summary,
     set_selected_terminal_target_id as core_set_selected_terminal_target_id,
     switch_to_pat_account as core_switch_to_pat_account, test_provider as core_test_provider,
     try_refresh_usage_index_with_options as core_try_refresh_usage_index,
@@ -42,14 +47,17 @@ use localagentmanager_core::{
     AddPatAccountResult, AddSessionProfileAccountRequest, AppError, AttachProviderRequest,
     AttachProviderResult, AuthMetadata, CodexAccount, CodexSession, CpaExport,
     CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, CreateResult,
-    DeleteAccountRequest, DeleteAccountResult, OperationPlan, ProviderProfile, QuotaRefreshResult,
-    RelayResumeRequest, RelayResumeResult, RenameAccountRequest, RenameAccountResult,
-    ResetQuotaResult, ResumeCommand, ResumeCommandRequest, TerminalTarget, TokenExpirationStatus,
+    DeleteAccountRequest, DeleteAccountResult, DeleteSessionsRequest, DeleteSessionsResult,
+    OperationPlan, ProviderProfile, QuotaRefreshResult, RelayResumeRequest, RelayResumeResult,
+    RenameAccountRequest, RenameAccountResult, ResetQuotaResult, ResumeCommand,
+    ResumeCommandRequest, SessionPage, SessionPageRequest, SessionQueryRequest,
+    SessionSelectionRequest, SessionStorageSummary, TerminalTarget, TokenExpirationStatus,
     UpdateProviderRequest, UploadedCredentials, UsageActivityBucket, UsageCallRow, UsageDashboard,
     UsageDashboardRequest, UsageDashboardResponse, UsageDiagnostics, UsageInsights,
     UsagePagedResponse, UsageQuotaSnapshot, UsageRateCardEntry, UsageRefreshResult,
     UsageScopesResponse, UsageSummary, UsageSummaryRequest, UsageThreadSummary,
 };
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use tauri::Emitter;
 
@@ -268,6 +276,47 @@ pub async fn list_cached_accounts() -> Result<Vec<CodexAccount>, AppError> {
 pub async fn list_sessions(account_id: String) -> Result<Vec<CodexSession>, AppError> {
     let home = home_root()?;
     run_blocking(move || core_list_sessions(&home, &account_id)).await
+}
+
+#[tauri::command]
+pub async fn list_sessions_page(
+    account_id: String,
+    req: SessionPageRequest,
+) -> Result<SessionPage, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_list_sessions_page(&home, &account_id, &req)).await
+}
+
+#[tauri::command]
+pub async fn query_sessions_page(
+    account_id: String,
+    req: SessionQueryRequest,
+) -> Result<SessionPage, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_query_sessions_page(&home, &account_id, &req)).await
+}
+
+#[tauri::command]
+pub async fn delete_sessions(req: DeleteSessionsRequest) -> Result<DeleteSessionsResult, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_delete_sessions(&home, &req)).await
+}
+
+#[tauri::command]
+pub async fn query_deletable_session_paths(
+    account_id: String,
+    req: SessionSelectionRequest,
+) -> Result<Vec<PathBuf>, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_query_deletable_session_paths(&home, &account_id, &req)).await
+}
+
+#[tauri::command]
+pub async fn get_session_storage_summary(
+    account_id: String,
+) -> Result<SessionStorageSummary, AppError> {
+    let home = home_root()?;
+    run_blocking(move || core_session_storage_summary(&home, &account_id)).await
 }
 
 #[tauri::command]

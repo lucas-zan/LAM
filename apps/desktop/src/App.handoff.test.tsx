@@ -13,6 +13,7 @@ import type {
   CodexSession,
   ProfileProviderBindingViewV2,
   ProviderProfileViewV2,
+  SessionPage,
   UsageDashboard,
 } from './lib/types';
 
@@ -30,6 +31,10 @@ vi.mock('./lib/api', () => ({
   getApiAccountConnectionV2: vi.fn(),
   updateApiAccountConnectionV2: vi.fn(),
   listSessions: vi.fn(),
+  listSessionsPage: vi.fn(),
+  querySessionsPage: vi.fn(),
+  getSessionStorageSummary: vi.fn(),
+  deleteSessions: vi.fn(),
   getProfileQuota: vi.fn(),
   resetProfileQuota: vi.fn(),
   listCachedQuotas: vi.fn(),
@@ -275,6 +280,13 @@ function session(accountId: string, id: string, modifiedAt: number): CodexSessio
   };
 }
 
+function sessionPage(
+  items: CodexSession[],
+  nextCursor: SessionPage['nextCursor'] = null,
+): SessionPage {
+  return { items, nextCursor };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
@@ -324,6 +336,18 @@ beforeEach(() => {
     selectedSessionId: '',
     query: '',
     resume: null,
+    loadedAccountId: '',
+    cursor: null,
+    hasMore: false,
+    loading: false,
+    loadGeneration: 0,
+    sort: 'newest',
+    ageFilter: 'all',
+    managementAccountId: '',
+    managementLoading: false,
+    managementGeneration: 0,
+    mutationRunning: false,
+    storageSummary: null,
   });
   useQuotaStore.setState({
     quotas: [],
@@ -356,6 +380,21 @@ beforeEach(() => {
     homeRoot: '/tmp',
   });
   vi.mocked(api.listAccounts).mockResolvedValue(accounts);
+  vi.mocked(api.listSessionsPage).mockImplementation(async (accountId) =>
+    sessionPage(await api.listSessions(accountId)),
+  );
+  vi.mocked(api.querySessionsPage).mockImplementation(async (accountId) =>
+    sessionPage(await api.listSessions(accountId)),
+  );
+  vi.mocked(api.getSessionStorageSummary).mockResolvedValue({
+    evaluatedAt: 0,
+    activeCount: 0,
+    activeBytes: 0,
+    eligibleCount: 0,
+    eligibleBytes: 0,
+    retainedRecentCount: 20,
+    minimumAgeDays: 7,
+  });
   vi.mocked(api.listProvidersV2).mockResolvedValue({ revision: 0, providers: [] });
   vi.mocked(api.listProfileProviderBindingsV2).mockResolvedValue([]);
   vi.mocked(api.listCachedQuotas).mockResolvedValue([]);
@@ -531,6 +570,61 @@ afterEach(() => {
 });
 
 describe('App handoff modal', () => {
+  it('loads handoff sessions in pages and appends older sessions on demand', async () => {
+    const firstPage = [1, 2, 3, 4, 5].map((index) => session('main', `main-${index}`, index));
+    const secondPage = [session('main', 'main-6', 0)];
+    const pageCalls: Array<{ accountId: string; cursor: SessionPage['nextCursor'] }> = [];
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    vi.mocked(api.listSessionsPage).mockImplementation(async (accountId, request) => {
+      if (request?.limit !== 5) return sessionPage([]);
+      pageCalls.push({ accountId, cursor: request?.cursor ?? null });
+      return request?.cursor
+        ? sessionPage(secondPage)
+        : sessionPage(firstPage, { modifiedAt: 1, path: '/tmp/main/main-1.jsonl' });
+    });
+
+    render(<App />);
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: 'Handoff' }));
+    await screen.findByText(/main-1 thread name/);
+    const sessionSelect = screen.getByLabelText('Session') as HTMLSelectElement;
+    expect(sessionSelect).toHaveProperty('options.length', 5);
+    expect(sessionSelect.options[0]?.textContent).toBe('main-5 · main-5 thread name · /repo/main');
+    expect(screen.getByRole('button', { name: /load earlier sessions/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /load earlier sessions/i }));
+    await screen.findByText(/main-6 thread name/);
+
+    expect(screen.getByLabelText('Session')).toHaveProperty('options.length', 6);
+    expect(pageCalls).toEqual([
+      { accountId: 'main', cursor: null },
+      { accountId: 'main', cursor: { modifiedAt: 1, path: '/tmp/main/main-1.jsonl' } },
+    ]);
+  });
+
+  it('shows a readable error when loading handoff sessions fails', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    vi.mocked(api.listSessionsPage).mockRejectedValue({
+      code: 'IO_ERROR',
+      message: 'Could not read the main session page',
+      recoverable: true,
+    });
+
+    render(<App />);
+    const accountCard = (await screen.findByText('codex-c')).closest('article');
+    expect(accountCard).not.toBeNull();
+
+    fireEvent.click(within(accountCard!).getByRole('button', { name: 'Handoff' }));
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not read the main session page')).toBeTruthy(),
+    );
+    expect(screen.queryByText('[object Object]')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Handoff Session' })).toBeTruthy();
+  });
+
   it('does not start overlapping Antigravity auto-refresh requests', async () => {
     const pending = deferred<{ ok: boolean; models: never[] }>();
     vi.mocked(api.getAntigravityQuota).mockReturnValue(pending.promise);
@@ -1466,8 +1560,7 @@ describe('App handoff modal', () => {
   });
 
   it('loads, validates, saves, and clears the Antigravity port setting', async () => {
-    const command =
-      `lsof -Pan -p "$(pgrep -f '/Antigravity.app/.*/language_server.*--standalone' | head -n 1)" -iTCP -sTCP:LISTEN`;
+    const command = `lsof -Pan -p "$(pgrep -f '/Antigravity.app/.*/language_server.*--standalone' | head -n 1)" -iTCP -sTCP:LISTEN`;
     vi.mocked(api.getAuthMode).mockResolvedValue('pat');
     vi.mocked(api.listSessions).mockResolvedValue([]);
     vi.mocked(api.getAntigravityPort).mockResolvedValue(62891);

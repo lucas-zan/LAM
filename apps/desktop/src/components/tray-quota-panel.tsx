@@ -9,7 +9,7 @@ import {
   listCachedAccounts,
   listCachedQuotas,
   listProfileProviderBindingsV2,
-  listSessions,
+  listSessionsPage,
   openTerminalWithCommand,
   openTerminalWithResume,
   relayResumeSession,
@@ -1062,10 +1062,10 @@ export function TrayQuotaPanel() {
 
   const loadActiveSession = useCallback(async (accountData: CodexAccount[]) => {
     const results = await Promise.allSettled(
-      accountData.map((account) => listSessions(account.id)),
+      accountData.map((account) => listSessionsPage(account.id, { limit: 1 })),
     );
     const allSessions = results.flatMap((result) =>
-      result.status === 'fulfilled' ? result.value : [],
+      result.status === 'fulfilled' ? result.value.items : [],
     );
     setActiveSession(allSessions.sort((a, b) => b.modifiedAt - a.modifiedAt)[0]);
   }, []);
