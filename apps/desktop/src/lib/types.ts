@@ -62,6 +62,7 @@ export type SessionPageCursor = {
 
 export type SessionSort = 'newest' | 'largest' | 'smallest';
 export type SessionAgeFilter = 'all' | 'last7Days' | 'last30Days' | 'olderThan30Days';
+export type CodexLaunchPermissionPreset = 'askForApproval' | 'approveForMe' | 'fullAccess';
 
 export type SessionPageRequest = {
   limit?: number | null;

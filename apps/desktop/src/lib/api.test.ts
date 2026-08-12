@@ -13,6 +13,8 @@ import {
   getSessionStorageSummary,
   deleteSessions,
   queryDeletableSessionPaths,
+  getCodexLaunchPermissionPreset,
+  setCodexLaunchPermissionPreset,
 } from './api';
 import type { UploadedCredentials, AuthMetadata, TokenExpirationStatus } from './types';
 
@@ -93,6 +95,27 @@ describe('PAT API functions', () => {
           limit: 5,
           cursor: { modifiedAt: 10, path: '/tmp/main/session.jsonl' },
         },
+      });
+    } finally {
+      if (descriptor) Object.defineProperty(window, '__TAURI_INTERNALS__', descriptor);
+      else delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+
+  it('uses exact Codex launch permission setting payloads', async () => {
+    mockInvoke.mockResolvedValue('askForApproval');
+    const descriptor = Object.getOwnPropertyDescriptor(window, '__TAURI_INTERNALS__');
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: { invoke: mockInvoke },
+    });
+
+    try {
+      await getCodexLaunchPermissionPreset();
+      await setCodexLaunchPermissionPreset('approveForMe');
+      expect(mockInvoke).toHaveBeenNthCalledWith(1, 'get_codex_launch_permission_preset');
+      expect(mockInvoke).toHaveBeenNthCalledWith(2, 'set_codex_launch_permission_preset', {
+        preset: 'approveForMe',
       });
     } finally {
       if (descriptor) Object.defineProperty(window, '__TAURI_INTERNALS__', descriptor);

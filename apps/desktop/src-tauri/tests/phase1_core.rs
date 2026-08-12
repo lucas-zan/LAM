@@ -1,20 +1,21 @@
 use localagentmanager_core::{
-    antigravity_port, attach_provider_to_profile, build_resume_command, create_account_plan,
-    create_provider, create_relay_plan, delete_provider, delete_sessions,
-    execute_attach_provider_to_profile, execute_create_account, execute_create_relay,
-    execute_rename_account, gateway_first_response_timeout_seconds, get_live_antigravity_quota,
-    get_profile_quota, list_accounts, list_cached_accounts, list_cached_quotas, list_providers,
-    list_sessions, list_sessions_page, list_terminal_targets, plan_attach_provider_to_profile,
-    query_deletable_session_paths, query_sessions_page, refresh_all_quotas, refresh_usage_index,
-    relay_resume_session, rename_account_plan, repair_managed_wrappers, reset_profile_quota,
-    resolve_home_root, selected_terminal_target_id, set_antigravity_port,
+    antigravity_port, attach_provider_to_profile, build_resume_command,
+    codex_launch_permission_preset, create_account_plan, create_provider, create_relay_plan,
+    delete_provider, delete_sessions, execute_attach_provider_to_profile, execute_create_account,
+    execute_create_relay, execute_rename_account, gateway_first_response_timeout_seconds,
+    get_live_antigravity_quota, get_profile_quota, list_accounts, list_cached_accounts,
+    list_cached_quotas, list_providers, list_sessions, list_sessions_page, list_terminal_targets,
+    plan_attach_provider_to_profile, query_deletable_session_paths, query_sessions_page,
+    refresh_all_quotas, refresh_usage_index, relay_resume_session, rename_account_plan,
+    repair_managed_wrappers, reset_profile_quota, resolve_home_root, selected_terminal_target_id,
+    set_antigravity_port, set_codex_launch_permission_preset,
     set_gateway_first_response_timeout_seconds, set_selected_terminal_target_id,
     terminal_applescript, update_account_note, AccountNoteUpdate, AttachProviderRequest,
-    CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, DeleteSessionsRequest,
-    InstallationLock, ManagedConfigProjection, ProfileBindingCollection, ProfileProviderBinding,
-    ProjectionOwnership, ProviderHubPaths, RelayResumeRequest, RenameAccountRequest,
-    ResumeCommandRequest, SecretInput, SessionAgeFilter, SessionPageRequest, SessionQueryRequest,
-    SessionSelectionRequest, SessionSort, StoreOptions, VersionedFileStore,
+    CodexLaunchPermissionPreset, CreateAccountRequest, CreateProviderRequest, CreateRelayRequest,
+    DeleteSessionsRequest, InstallationLock, ManagedConfigProjection, ProfileBindingCollection,
+    ProfileProviderBinding, ProjectionOwnership, ProviderHubPaths, RelayResumeRequest,
+    RenameAccountRequest, ResumeCommandRequest, SecretInput, SessionAgeFilter, SessionPageRequest,
+    SessionQueryRequest, SessionSelectionRequest, SessionSort, StoreOptions, VersionedFileStore,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -84,6 +85,34 @@ fn gateway_first_response_timeout_setting_defaults_validates_and_preserves_setti
     let settings = home.path().join(".config/agent-workspace/settings.json");
     fs::write(&settings, r#"{"gatewayFirstResponseTimeoutSeconds":"bad"}"#).unwrap();
     assert_eq!(gateway_first_response_timeout_seconds(home.path()), 60);
+}
+
+#[test]
+fn codex_launch_permission_setting_defaults_round_trips_and_preserves_settings() {
+    let home = tempfile::tempdir().unwrap();
+    assert_eq!(
+        codex_launch_permission_preset(home.path()),
+        CodexLaunchPermissionPreset::AskForApproval
+    );
+
+    localagentmanager_core::set_auth_mode(home.path(), "pat").unwrap();
+    set_codex_launch_permission_preset(home.path(), CodexLaunchPermissionPreset::FullAccess)
+        .unwrap();
+    assert_eq!(
+        codex_launch_permission_preset(home.path()),
+        CodexLaunchPermissionPreset::FullAccess
+    );
+    assert_eq!(
+        localagentmanager_core::get_auth_mode(home.path()).unwrap(),
+        "pat"
+    );
+
+    let settings = home.path().join(".config/agent-workspace/settings.json");
+    fs::write(&settings, r#"{"codexLaunchPermissionPreset":"unknown"}"#).unwrap();
+    assert_eq!(
+        codex_launch_permission_preset(home.path()),
+        CodexLaunchPermissionPreset::AskForApproval
+    );
 }
 
 #[test]
@@ -810,6 +839,9 @@ fn creates_managed_account_with_plan_and_safe_wrapper() {
     let wrapper = fs::read_to_string(result.wrapper_path).unwrap();
     assert!(wrapper.contains("export CODEX_HOME=\"$HOME/.codex-luna\""));
     assert!(wrapper.contains("exec \"$CODEX_BIN\" \"$@\""));
+    assert!(wrapper.contains("codexLaunchPermissionPreset"));
+    assert!(wrapper.contains("--approve-for-me"));
+    assert!(wrapper.contains("--dangerously-bypass-approvals-and-sandbox"));
     assert!(!wrapper.contains("lam codex"));
 }
 
@@ -1169,7 +1201,7 @@ fn relay_resume_copies_missing_session_and_builds_target_resume() {
     );
     assert!(result.resume.command.contains("CODEX_HOME="));
     assert!(result.resume.command.contains(".codex-b"));
-    assert!(result.resume.command.contains("codex resume"));
+    assert!(result.resume.command.contains(" resume"));
     assert!(result.resume.command.contains("relay-sid"));
     assert_eq!(result.backup_path, None);
 }
@@ -1353,6 +1385,7 @@ fn relay_resume_diverged_summarize_fork_writes_target_handoff_without_overwrite(
     let home = temp_home("relay-resume-summarize-fork");
     let source = seed_codex_home(&home, "a");
     let target = seed_codex_home(&home, "b");
+    set_codex_launch_permission_preset(&home, CodexLaunchPermissionPreset::ApproveForMe).unwrap();
     let rel = "sessions/2026/06/01/relay.jsonl";
     let first = "{\"session_id\":\"relay-sid\",\"cwd\":\"/tmp/relay\"}\n";
     let target_body = format!("{first}{{\"target\":\"branch\"}}\n");
@@ -1382,7 +1415,8 @@ fn relay_resume_diverged_summarize_fork_writes_target_handoff_without_overwrite(
     let body = fs::read_to_string(handoff).unwrap();
     assert!(body.contains("Target account b"));
     assert!(body.contains("relay-sid"));
-    assert!(result.resume.command.contains("codex exec resume"));
+    assert!(result.resume.command.contains(" exec resume"));
+    assert_eq!(result.resume.command.matches("--approve-for-me").count(), 2);
     assert!(result.resume.command.contains(".codex-b"));
 }
 
@@ -1390,6 +1424,7 @@ fn relay_resume_diverged_summarize_fork_writes_target_handoff_without_overwrite(
 fn resume_command_is_escaped_and_has_no_arbitrary_shell_input() {
     let home = temp_home("resume");
     seed_codex_home(&home, "a");
+    set_codex_launch_permission_preset(&home, CodexLaunchPermissionPreset::FullAccess).unwrap();
     let command = build_resume_command(
         &home,
         &ResumeCommandRequest {
@@ -1401,7 +1436,10 @@ fn resume_command_is_escaped_and_has_no_arbitrary_shell_input() {
     .unwrap();
 
     assert!(command.command.contains("CODEX_HOME="));
-    assert!(command.command.contains("codex resume"));
+    assert!(command.command.contains(" resume"));
+    assert!(command
+        .command
+        .contains("--dangerously-bypass-approvals-and-sandbox"));
     assert!(command.command.contains("'sid-'\\''a'"));
     assert!(command.command.contains("'/tmp/project '\\''one'\\'''"));
     assert!(command.side_effects.iter().any(|s| s.contains(".codex-a")));

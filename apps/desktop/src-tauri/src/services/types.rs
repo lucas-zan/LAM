@@ -1,4 +1,5 @@
 use super::error::{AppError, Result};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{BufRead, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -256,6 +257,50 @@ pub(crate) fn settings_file_path(home_root: &Path) -> PathBuf {
 pub const DEFAULT_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS: u64 = 60;
 pub const MIN_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS: u64 = 10;
 pub const MAX_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS: u64 = 600;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CodexLaunchPermissionPreset {
+    #[default]
+    AskForApproval,
+    ApproveForMe,
+    FullAccess,
+}
+
+pub fn codex_launch_permission_preset(home_root: &Path) -> CodexLaunchPermissionPreset {
+    let Ok(content) = fs::read_to_string(settings_file_path(home_root)) else {
+        return CodexLaunchPermissionPreset::default();
+    };
+    let Ok(settings) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return CodexLaunchPermissionPreset::default();
+    };
+    settings
+        .get("codexLaunchPermissionPreset")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default()
+}
+
+pub fn set_codex_launch_permission_preset(
+    home_root: &Path,
+    preset: CodexLaunchPermissionPreset,
+) -> Result<()> {
+    let settings_path = settings_file_path(home_root);
+    fs::create_dir_all(config_root(home_root))?;
+    let mut settings = fs::read_to_string(&settings_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let Some(object) = settings.as_object_mut() {
+        object.insert(
+            "codexLaunchPermissionPreset".into(),
+            serde_json::to_value(preset).map_err(|error| {
+                AppError::new("CODEX_PERMISSION_CONFIG_INVALID", error.to_string())
+            })?,
+        );
+    }
+    write_file_private(&settings_path, &settings.to_string())
+}
 
 pub fn gateway_first_response_timeout_seconds(home_root: &Path) -> u64 {
     let settings_path = settings_file_path(home_root);

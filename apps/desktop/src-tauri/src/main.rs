@@ -160,6 +160,8 @@ fn main() {
             commands::set_auth_mode,
             commands::get_gateway_first_response_timeout_seconds,
             commands::set_gateway_first_response_timeout_seconds,
+            commands::get_codex_launch_permission_preset,
+            commands::set_codex_launch_permission_preset,
             commands::get_antigravity_port,
             commands::set_antigravity_port,
             commands::get_hide_dock_icon,

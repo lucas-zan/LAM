@@ -123,5 +123,5 @@ fn provider_mismatch_text_history_copies_and_resumes_through_launcher() {
         "unexpected direct resume command: {}",
         result.resume.command
     );
-    assert!(result.resume.command.contains("codex resume relay-sid"));
+    assert!(result.resume.command.contains(" resume relay-sid"));
 }

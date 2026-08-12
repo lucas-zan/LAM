@@ -6,6 +6,7 @@ import type {
   SessionPageRequest,
   SessionQueryRequest,
   SessionSelectionRequest,
+  CodexLaunchPermissionPreset,
   SessionStorageSummary,
   DeleteSessionsRequest,
   DeleteSessionsResult,
@@ -739,6 +740,18 @@ export async function getGatewayFirstResponseTimeoutSeconds(): Promise<number> {
 export async function setGatewayFirstResponseTimeoutSeconds(seconds: number): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>('set_gateway_first_response_timeout_seconds', { seconds });
+}
+
+export async function getCodexLaunchPermissionPreset(): Promise<CodexLaunchPermissionPreset> {
+  if (!inTauri()) return 'askForApproval';
+  return invoke<CodexLaunchPermissionPreset>('get_codex_launch_permission_preset');
+}
+
+export async function setCodexLaunchPermissionPreset(
+  preset: CodexLaunchPermissionPreset,
+): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>('set_codex_launch_permission_preset', { preset });
 }
 
 export async function getAntigravityPort(): Promise<number | null> {

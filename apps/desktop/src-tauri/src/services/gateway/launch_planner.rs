@@ -2,6 +2,7 @@ use crate::services::error::{AppError, Result};
 use crate::services::provider_binding::RouteKind;
 use crate::services::provider_binding::{ProfileBindingCollection, ProfileBindingRepository};
 use crate::services::storage::{InstallationLock, StoreOptions, VersionedFileStore};
+use crate::services::types::CodexLaunchPermissionPreset;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -48,6 +49,7 @@ pub struct LaunchPlanInput {
     pub route_kind: RouteKind,
     pub entry: LaunchEntry,
     pub cwd: Option<PathBuf>,
+    pub permission_preset: CodexLaunchPermissionPreset,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,12 +83,14 @@ impl CodexLaunchPlanner {
                     input.route_kind,
                     &input.profile_id,
                     &input.codex_home,
+                    input.permission_preset,
                     &["exec", "resume", &session_id, &prompt],
                 );
                 let second = self.render_invocation(
                     input.route_kind,
                     &input.profile_id,
                     &input.codex_home,
+                    input.permission_preset,
                     &["resume", &session_id],
                 );
                 format!("{cwd}{first} && {second}")
@@ -100,6 +104,7 @@ impl CodexLaunchPlanner {
                         input.route_kind,
                         &input.profile_id,
                         &input.codex_home,
+                        input.permission_preset,
                         &args,
                     )
                 )
@@ -127,10 +132,17 @@ impl CodexLaunchPlanner {
         route_kind: RouteKind,
         profile_id: &str,
         codex_home: &std::path::Path,
+        permission_preset: CodexLaunchPermissionPreset,
         args: &[String],
     ) -> String {
         let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
-        self.render_invocation(route_kind, profile_id, codex_home, &borrowed)
+        self.render_invocation(
+            route_kind,
+            profile_id,
+            codex_home,
+            permission_preset,
+            &borrowed,
+        )
     }
 
     fn render_invocation(
@@ -138,10 +150,18 @@ impl CodexLaunchPlanner {
         route_kind: RouteKind,
         profile_id: &str,
         codex_home: &std::path::Path,
+        permission_preset: CodexLaunchPermissionPreset,
         args: &[&str],
     ) -> String {
-        let suffix = args
+        let permission_args = if route_kind == RouteKind::Direct {
+            permission_args(permission_preset)
+        } else {
+            &[]
+        };
+        let suffix = permission_args
             .iter()
+            .copied()
+            .chain(args.iter().copied())
             .map(|arg| shell_arg(arg))
             .collect::<Vec<_>>()
             .join(" ");
@@ -161,6 +181,41 @@ impl CodexLaunchPlanner {
             ),
         }
     }
+}
+
+pub fn permission_args(preset: CodexLaunchPermissionPreset) -> &'static [&'static str] {
+    match preset {
+        CodexLaunchPermissionPreset::AskForApproval => &[
+            "--sandbox",
+            "workspace-write",
+            "--ask-for-approval",
+            "untrusted",
+        ],
+        CodexLaunchPermissionPreset::ApproveForMe => &["--approve-for-me"],
+        CodexLaunchPermissionPreset::FullAccess => &["--dangerously-bypass-approvals-and-sandbox"],
+    }
+}
+
+pub fn apply_permission_args(
+    args: Vec<String>,
+    preset: CodexLaunchPermissionPreset,
+) -> Vec<String> {
+    if args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "--approve-for-me"
+                | "--dangerously-bypass-approvals-and-sandbox"
+                | "--ask-for-approval"
+                | "--sandbox"
+        )
+    }) {
+        return args;
+    }
+    permission_args(preset)
+        .iter()
+        .map(|arg| (*arg).to_owned())
+        .chain(args)
+        .collect()
 }
 
 fn entry_args(entry: LaunchEntry) -> Vec<String> {

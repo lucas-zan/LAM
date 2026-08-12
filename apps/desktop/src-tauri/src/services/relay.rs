@@ -86,6 +86,7 @@ pub fn build_resume_command(home_root: &Path, req: &ResumeCommandRequest) -> Res
                 session_id: req.session_id.clone(),
             },
             cwd: req.cwd.as_ref().map(PathBuf::from),
+            permission_preset: codex_launch_permission_preset(home_root),
         })?
         .shell_command;
     Ok(ResumeCommand {
@@ -607,6 +608,7 @@ fn build_summarize_handoff_resume_command(
                 prompt,
             },
             cwd: cwd.map(PathBuf::from),
+            permission_preset: codex_launch_permission_preset(home_root),
         })?
         .shell_command;
     Ok(ResumeCommand {

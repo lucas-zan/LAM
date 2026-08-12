@@ -323,7 +323,7 @@ const tool = await call({model:'deepseek-chat',input:'tool',stream:false,tools:[
 const toolBody = JSON.parse(tool.text);
 const followup = await call({model:'deepseek-chat',stream:false,input:[{type:'message',role:'user',content:[{type:'input_text',text:'tool'}]},{type:'function_call',call_id:'call-process',name:'lookup',arguments:'{"q":"x"}'},{type:'function_call_output',call_id:'call-process',output:'result'}]});
 const resume = await call({model:'deepseek-chat',stream:false,input:[{type:'message',role:'user',content:[{type:'input_text',text:'old'}]},{type:'message',role:'assistant',content:[{type:'output_text',text:'prior'}]},{type:'message',role:'user',content:[{type:'input_text',text:'resume'}]}]});
-fs.writeFileSync(process.argv[2], JSON.stringify({models,text,stream,tool:toolBody,followup,resume}), {mode:0o600});
+fs.writeFileSync(process.argv.at(-1), JSON.stringify({models,text,stream,tool:toolBody,followup,resume}), {mode:0o600});
 "#
         ),
     );

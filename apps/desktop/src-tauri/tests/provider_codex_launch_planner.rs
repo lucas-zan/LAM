@@ -2,6 +2,7 @@ use localagentmanager_core::gateway::launch_planner::{
     CodexLaunchPlanner, LaunchEntry, LaunchPlanInput,
 };
 use localagentmanager_core::provider_binding::RouteKind;
+use localagentmanager_core::CodexLaunchPermissionPreset;
 use std::path::PathBuf;
 
 fn input(route_kind: RouteKind, entry: LaunchEntry) -> LaunchPlanInput {
@@ -11,7 +12,55 @@ fn input(route_kind: RouteKind, entry: LaunchEntry) -> LaunchPlanInput {
         route_kind,
         entry,
         cwd: Some(PathBuf::from("/tmp/work dir")),
+        permission_preset: CodexLaunchPermissionPreset::AskForApproval,
     }
+}
+
+#[test]
+fn permission_presets_map_to_the_current_codex_cli_flags() {
+    let planner = CodexLaunchPlanner::new("lam".into());
+    let cases = [
+        (
+            CodexLaunchPermissionPreset::AskForApproval,
+            "--sandbox workspace-write --ask-for-approval untrusted",
+        ),
+        (
+            CodexLaunchPermissionPreset::ApproveForMe,
+            "--approve-for-me",
+        ),
+        (
+            CodexLaunchPermissionPreset::FullAccess,
+            "--dangerously-bypass-approvals-and-sandbox",
+        ),
+    ];
+    for (preset, expected) in cases {
+        let mut request = input(
+            RouteKind::Direct,
+            LaunchEntry::Resume {
+                session_id: Some("session-1".into()),
+            },
+        );
+        request.permission_preset = preset;
+        let command = planner.plan(request).unwrap().shell_command;
+        assert!(
+            command.contains(expected),
+            "missing {expected} in {command}"
+        );
+    }
+}
+
+#[test]
+fn launcher_permission_injection_is_idempotent() {
+    use localagentmanager_core::gateway::launch_planner::apply_permission_args;
+
+    let injected = apply_permission_args(
+        vec!["resume".into(), "session-1".into()],
+        CodexLaunchPermissionPreset::ApproveForMe,
+    );
+    assert_eq!(injected[0], "--approve-for-me");
+    let unchanged =
+        apply_permission_args(injected.clone(), CodexLaunchPermissionPreset::FullAccess);
+    assert_eq!(unchanged, injected);
 }
 
 #[test]
@@ -57,16 +106,18 @@ fn direct_entries_use_same_planner_and_preserve_existing_command_shape() {
             },
         ))
         .unwrap();
-    assert!(resume
-        .shell_command
-        .contains("CODEX_HOME='/tmp/profile home' codex resume 'session 1'"));
+    assert!(resume.shell_command.contains(
+        "CODEX_HOME='/tmp/profile home' codex --sandbox workspace-write --ask-for-approval untrusted resume 'session 1'"
+    ));
     let last = planner
         .plan(input(
             RouteKind::Direct,
             LaunchEntry::Resume { session_id: None },
         ))
         .unwrap();
-    assert!(last.shell_command.contains("codex resume --last --all"));
+    assert!(last.shell_command.contains(
+        "codex --sandbox workspace-write --ask-for-approval untrusted resume --last --all"
+    ));
     assert!(!last.shell_command.contains("lam codex"));
 }
 

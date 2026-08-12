@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import type { ThemeMode } from '../lib/theme';
-import type { HealthCheck, TerminalTarget } from '../lib/types';
+import type { CodexLaunchPermissionPreset, HealthCheck, TerminalTarget } from '../lib/types';
 import type { Route } from '../routes/types';
 import * as api from '../lib/api';
 
@@ -25,6 +25,7 @@ interface AppState {
   hideDockIcon: boolean;
   terminalTargets: TerminalTarget[];
   terminalTargetId: string;
+  codexLaunchPermissionPreset: CodexLaunchPermissionPreset;
   compactButtons: boolean;
   gatewayFirstResponseTimeoutSeconds: number;
   antigravityPort: number | null;
@@ -40,6 +41,7 @@ interface AppState {
   closeModal: () => void;
   setHideDockIcon: (hide: boolean) => Promise<void>;
   setTerminalTargetId: (targetId: string) => Promise<void>;
+  setCodexLaunchPermissionPreset: (preset: CodexLaunchPermissionPreset) => Promise<void>;
   setCompactButtons: (compact: boolean) => void;
   setGatewayFirstResponseTimeoutSeconds: (seconds: number) => Promise<void>;
   setAntigravityPort: (port: number | null) => Promise<void>;
@@ -63,6 +65,7 @@ export const useAppStore = create<AppState>()(
     hideDockIcon: false,
     terminalTargets: [],
     terminalTargetId: 'terminal',
+    codexLaunchPermissionPreset: 'askForApproval',
     compactButtons: (() => {
       const saved = localStorage.getItem('lam-compact-buttons');
       return saved === null ? true : saved === 'true';
@@ -98,6 +101,14 @@ export const useAppStore = create<AppState>()(
         set({ error: err instanceof Error ? err.message : 'Failed to set handoff terminal' });
       }
     },
+    setCodexLaunchPermissionPreset: async (preset) => {
+      try {
+        await api.setCodexLaunchPermissionPreset(preset);
+        set({ codexLaunchPermissionPreset: preset });
+      } catch (err) {
+        set({ error: err instanceof Error ? err.message : 'Failed to save Codex permissions' });
+      }
+    },
     setCompactButtons: (compact) => {
       localStorage.setItem('lam-compact-buttons', String(compact));
       set({ compactButtons: compact });
@@ -124,12 +135,14 @@ export const useAppStore = create<AppState>()(
           hide,
           terminalTargets,
           terminalTargetId,
+          codexLaunchPermissionPreset,
           gatewayFirstResponseTimeoutSeconds,
           antigravityPort,
         ] = await Promise.all([
           api.getHideDockIcon(),
           api.listTerminalTargets(),
           api.getSelectedTerminalTarget(),
+          api.getCodexLaunchPermissionPreset(),
           api.getGatewayFirstResponseTimeoutSeconds(),
           api.getAntigravityPort(),
         ]);
@@ -137,6 +150,7 @@ export const useAppStore = create<AppState>()(
           hideDockIcon: hide,
           terminalTargets,
           terminalTargetId,
+          codexLaunchPermissionPreset,
           gatewayFirstResponseTimeoutSeconds,
           antigravityPort,
         });

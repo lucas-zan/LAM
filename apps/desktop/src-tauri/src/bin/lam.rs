@@ -56,6 +56,12 @@ fn run() -> localagentmanager_core::Result<i32> {
         .strip_prefix(&["--".to_owned()])
         .unwrap_or(arguments.get(3..).unwrap_or_default())
         .to_vec();
+    let codex_args = localagentmanager_core::gateway::launch_planner::apply_permission_args(
+        codex_args,
+        localagentmanager_core::resolve_home_root()
+            .map(|home| localagentmanager_core::codex_launch_permission_preset(&home))
+            .unwrap_or_default(),
+    );
     let root = provider_hub_root()?;
     ensure_private_directory(&root)?;
     localagentmanager_core::recover_provider_transactions_at_root_service_v2(

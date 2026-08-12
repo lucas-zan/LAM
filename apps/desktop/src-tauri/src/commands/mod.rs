@@ -45,8 +45,8 @@ use localagentmanager_core::{
     update_pat_session_auth as core_update_pat_session_auth,
     update_provider as core_update_provider, AccountNoteUpdate, AddPatAccountRequest,
     AddPatAccountResult, AddSessionProfileAccountRequest, AppError, AttachProviderRequest,
-    AttachProviderResult, AuthMetadata, CodexAccount, CodexSession, CpaExport,
-    CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, CreateResult,
+    AttachProviderResult, AuthMetadata, CodexAccount, CodexLaunchPermissionPreset, CodexSession,
+    CpaExport, CreateAccountRequest, CreateProviderRequest, CreateRelayRequest, CreateResult,
     DeleteAccountRequest, DeleteAccountResult, DeleteSessionsRequest, DeleteSessionsResult,
     OperationPlan, ProviderProfile, QuotaRefreshResult, RelayResumeRequest, RelayResumeResult,
     RenameAccountRequest, RenameAccountResult, ResetQuotaResult, ResumeCommand,
@@ -1251,6 +1251,20 @@ pub fn get_gateway_first_response_timeout_seconds() -> Result<u64, AppError> {
 #[tauri::command]
 pub fn set_gateway_first_response_timeout_seconds(seconds: u64) -> Result<(), AppError> {
     localagentmanager_core::set_gateway_first_response_timeout_seconds(&home_root()?, seconds)
+}
+
+#[tauri::command]
+pub fn get_codex_launch_permission_preset() -> Result<CodexLaunchPermissionPreset, AppError> {
+    Ok(localagentmanager_core::codex_launch_permission_preset(
+        &home_root()?,
+    ))
+}
+
+#[tauri::command]
+pub fn set_codex_launch_permission_preset(
+    preset: CodexLaunchPermissionPreset,
+) -> Result<(), AppError> {
+    localagentmanager_core::set_codex_launch_permission_preset(&home_root()?, preset)
 }
 
 #[tauri::command]

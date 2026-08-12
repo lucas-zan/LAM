@@ -16,6 +16,7 @@ import type {
   AccountNoteUpdate,
   CodexAccount,
   CodexSession,
+  CodexLaunchPermissionPreset,
   SessionAgeFilter,
   SessionSort,
   SessionStorageSummary,
@@ -1754,6 +1755,8 @@ export function Settings({
   terminalTargets,
   terminalTargetId,
   setTerminalTargetId,
+  codexLaunchPermissionPreset,
+  setCodexLaunchPermissionPreset,
   modeAvailability,
   setModeAvailability,
   resetUsageStatistics,
@@ -1774,6 +1777,8 @@ export function Settings({
   terminalTargets: TerminalTarget[];
   terminalTargetId: string;
   setTerminalTargetId: (targetId: string) => void;
+  codexLaunchPermissionPreset: CodexLaunchPermissionPreset;
+  setCodexLaunchPermissionPreset: (preset: CodexLaunchPermissionPreset) => void;
   modeAvailability: 'profile' | 'pat' | 'both';
   setModeAvailability: (availability: 'profile' | 'pat' | 'both') => void;
   resetUsageStatistics: () => void;
@@ -1993,6 +1998,38 @@ export function Settings({
                       <option value="profile">Profile Only</option>
                       <option value="pat">PAT Only</option>
                       <option value="both">Profile & PAT</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="settingsRowLayout">
+                  <div className="settingsRowInfo">
+                    <label htmlFor="codexLaunchPermissionSelect" className="settingsRowTitle">
+                      Codex launch permissions
+                    </label>
+                    <p className="settingsRowDesc">
+                      Applied to Codex sessions started, resumed, or relayed by LAM.
+                    </p>
+                    {codexLaunchPermissionPreset === 'fullAccess' ? (
+                      <p className="settingsDangerText">
+                        Full Access bypasses approvals and sandboxing. Codex can access the network
+                        and edit files outside the workspace.
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="settingsRowControl">
+                    <select
+                      id="codexLaunchPermissionSelect"
+                      value={codexLaunchPermissionPreset}
+                      onChange={(event) =>
+                        setCodexLaunchPermissionPreset(
+                          event.target.value as CodexLaunchPermissionPreset,
+                        )
+                      }
+                    >
+                      <option value="askForApproval">Ask for approval</option>
+                      <option value="approveForMe">Approve for me</option>
+                      <option value="fullAccess">Full Access</option>
                     </select>
                   </div>
                 </div>

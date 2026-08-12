@@ -1104,6 +1104,19 @@ if [ -z "$CODEX_BIN" ]; then
     exit 127
   fi
 fi
+SETTINGS_HOME="${{LAM_HOME:-$HOME}}"
+PERMISSION_PRESET="$(/usr/bin/plutil -extract codexLaunchPermissionPreset raw -o - "$SETTINGS_HOME/.config/agent-workspace/settings.json" 2>/dev/null || true)"
+case "$PERMISSION_PRESET" in
+  approveForMe)
+    set -- --approve-for-me "$@"
+    ;;
+  fullAccess)
+    set -- --dangerously-bypass-approvals-and-sandbox "$@"
+    ;;
+  *)
+    set -- --sandbox workspace-write --ask-for-approval untrusted "$@"
+    ;;
+esac
 exec "$CODEX_BIN" "$@"
 "#
     )

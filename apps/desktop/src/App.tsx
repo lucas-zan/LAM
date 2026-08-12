@@ -139,6 +139,8 @@ export function App() {
     setHideDockIcon,
     terminalTargets,
     terminalTargetId,
+    codexLaunchPermissionPreset,
+    setCodexLaunchPermissionPreset,
     setTerminalTargetId,
     compactButtons,
     setCompactButtons,
@@ -1053,6 +1055,8 @@ export function App() {
             terminalTargets={terminalTargets}
             terminalTargetId={terminalTargetId}
             setTerminalTargetId={setTerminalTargetId}
+            codexLaunchPermissionPreset={codexLaunchPermissionPreset}
+            setCodexLaunchPermissionPreset={setCodexLaunchPermissionPreset}
             modeAvailability={modeAvailability}
             setModeAvailability={handleSetModeAvailability}
             resetUsageStatistics={resetUsageStatistics}

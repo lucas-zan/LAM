@@ -83,6 +83,8 @@ vi.mock('./lib/api', () => ({
   ),
   getSelectedTerminalTarget: vi.fn(() => Promise.resolve('terminal')),
   setSelectedTerminalTarget: vi.fn(),
+  getCodexLaunchPermissionPreset: vi.fn(() => Promise.resolve('askForApproval')),
+  setCodexLaunchPermissionPreset: vi.fn(),
   getAntigravityQuota: vi.fn(() => Promise.resolve({ ok: true, models: [] })),
 }));
 
@@ -1535,6 +1537,24 @@ describe('App handoff modal', () => {
     fireEvent.change(terminalSelect, { target: { value: 'ghostty' } });
 
     await waitFor(() => expect(api.setSelectedTerminalTarget).toHaveBeenCalledWith('ghostty'));
+  });
+
+  it('loads and saves the Codex launch permission preset from settings', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    vi.mocked(api.getCodexLaunchPermissionPreset).mockResolvedValue('askForApproval');
+    useAppStore.setState({ route: 'settings' });
+
+    render(<App />);
+
+    const select = (await screen.findByLabelText(/codex launch permissions/i)) as HTMLSelectElement;
+    expect(select.value).toBe('askForApproval');
+    fireEvent.change(select, { target: { value: 'fullAccess' } });
+
+    await waitFor(() =>
+      expect(api.setCodexLaunchPermissionPreset).toHaveBeenCalledWith('fullAccess'),
+    );
+    expect(await screen.findByText(/bypasses approvals and sandboxing/i)).toBeTruthy();
   });
 
   it('loads and saves the Gateway first response timeout from settings', async () => {
