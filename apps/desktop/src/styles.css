@@ -5232,6 +5232,16 @@ pre {
   margin-top: 6px;
 }
 
+.apiFetchedModels {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.apiFetchedModels .apiModelChecklistViewport {
+  margin-top: 8px;
+}
+
 .apiSelectedTag {
   display: inline-flex;
   align-items: center;

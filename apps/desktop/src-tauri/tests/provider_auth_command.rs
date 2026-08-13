@@ -133,6 +133,7 @@ fn cache_reuses_then_refreshes_secret_and_helper_writes_only_token_line() {
             auth,
             codex: CodexProviderOptions::default(),
             gateway: false,
+            model_catalog_path: "/tmp/direct-helper/models.json".into(),
         },
     )
     .unwrap();

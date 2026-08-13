@@ -4,6 +4,7 @@ import type {
   CredentialReferenceV2,
   ProfileProviderBindingViewV2,
   ProviderDefinitionV2,
+  ProviderModelV2,
   ProviderProfileViewV2,
   UpstreamAuthV2,
   UpdateApiAccountConnectionRequestV2,
@@ -544,18 +545,19 @@ export function ProviderEditor({
 export function ApiAccountConnectionEditor({
   connection,
   onSave,
-  onRefreshModels = async () => {},
+  onRefreshModels = async () => [],
   onCancel,
 }: {
   connection: ApiAccountConnectionViewV2;
   onSave: (request: UpdateApiAccountConnectionRequestV2) => Promise<void>;
-  onRefreshModels?: () => Promise<void>;
+  onRefreshModels?: () => Promise<ProviderModelV2[]>;
   onCancel: () => void;
 }) {
   const [baseUrl, setBaseUrl] = useState(connection.baseUrl);
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [refreshingModels, setRefreshingModels] = useState(false);
+  const [fetchedModels, setFetchedModels] = useState<ProviderModelV2[]>([]);
   const [error, setError] = useState('');
 
   async function submit(event: FormEvent) {
@@ -621,8 +623,8 @@ export function ApiAccountConnectionEditor({
       <div className="apiAccountModels">
         <div className="panelHead">
           <div>
-            <strong>Available models</strong>
-            <p className="statusHint">These models are also shown by Codex /model.</p>
+            <strong>Selected models</strong>
+            <p className="statusHint">Only these saved models are shown by Codex /model.</p>
           </div>
           <UIButton
             type="button"
@@ -632,7 +634,7 @@ export function ApiAccountConnectionEditor({
               setRefreshingModels(true);
               setError('');
               try {
-                await onRefreshModels();
+                setFetchedModels(await onRefreshModels());
               } catch (reason) {
                 setError(reason instanceof Error ? reason.message : 'Could not refresh models');
               } finally {
@@ -640,16 +642,31 @@ export function ApiAccountConnectionEditor({
               }
             }}
           >
-            {refreshingModels ? 'Refreshing…' : 'Refresh models'}
+            {refreshingModels ? 'Fetching…' : 'Fetch models'}
           </UIButton>
         </div>
-        <div className="modelChipGrid">
+        <div className="apiSelectedTagsRow">
           {connection.models.map((model) => (
-            <span className="badge" key={model.id}>
+            <span className="apiSelectedTag" key={model.id}>
               {model.label}
             </span>
           ))}
         </div>
+        {fetchedModels.length ? (
+          <div className="apiFetchedModels">
+            <strong>Fetched models</strong>
+            <p className="statusHint">Live result from the standard /models endpoint.</p>
+            <div className="apiModelChecklistViewport">
+              <div className="apiSelectedTagsRow">
+                {fetchedModels.map((model) => (
+                  <span className="apiSelectedTag" key={model.id}>
+                    {model.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
       {error ? (
         <div className="notice" role="alert">
@@ -817,7 +834,8 @@ export function ProviderCenter({
                 closeDialog();
               }}
               onRefreshModels={async () => {
-                await refreshProviderModels(apiAccountConnection.providerId);
+                const provider = await refreshProviderModels(apiAccountConnection.providerId);
+                return provider.models;
               }}
               onCancel={closeDialog}
             />

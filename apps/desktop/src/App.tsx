@@ -212,7 +212,6 @@ export function App() {
     apiAccountConnection,
     loadApiAccountConnection,
     updateApiAccountConnection,
-    refreshProviderModels,
     clearApiAccountConnection,
   } = useProviderStore();
 
@@ -983,9 +982,6 @@ export function App() {
               setModelSwitchTarget(account);
               setModelSwitchValue(account.model ?? provider?.defaultModel ?? '');
               setModelSwitchPlan(null);
-              if (provider) {
-                void refreshProviderModels(provider.id).catch(() => undefined);
-              }
             }}
             login={(account) =>
               authMode === 'pat' && account.hasPersonalAccessToken

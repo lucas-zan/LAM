@@ -10,6 +10,7 @@ use super::provider_v2::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, VecDeque};
+use std::path::Path;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -273,6 +274,10 @@ pub fn plan_profile_attach(
         auth: route.codex_auth.clone(),
         codex: route.provider.codex.clone(),
         gateway: route.route_kind == RouteKind::Gateway,
+        model_catalog_path: Path::new(&context.config_path)
+            .with_file_name(super::gateway::catalog::CODEX_MODEL_CATALOG_FILE)
+            .to_string_lossy()
+            .into_owned(),
     };
     #[derive(Serialize)]
     struct Fingerprint<'a> {

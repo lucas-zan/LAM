@@ -137,6 +137,8 @@ pub enum CodexModelVisibility {
     List,
 }
 
+pub const CODEX_MODEL_CATALOG_FILE: &str = "models.json";
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CodexTruncationPolicy {
     pub mode: &'static str,
@@ -160,8 +162,8 @@ pub fn write_codex_model_catalog(codex_home: &Path, models: &[ProviderModel]) ->
     fs::create_dir_all(codex_home)?;
     #[cfg(unix)]
     fs::set_permissions(codex_home, fs::Permissions::from_mode(0o700))?;
-    let target = codex_home.join("models_cache.json");
-    let temp = codex_home.join(format!(".models_cache.{}.tmp", Uuid::new_v4()));
+    let target = codex_home.join(CODEX_MODEL_CATALOG_FILE);
+    let temp = codex_home.join(format!(".models.{}.tmp", Uuid::new_v4()));
     let result = (|| -> Result<()> {
         let mut options = OpenOptions::new();
         options.create_new(true).write(true);

@@ -1188,11 +1188,68 @@ pub fn migrate_native_responses_bindings_with_keychain_service_v2<B: KeychainBac
         )?;
         migrated_profiles.push(binding.profile_id);
     }
+    migrate_native_model_catalog_config(
+        home_root,
+        &native_provider_ids,
+        &mut state,
+        now_ms,
+        &mut migrated_profiles,
+    )?;
     super::account::repair_managed_wrappers(home_root)?;
     sync_bound_profile_model_catalogs(home_root)?;
     migrated_profiles.sort();
     migrated_profiles.dedup();
     Ok(NativeResponsesMigrationReportV2 { migrated_profiles })
+}
+
+fn migrate_native_model_catalog_config(
+    home_root: &Path,
+    provider_ids: &BTreeSet<String>,
+    state: &mut ProviderApiV2State,
+    now_ms: u64,
+    migrated_profiles: &mut Vec<String>,
+) -> Result<()> {
+    let bindings = list_binding_views_service_v2(home_root)?;
+    for binding in bindings
+        .into_iter()
+        .filter(|binding| provider_ids.contains(&binding.provider_id))
+    {
+        let codex_home = super::account::codex_home_path(home_root, &binding.profile_id);
+        let expected = codex_home
+            .join(super::gateway::catalog::CODEX_MODEL_CATALOG_FILE)
+            .to_string_lossy()
+            .into_owned();
+        if config_uses_model_catalog(&codex_home.join("config.toml"), &expected)? {
+            continue;
+        }
+        let plan = plan_api_account_model_switch_service_v2(
+            home_root,
+            &binding.profile_id,
+            &binding.selected_model,
+            state,
+            now_ms,
+        )?;
+        execute_api_account_model_switch_service_v2(
+            home_root,
+            &plan.plan_id,
+            &plan.fingerprint,
+            state,
+            now_ms,
+        )?;
+        migrated_profiles.push(binding.profile_id);
+    }
+    Ok(())
+}
+
+fn config_uses_model_catalog(path: &Path, expected: &str) -> Result<bool> {
+    let source = fs::read_to_string(path)?;
+    let config = source
+        .parse::<DocumentMut>()
+        .map_err(|error| AppError::new("CODEX_CONFIG_INVALID", error.to_string()))?;
+    Ok(config
+        .get("model_catalog_json")
+        .and_then(Item::as_str)
+        .is_some_and(|value| value == expected))
 }
 
 fn sync_bound_profile_model_catalogs(home_root: &Path) -> Result<()> {
@@ -2188,43 +2245,13 @@ pub fn refresh_provider_models_service_v2_with_resolver(
     } else {
         models[0].id.clone()
     };
-    let committed = ProviderRepository::new(stores.providers).update(
-        snapshot.revision,
-        ProviderInput {
-            id: provider.id.clone(),
-            name: provider.name.clone(),
-            protocol: provider.protocol,
-            base_url: provider.base_url.clone(),
-            default_model,
-            models: models.clone(),
-            upstream_auth: provider.upstream_auth.clone(),
-            adapter: provider.adapter.clone(),
-            compatibility_profile: provider.compatibility_profile.clone(),
-            codex: provider.codex.clone(),
-        },
-        &chrono::Utc::now().to_rfc3339(),
-    )?;
-    let bindings = provider_hub_stores(home_root)?
-        .bindings
-        .load_or_default()?
-        .value
-        .bindings;
-    for binding in bindings
-        .iter()
-        .filter(|binding| binding.provider_id == provider.id)
-    {
-        let codex_home = super::account::codex_home_path(home_root, &binding.profile_id);
-        super::gateway::catalog::write_codex_model_catalog(&codex_home, &models)?;
-    }
-    let updated = committed
-        .value
-        .providers
-        .iter()
-        .find(|item| item.id == provider.id)
-        .expect("updated provider");
+    let mut discovered_provider = provider.clone();
+    discovered_provider.default_model = default_model;
+    discovered_provider.models = models;
+    let bindings = stores.bindings.load_or_default()?.value.bindings;
     Ok(ProviderProfileView::from_domain(
-        updated,
-        committed.revision,
+        &discovered_provider,
+        snapshot.revision,
         bindings
             .iter()
             .filter(|binding| binding.provider_id == provider.id)

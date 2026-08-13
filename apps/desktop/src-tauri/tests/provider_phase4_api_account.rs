@@ -14,6 +14,7 @@ use localagentmanager_core::provider_api_v2::{
     PlanApiAccountRequestV2, ProviderApiV2State, ProviderDefinitionDto, ProviderModelDto,
     ProviderProtocolDto, UpdateApiAccountConnectionRequestV2, UpstreamAuthDto,
 };
+use localagentmanager_core::provider_config_editor::config_hash;
 use localagentmanager_core::provider_credentials::SecretValue;
 use localagentmanager_core::provider_keychain::{KeychainBackend, KeychainCredentialReference};
 use localagentmanager_core::{AppError, Result};
@@ -21,6 +22,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
+use toml_edit::DocumentMut;
 
 #[derive(Default)]
 struct MigrationKeychain {
@@ -143,6 +145,8 @@ fn responses_api_account_uses_native_codex_auth_file_without_keychain_helper() {
     let config = fs::read_to_string(outcome.account.home_path.join("config.toml")).unwrap();
     assert!(config.contains("requires_openai_auth = true"));
     assert!(config.contains("cli_auth_credentials_store = \"file\""));
+    assert!(config.contains("model_catalog_json ="));
+    assert!(config.contains("models.json"));
     assert!(!config.contains("lam-auth-helper"));
     assert!(!config.contains("keychain-token"));
     let auth: serde_json::Value =
@@ -156,10 +160,9 @@ fn responses_api_account_uses_native_codex_auth_file_without_keychain_helper() {
             credential: CredentialReferenceDto::CodexProfile { .. }
         }
     ));
-    let catalog: serde_json::Value = serde_json::from_slice(
-        &fs::read(outcome.account.home_path.join("models_cache.json")).unwrap(),
-    )
-    .unwrap();
+    let catalog: serde_json::Value =
+        serde_json::from_slice(&fs::read(outcome.account.home_path.join("models.json")).unwrap())
+            .unwrap();
     assert_eq!(catalog["models"].as_array().unwrap().len(), 2);
     assert_eq!(catalog["models"][0]["slug"], "model-a");
     assert_eq!(catalog["models"][1]["slug"], "model-b");
@@ -477,6 +480,59 @@ fn startup_migrates_legacy_responses_gateway_binding_and_wrapper_idempotently() 
             .unwrap()
             .contains("base_url = \"https://api.example.test/v1\"")
     );
+    assert!(
+        fs::read_to_string(outcome.account.home_path.join("config.toml"))
+            .unwrap()
+            .contains("model_catalog_json =")
+    );
+    assert!(
+        migrate_native_responses_bindings_service_v2(home.path(), 3_000)
+            .unwrap()
+            .migrated_profiles
+            .is_empty()
+    );
+}
+
+#[test]
+fn startup_adds_the_official_model_catalog_to_an_existing_direct_account() {
+    let home = tempfile::tempdir().unwrap();
+    let mut state = ProviderApiV2State::default();
+    let created = create_native_account(home.path(), &mut state);
+    let config_path = created.account.home_path.join("config.toml");
+    let mut config = fs::read_to_string(&config_path)
+        .unwrap()
+        .parse::<DocumentMut>()
+        .unwrap();
+    config.as_table_mut().remove("model_catalog_json");
+    fs::write(&config_path, config.to_string()).unwrap();
+    fs::remove_file(created.account.home_path.join("models.json")).unwrap();
+
+    let bindings_path = home.path().join(
+        "Library/Application Support/dev.localagentmanager.desktop/provider-hub/bindings.json",
+    );
+    let mut bindings: serde_json::Value =
+        serde_json::from_slice(&fs::read(&bindings_path).unwrap()).unwrap();
+    let projection = &mut bindings["bindings"][0]["configProjection"];
+    projection["managedValues"]
+        .as_object_mut()
+        .unwrap()
+        .remove("model_catalog_json");
+    projection["previousValues"]
+        .as_object_mut()
+        .unwrap()
+        .remove("model_catalog_json");
+    projection["appliedHash"] = config_hash(config.to_string().as_bytes()).into();
+    fs::write(
+        &bindings_path,
+        serde_json::to_vec_pretty(&bindings).unwrap(),
+    )
+    .unwrap();
+
+    let migrated = migrate_native_responses_bindings_service_v2(home.path(), 2_000).unwrap();
+    assert_eq!(migrated.migrated_profiles, ["work-api"]);
+    let updated = fs::read_to_string(config_path).unwrap();
+    assert!(updated.contains("model_catalog_json ="));
+    assert!(created.account.home_path.join("models.json").exists());
     assert!(
         migrate_native_responses_bindings_service_v2(home.path(), 3_000)
             .unwrap()

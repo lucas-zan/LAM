@@ -14,6 +14,7 @@ fn spec() -> ConfigProjectionSpec {
         },
         codex: CodexProviderOptions::default(),
         gateway: false,
+        model_catalog_path: "/tmp/company/models.json".into(),
     }
 }
 
@@ -43,6 +44,9 @@ fn direct_projection_preserves_complex_user_toml_and_quotes_dotted_id() {
         .contents
         .contains("[model_providers.\"company.proxy\"]"));
     assert!(applied.contents.contains("wire_api = \"responses\""));
+    assert!(applied
+        .contents
+        .contains("model_catalog_json = \"/tmp/company/models.json\""));
     assert!(applied.contents.contains("env_key = \"COMPANY_API_KEY\""));
     assert!(applied.contents.contains("request_max_retries = 2"));
     assert!(applied.contents.contains("api-version"));

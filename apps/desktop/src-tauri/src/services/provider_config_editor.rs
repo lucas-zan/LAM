@@ -22,6 +22,7 @@ pub struct ConfigProjectionSpec {
     pub auth: DirectCodexAuth,
     pub codex: CodexProviderOptions,
     pub gateway: bool,
+    pub model_catalog_path: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -105,6 +106,7 @@ pub fn apply_projection(
         .collect();
     set_top(&mut doc, "model", &spec.model);
     set_top(&mut doc, "model_provider", &spec.provider_id);
+    set_top(&mut doc, "model_catalog_json", &spec.model_catalog_path);
     set_provider(
         &mut doc,
         &spec.provider_id,
@@ -284,6 +286,7 @@ fn managed_keys(spec: &ConfigProjectionSpec) -> Vec<String> {
     let mut keys = vec![
         "model".into(),
         "model_provider".into(),
+        "model_catalog_json".into(),
         "name".into(),
         "base_url".into(),
         "wire_api".into(),
@@ -429,7 +432,7 @@ fn apply_options(doc: &mut DocumentMut, id: &str, spec: &ConfigProjectionSpec) {
 fn item_string(doc: &DocumentMut, id: &str, key: &str) -> Option<String> {
     let item = if matches!(
         key,
-        "model" | "model_provider" | "cli_auth_credentials_store"
+        "model" | "model_provider" | "model_catalog_json" | "cli_auth_credentials_store"
     ) {
         doc.get(key)
     } else {
@@ -440,7 +443,7 @@ fn item_string(doc: &DocumentMut, id: &str, key: &str) -> Option<String> {
 fn restore_item(doc: &mut DocumentMut, id: &str, key: &str, previous: Option<&str>) -> Result<()> {
     let target = if matches!(
         key,
-        "model" | "model_provider" | "cli_auth_credentials_store"
+        "model" | "model_provider" | "model_catalog_json" | "cli_auth_credentials_store"
     ) {
         &mut doc[key]
     } else {
@@ -466,7 +469,7 @@ fn restore_item(doc: &mut DocumentMut, id: &str, key: &str, previous: Option<&st
         None => {
             if matches!(
                 key,
-                "model" | "model_provider" | "cli_auth_credentials_store"
+                "model" | "model_provider" | "model_catalog_json" | "cli_auth_credentials_store"
             ) {
                 doc.as_table_mut().remove(key);
             } else if let Some(t) = doc["model_providers"][id].as_table_mut() {

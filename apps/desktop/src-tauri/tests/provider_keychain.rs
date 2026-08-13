@@ -430,6 +430,7 @@ fn codex_projection_uses_approved_helper_and_reference_only() {
             auth,
             codex: CodexProviderOptions::default(),
             gateway: false,
+            model_catalog_path: "/tmp/keychain-direct/models.json".into(),
         },
     )
     .unwrap();

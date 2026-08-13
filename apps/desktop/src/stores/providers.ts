@@ -246,10 +246,7 @@ export const useProviderStore = create<ProviderState>()((set, get) => ({
         providerId,
         expectedRevision: requiredProviderStoreRevision(get()),
       });
-      await get().refresh();
-      const binding = get().bindings.find((item) => item.providerId === providerId);
-      if (binding) await get().loadApiAccountConnection(binding.profileId);
-      useAppStore.getState().setStatus(`Refreshed ${provider.models.length} models`);
+      useAppStore.getState().setStatus(`Fetched ${provider.models.length} models`);
       return provider;
     } catch (error) {
       useAppStore.getState().setError(formatError(error));

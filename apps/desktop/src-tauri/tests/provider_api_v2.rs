@@ -563,7 +563,7 @@ fn service_upstream_test_normalizes_legacy_responses_gateway_flag_to_direct() {
 }
 
 #[test]
-fn service_refreshes_models_with_stored_credential_and_preserves_state_on_stale_revision() {
+fn service_fetches_models_with_stored_credential_without_overwriting_saved_selection() {
     let (base_url, requests, handle) =
         model_server(r#"{"object":"list","data":[{"id":"model-b"},{"id":"model-c"}]}"#);
     let root = tempfile::tempdir().unwrap();
@@ -596,21 +596,20 @@ fn service_refreshes_models_with_stored_credential_and_preserves_state_on_stale_
         ["model-b", "model-c"]
     );
     assert_eq!(view.default_model, "model-b");
+    let saved = list_provider_views_service_v2(root.path()).unwrap();
+    assert_eq!(saved[0].models[0].id, "model-a");
 
     let error = refresh_provider_models_service_v2_with_resolver(
         root.path(),
         RefreshProviderModelsRequestV2 {
             provider_id: "service-provider".into(),
-            expected_revision: 1,
+            expected_revision: 0,
         },
         &ReadyResolver,
     )
     .unwrap_err();
     assert_eq!(error.code, "STORE_REVISION_CONFLICT");
-    assert_eq!(
-        list_provider_views_service_v2(root.path()).unwrap()[0].models,
-        view.models
-    );
+    assert_eq!(list_provider_views_service_v2(root.path()).unwrap(), saved);
 }
 
 #[test]

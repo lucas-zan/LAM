@@ -301,8 +301,11 @@ describe('ApiAccountConnectionEditor', () => {
     expect(onSave).toHaveBeenCalledTimes(1);
   });
 
-  it('shows saved models and refreshes them without requesting the secret again', async () => {
-    const onRefreshModels = vi.fn().mockResolvedValue(undefined);
+  it('shows the saved selection first and fetches live models without selecting all of them', async () => {
+    const onRefreshModels = vi.fn().mockResolvedValue([
+      { id: 'model-a', label: 'Model A' },
+      { id: 'model-c', label: 'Model C' },
+    ]);
     render(
       <ApiAccountConnectionEditor
         connection={detail}
@@ -312,9 +315,13 @@ describe('ApiAccountConnectionEditor', () => {
       />,
     );
 
+    expect(screen.getByText('Selected models')).toBeTruthy();
     expect(screen.getByText('Model A')).toBeTruthy();
     expect(screen.getByText('Model B')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
+    expect(screen.queryByText('Model C')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch models' }));
     await waitFor(() => expect(onRefreshModels).toHaveBeenCalledOnce());
+    expect(await screen.findByText('Fetched models')).toBeTruthy();
+    expect(await screen.findByText('Model C')).toBeTruthy();
   });
 });
