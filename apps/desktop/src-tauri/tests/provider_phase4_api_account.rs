@@ -156,6 +156,13 @@ fn responses_api_account_uses_native_codex_auth_file_without_keychain_helper() {
             credential: CredentialReferenceDto::CodexProfile { .. }
         }
     ));
+    let catalog: serde_json::Value = serde_json::from_slice(
+        &fs::read(outcome.account.home_path.join("models_cache.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(catalog["models"].as_array().unwrap().len(), 2);
+    assert_eq!(catalog["models"][0]["slug"], "model-a");
+    assert_eq!(catalog["models"][1]["slug"], "model-b");
 }
 
 #[test]

@@ -787,6 +787,18 @@ pub async fn test_provider_upstream_v2(
 }
 
 #[tauri::command]
+pub async fn refresh_provider_models_v2(
+    req: localagentmanager_core::RefreshProviderModelsRequestV2,
+) -> Result<localagentmanager_core::ProviderProfileView, localagentmanager_core::StructuredErrorView>
+{
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || {
+        localagentmanager_core::refresh_provider_models_service_v2(&home, req)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn create_provider_v2(
     req: localagentmanager_core::CreateProviderRequestV2,
 ) -> Result<localagentmanager_core::ProviderProfileView, localagentmanager_core::StructuredErrorView>

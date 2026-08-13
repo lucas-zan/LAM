@@ -126,6 +126,7 @@ fn main() {
             commands::list_providers_v2,
             commands::discover_provider_models_v2,
             commands::test_provider_upstream_v2,
+            commands::refresh_provider_models_v2,
             commands::create_provider_v2,
             commands::approve_provider_auth_command_v2,
             commands::list_provider_auth_command_approvals_v2,

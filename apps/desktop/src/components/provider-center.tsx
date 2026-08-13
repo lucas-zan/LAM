@@ -96,9 +96,11 @@ export function ProviderCards({
               <p className="statusHint">Gateway adapter route ready</p>
             ) : null}
             <div className="cardActions">
-              <UIButton size="sm" onClick={() => onTest(provider)}>
-                Test upstream
-              </UIButton>
+              {provider.protocol === 'responses' ? (
+                <UIButton size="sm" onClick={() => onTest(provider)}>
+                  Test upstream
+                </UIButton>
+              ) : null}
               <UIButton size="sm" onClick={() => onEdit(provider)}>
                 Edit
               </UIButton>
@@ -542,15 +544,18 @@ export function ProviderEditor({
 export function ApiAccountConnectionEditor({
   connection,
   onSave,
+  onRefreshModels = async () => {},
   onCancel,
 }: {
   connection: ApiAccountConnectionViewV2;
   onSave: (request: UpdateApiAccountConnectionRequestV2) => Promise<void>;
+  onRefreshModels?: () => Promise<void>;
   onCancel: () => void;
 }) {
   const [baseUrl, setBaseUrl] = useState(connection.baseUrl);
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
+  const [refreshingModels, setRefreshingModels] = useState(false);
   const [error, setError] = useState('');
 
   async function submit(event: FormEvent) {
@@ -613,6 +618,39 @@ export function ApiAccountConnectionEditor({
           />
         </label>
       </div>
+      <div className="apiAccountModels">
+        <div className="panelHead">
+          <div>
+            <strong>Available models</strong>
+            <p className="statusHint">These models are also shown by Codex /model.</p>
+          </div>
+          <UIButton
+            type="button"
+            size="sm"
+            disabled={refreshingModels}
+            onClick={async () => {
+              setRefreshingModels(true);
+              setError('');
+              try {
+                await onRefreshModels();
+              } catch (reason) {
+                setError(reason instanceof Error ? reason.message : 'Could not refresh models');
+              } finally {
+                setRefreshingModels(false);
+              }
+            }}
+          >
+            {refreshingModels ? 'Refreshing…' : 'Refresh models'}
+          </UIButton>
+        </div>
+        <div className="modelChipGrid">
+          {connection.models.map((model) => (
+            <span className="badge" key={model.id}>
+              {model.label}
+            </span>
+          ))}
+        </div>
+      </div>
       {error ? (
         <div className="notice" role="alert">
           {error}
@@ -664,6 +702,7 @@ export function ProviderCenter({
     approveAuthCommand,
     rotateKeychainCredential,
     testProvider,
+    refreshProviderModels,
     previewAttach,
     executeAttach,
     previewDetach,
@@ -776,6 +815,9 @@ export function ProviderCenter({
               onSave={async (request) => {
                 await updateApiAccountConnection(request);
                 closeDialog();
+              }}
+              onRefreshModels={async () => {
+                await refreshProviderModels(apiAccountConnection.providerId);
               }}
               onCancel={closeDialog}
             />

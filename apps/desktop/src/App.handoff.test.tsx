@@ -742,6 +742,7 @@ describe('App handoff modal', () => {
       selectedModel: 'gpt-5',
       providerStoreRevision: 4,
       apiKeyConfigured: true,
+      models: externalApiProvider.models,
     });
     vi.mocked(api.updateApiAccountConnectionV2).mockResolvedValue({
       profileId: 'codex-c',
@@ -751,6 +752,7 @@ describe('App handoff modal', () => {
       selectedModel: 'gpt-5',
       providerStoreRevision: 5,
       apiKeyConfigured: true,
+      models: externalApiProvider.models,
     });
 
     render(<App />);

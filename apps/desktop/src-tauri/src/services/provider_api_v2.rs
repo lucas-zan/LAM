@@ -452,6 +452,14 @@ pub struct ProviderUpstreamTestViewV2 {
     pub route_kind: RouteKindDto,
     pub models_endpoint: String,
     pub redacted_summary: String,
+    pub model_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshProviderModelsRequestV2 {
+    pub provider_id: String,
+    pub expected_revision: u64,
 }
 
 impl ProviderProfileView {
@@ -790,6 +798,7 @@ pub struct ApiAccountConnectionViewV2 {
     pub selected_model: String,
     pub provider_store_revision: u64,
     pub api_key_configured: bool,
+    pub models: Vec<ProviderModelDto>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, Eq)]
@@ -1180,9 +1189,27 @@ pub fn migrate_native_responses_bindings_with_keychain_service_v2<B: KeychainBac
         migrated_profiles.push(binding.profile_id);
     }
     super::account::repair_managed_wrappers(home_root)?;
+    sync_bound_profile_model_catalogs(home_root)?;
     migrated_profiles.sort();
     migrated_profiles.dedup();
     Ok(NativeResponsesMigrationReportV2 { migrated_profiles })
+}
+
+fn sync_bound_profile_model_catalogs(home_root: &Path) -> Result<()> {
+    let stores = provider_hub_stores(home_root)?;
+    let providers = stores.providers.load_or_default()?.value.providers;
+    let bindings = stores.bindings.load_or_default()?.value.bindings;
+    for binding in bindings {
+        let provider = providers
+            .iter()
+            .find(|provider| provider.id == binding.provider_id)
+            .ok_or_else(|| AppError::new("PROVIDER_NOT_FOUND", &binding.provider_id))?;
+        super::gateway::catalog::write_codex_model_catalog(
+            &super::account::codex_home_path(home_root, &binding.profile_id),
+            &provider.models,
+        )?;
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -2113,6 +2140,99 @@ pub fn test_provider_upstream_service_v2_with_resolver(
     result
 }
 
+pub fn refresh_provider_models_service_v2(
+    home_root: &Path,
+    request: RefreshProviderModelsRequestV2,
+) -> Result<ProviderProfileView> {
+    refresh_provider_models_service_v2_with_resolver(
+        home_root,
+        request,
+        &ProductionCredentialResolver { home_root },
+    )
+}
+
+pub fn refresh_provider_models_service_v2_with_resolver(
+    home_root: &Path,
+    request: RefreshProviderModelsRequestV2,
+    resolver: &dyn ProviderCredentialResolver,
+) -> Result<ProviderProfileView> {
+    let stores = provider_hub_stores(home_root)?;
+    let snapshot = stores.providers.load_or_default()?;
+    if snapshot.revision != request.expected_revision {
+        return Err(AppError::new(
+            "STORE_REVISION_CONFLICT",
+            "Provider store revision changed",
+        ));
+    }
+    let provider = snapshot
+        .value
+        .providers
+        .iter()
+        .find(|provider| provider.id == request.provider_id)
+        .cloned()
+        .ok_or_else(|| AppError::new("PROVIDER_NOT_FOUND", &request.provider_id))?;
+    let discovered = fetch_provider_models(&provider, resolver)?;
+    let models = discovered
+        .into_iter()
+        .map(|model| ProviderModel {
+            id: model.id,
+            label: model.label,
+            capabilities: None,
+        })
+        .collect::<Vec<_>>();
+    let default_model = if models
+        .iter()
+        .any(|model| model.id == provider.default_model)
+    {
+        provider.default_model.clone()
+    } else {
+        models[0].id.clone()
+    };
+    let committed = ProviderRepository::new(stores.providers).update(
+        snapshot.revision,
+        ProviderInput {
+            id: provider.id.clone(),
+            name: provider.name.clone(),
+            protocol: provider.protocol,
+            base_url: provider.base_url.clone(),
+            default_model,
+            models: models.clone(),
+            upstream_auth: provider.upstream_auth.clone(),
+            adapter: provider.adapter.clone(),
+            compatibility_profile: provider.compatibility_profile.clone(),
+            codex: provider.codex.clone(),
+        },
+        &chrono::Utc::now().to_rfc3339(),
+    )?;
+    let bindings = provider_hub_stores(home_root)?
+        .bindings
+        .load_or_default()?
+        .value
+        .bindings;
+    for binding in bindings
+        .iter()
+        .filter(|binding| binding.provider_id == provider.id)
+    {
+        let codex_home = super::account::codex_home_path(home_root, &binding.profile_id);
+        super::gateway::catalog::write_codex_model_catalog(&codex_home, &models)?;
+    }
+    let updated = committed
+        .value
+        .providers
+        .iter()
+        .find(|item| item.id == provider.id)
+        .expect("updated provider");
+    Ok(ProviderProfileView::from_domain(
+        updated,
+        committed.revision,
+        bindings
+            .iter()
+            .filter(|binding| binding.provider_id == provider.id)
+            .map(|binding| binding.profile_id.clone())
+            .collect(),
+    ))
+}
+
 fn record_provider_health_observation(
     home_root: &Path,
     observation: ProviderHealthObservationV2,
@@ -2256,7 +2376,7 @@ fn probe_provider_upstream_service_v2(
             "Provider models response exceeds 1 MiB",
         ));
     }
-    parse_openai_model_list(&body).map_err(|_| {
+    let models = parse_openai_model_list(&body).map_err(|_| {
         AppError::new(
             "PROVIDER_HEALTH_RESPONSE_INVALID",
             "Provider models response is not a valid OpenAI model list",
@@ -2273,10 +2393,87 @@ fn probe_provider_upstream_service_v2(
         },
         models_endpoint,
         redacted_summary: format!(
-            "Responses Provider models endpoint healthy ({} ms)",
+            "Responses Provider models endpoint healthy: {} models ({} ms)",
+            models.len(),
             elapsed_ms
         ),
+        model_count: models.len(),
     })
+}
+
+fn fetch_provider_models(
+    provider: &ProviderProfileV2,
+    resolver: &dyn ProviderCredentialResolver,
+) -> Result<Vec<super::provider_model_discovery::DiscoveredProviderModelV2>> {
+    if provider.protocol != ProviderProtocol::Responses
+        || !matches!(provider.adapter, AdapterConfig::None)
+    {
+        return Err(AppError::new(
+            "PROVIDER_DIRECT_ROUTE_REQUIRED",
+            "model refresh is available only for direct Responses Providers",
+        ));
+    }
+    let token = match &provider.upstream_auth {
+        UpstreamAuth::Bearer { source } => resolver.resolve(source)?,
+        _ => {
+            return Err(AppError::new(
+                "PROVIDER_AUTH_UNSUPPORTED",
+                "model refresh requires bearer authentication",
+            ))
+        }
+    };
+    let endpoint = join_upstream_endpoint(&provider.base_url, "/models")?;
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|_| {
+            AppError::new(
+                "PROVIDER_MODEL_DISCOVERY_CLIENT_FAILED",
+                "Provider model discovery client could not be created",
+            )
+        })?;
+    let authorization = token
+        .with_exposed(|value| reqwest::header::HeaderValue::from_str(&format!("Bearer {value}")))
+        .map_err(|_| {
+            AppError::new(
+                "PROVIDER_CREDENTIAL_HEADER_INVALID",
+                "credential cannot be represented as an HTTP header",
+            )
+        })?;
+    let mut response = client
+        .get(endpoint)
+        .header(reqwest::header::AUTHORIZATION, authorization)
+        .send()
+        .map_err(|_| {
+            AppError::new(
+                "PROVIDER_MODEL_DISCOVERY_UNAVAILABLE",
+                "Provider models endpoint is unavailable",
+            )
+        })?;
+    if !response.status().is_success() {
+        return Err(AppError::new(
+            "PROVIDER_MODEL_DISCOVERY_HTTP_ERROR",
+            format!(
+                "Provider models endpoint returned HTTP {}",
+                response.status().as_u16()
+            ),
+        ));
+    }
+    let mut body = Vec::new();
+    response
+        .by_ref()
+        .take((MAX_MODELS_RESPONSE_BYTES + 1) as u64)
+        .read_to_end(&mut body)
+        .map_err(|_| {
+            AppError::new(
+                "PROVIDER_MODEL_DISCOVERY_RESPONSE_INVALID",
+                "Provider models response could not be read",
+            )
+        })?;
+    parse_openai_model_list(&body)
 }
 
 pub fn list_binding_views_service_v2(home_root: &Path) -> Result<Vec<ProfileProviderBindingView>> {
@@ -2801,6 +2998,26 @@ pub fn execute_api_account_service_v2_with_fault(
         .into_iter()
         .find(|binding| binding.profile_id == plan.request.account_name)
         .ok_or_else(|| AppError::new("PROFILE_BINDING_NOT_FOUND", &plan.request.account_name))?;
+    let catalog_models = provider_view
+        .models
+        .iter()
+        .map(|model| ProviderModel {
+            id: model.id.clone(),
+            label: model.label.clone(),
+            capabilities: None,
+        })
+        .collect::<Vec<_>>();
+    if let Err(error) =
+        super::gateway::catalog::write_codex_model_catalog(&account.home_path, &catalog_models)
+    {
+        compensate_api_account_creation(
+            home_root,
+            &request.plan_id,
+            &plan,
+            created_provider.then_some(&provider_view),
+        )?;
+        return Err(error);
+    }
     clear_api_account_journal(home_root, &request.plan_id)?;
     state.api_account_plans.remove(&request.plan_id);
     Ok(ApiAccountExecutionViewV2 {
@@ -2846,6 +3063,15 @@ pub fn execute_api_account_model_switch_service_v2(
     state: &mut ProviderApiV2State,
     now_ms: u64,
 ) -> Result<AttachExecutionView> {
+    let plan = state
+        .attach_plans
+        .get(plan_id)
+        .cloned()
+        .ok_or_else(|| AppError::new("ATTACH_PLAN_UNKNOWN", "attach plan is unknown"))?;
+    super::gateway::catalog::write_codex_model_catalog(
+        &super::account::codex_home_path(home_root, &plan.profile_id),
+        &plan.route.provider.models,
+    )?;
     execute_attach_service_v2(
         home_root,
         ExecuteAttachRequestV2 {
@@ -2971,6 +3197,15 @@ fn api_account_connection_view(
         selected_model: context.binding.selected_model.clone(),
         provider_store_revision: context.provider_snapshot.revision,
         api_key_configured: super::codex_api_key_auth::inspect_codex_api_key(&context.codex_home)?,
+        models: context
+            .provider
+            .models
+            .iter()
+            .map(|model| ProviderModelDto {
+                id: model.id.clone(),
+                label: model.label.clone(),
+            })
+            .collect(),
     })
 }
 

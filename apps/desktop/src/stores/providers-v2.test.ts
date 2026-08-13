@@ -124,6 +124,7 @@ beforeEach(() => {
     selectedModel: 'model-a',
     providerStoreRevision: 4,
     apiKeyConfigured: true,
+    models: [{ id: 'model-a', label: 'Model A' }],
   });
   vi.mocked(api.updateApiAccountConnectionV2).mockResolvedValue({
     profileId: 'work-api',
@@ -133,6 +134,7 @@ beforeEach(() => {
     selectedModel: 'model-a',
     providerStoreRevision: 5,
     apiKeyConfigured: true,
+    models: [{ id: 'model-a', label: 'Model A' }],
   });
 });
 

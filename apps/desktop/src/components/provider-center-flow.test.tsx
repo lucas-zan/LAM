@@ -62,6 +62,7 @@ beforeEach(() => {
     routeKind: 'direct',
     modelsEndpoint: 'https://company.example.test/v1/models',
     redactedSummary: 'Direct Responses route and credential reference validated',
+    modelCount: 1,
   });
   vi.mocked(api.createProviderWithKeychainV2).mockResolvedValue({
     ...provider,
@@ -83,6 +84,7 @@ beforeEach(() => {
     selectedModel: 'model-a',
     providerStoreRevision: 4,
     apiKeyConfigured: true,
+    models: [{ id: 'model-a', label: 'Model A' }],
   });
 });
 

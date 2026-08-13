@@ -116,6 +116,34 @@ fn codex_launch_permission_setting_defaults_round_trips_and_preserves_settings()
 }
 
 #[test]
+fn account_config_parser_skips_comments_blank_lines_and_unrelated_toml() {
+    let home = tempfile::tempdir().unwrap();
+    let codex_home = home.path().join(".codex-external");
+    fs::create_dir_all(codex_home.join("sessions")).unwrap();
+    fs::write(
+        codex_home.join("config.toml"),
+        r#"# managed profile
+
+personality = "pragmatic"
+model = "model-b"
+model_provider = "account-external"
+
+[features]
+multi_agent = true
+"#,
+    )
+    .unwrap();
+
+    let account = list_accounts(home.path())
+        .unwrap()
+        .into_iter()
+        .find(|account| account.id == "external")
+        .unwrap();
+    assert_eq!(account.provider_id.as_deref(), Some("account-external"));
+    assert_eq!(account.model.as_deref(), Some("model-b"));
+}
+
+#[test]
 fn antigravity_port_setting_round_trips_clears_and_validates() {
     let home = tempfile::tempdir().unwrap();
     assert_eq!(antigravity_port(home.path()), None);

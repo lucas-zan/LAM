@@ -36,6 +36,7 @@ interface ProviderState {
     secret: string,
   ) => Promise<void>;
   testProvider: (providerId: string) => Promise<void>;
+  refreshProviderModels: (providerId: string) => Promise<ProviderProfileViewV2>;
   previewAttach: (req: PlanAttachRequestV2) => Promise<ProfileAttachPlanViewV2>;
   executeAttach: () => Promise<void>;
   previewDetach: (profileId: string) => Promise<ProfileDetachPlanViewV2>;
@@ -233,6 +234,23 @@ export const useProviderStore = create<ProviderState>()((set, get) => ({
     try {
       const result = await api.testProviderUpstreamV2(providerId);
       useAppStore.getState().setStatus(result.redactedSummary);
+    } catch (error) {
+      useAppStore.getState().setError(formatError(error));
+      throw error;
+    }
+  },
+
+  refreshProviderModels: async (providerId) => {
+    try {
+      const provider = await api.refreshProviderModelsV2({
+        providerId,
+        expectedRevision: requiredProviderStoreRevision(get()),
+      });
+      await get().refresh();
+      const binding = get().bindings.find((item) => item.providerId === providerId);
+      if (binding) await get().loadApiAccountConnection(binding.profileId);
+      useAppStore.getState().setStatus(`Refreshed ${provider.models.length} models`);
+      return provider;
     } catch (error) {
       useAppStore.getState().setError(formatError(error));
       throw error;

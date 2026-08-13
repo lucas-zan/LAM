@@ -70,6 +70,7 @@ import type {
   RotateProviderCredentialRequestV2,
   CredentialRotationViewV2,
   ProviderUpstreamTestViewV2,
+  RefreshProviderModelsRequestV2,
   LegacyCreateProviderCompatRequestV2,
   LegacyCreateProviderResultV2,
   ApproveAuthCommandRequestV2,
@@ -582,6 +583,12 @@ export async function testProviderUpstreamV2(
   providerId: string,
 ): Promise<ProviderUpstreamTestViewV2> {
   return invoke<ProviderUpstreamTestViewV2>('test_provider_upstream_v2', { providerId });
+}
+
+export async function refreshProviderModelsV2(
+  req: RefreshProviderModelsRequestV2,
+): Promise<ProviderProfileViewV2> {
+  return invoke<ProviderProfileViewV2>('refresh_provider_models_v2', { req });
 }
 
 export async function listProfileProviderBindingsV2(): Promise<ProfileProviderBindingViewV2[]> {

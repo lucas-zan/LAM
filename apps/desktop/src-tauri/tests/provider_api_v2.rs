@@ -563,6 +563,57 @@ fn service_upstream_test_normalizes_legacy_responses_gateway_flag_to_direct() {
 }
 
 #[test]
+fn service_refreshes_models_with_stored_credential_and_preserves_state_on_stale_revision() {
+    let (base_url, requests, handle) =
+        model_server(r#"{"object":"list","data":[{"id":"model-b"},{"id":"model-c"}]}"#);
+    let root = tempfile::tempdir().unwrap();
+    let mut request = service_request(0);
+    request.provider.base_url = base_url;
+    request.provider.upstream_auth = UpstreamAuthDto::Bearer {
+        credential: CredentialReferenceDto::Env {
+            env_key: "SYNTHETIC_MODEL_TOKEN".into(),
+        },
+    };
+    create_provider_service_v2(root.path(), request, "2026-07-14T00:00:00Z").unwrap();
+
+    let view = refresh_provider_models_service_v2_with_resolver(
+        root.path(),
+        RefreshProviderModelsRequestV2 {
+            provider_id: "service-provider".into(),
+            expected_revision: 1,
+        },
+        &ReadyResolver,
+    )
+    .unwrap();
+    let wire = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+    handle.join().unwrap();
+    assert!(wire.contains("authorization: Bearer synthetic-ready"));
+    assert_eq!(
+        view.models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>(),
+        ["model-b", "model-c"]
+    );
+    assert_eq!(view.default_model, "model-b");
+
+    let error = refresh_provider_models_service_v2_with_resolver(
+        root.path(),
+        RefreshProviderModelsRequestV2 {
+            provider_id: "service-provider".into(),
+            expected_revision: 1,
+        },
+        &ReadyResolver,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "STORE_REVISION_CONFLICT");
+    assert_eq!(
+        list_provider_views_service_v2(root.path()).unwrap()[0].models,
+        view.models
+    );
+}
+
+#[test]
 fn service_upstream_test_rejects_nonstandard_codex_catalog_shape() {
     let (base_url, requests, handle) = model_server(r#"{"models":[{"slug":"model-a"}]}"#);
     let root = tempfile::tempdir().unwrap();

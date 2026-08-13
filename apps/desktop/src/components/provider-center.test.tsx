@@ -258,6 +258,10 @@ describe('ApiAccountConnectionEditor', () => {
     selectedModel: 'model-a',
     providerStoreRevision: 7,
     apiKeyConfigured: true,
+    models: [
+      { id: 'model-a', label: 'Model A' },
+      { id: 'model-b', label: 'Model B' },
+    ],
   };
 
   it('shows redacted account configuration and supports URL-only updates', async () => {
@@ -295,5 +299,22 @@ describe('ApiAccountConnectionEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save API account' }));
     expect(await screen.findByText('New API key cannot be blank')).toBeTruthy();
     expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows saved models and refreshes them without requesting the secret again', async () => {
+    const onRefreshModels = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ApiAccountConnectionEditor
+        connection={detail}
+        onSave={vi.fn()}
+        onRefreshModels={onRefreshModels}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Model A')).toBeTruthy();
+    expect(screen.getByText('Model B')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
+    await waitFor(() => expect(onRefreshModels).toHaveBeenCalledOnce());
   });
 });

@@ -2,6 +2,13 @@ use crate::services::error::{AppError, Result};
 use crate::services::provider_v2::ProviderModel;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::Path;
+use uuid::Uuid;
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 const GENERIC_BASE_INSTRUCTIONS: &str = "You are a coding agent. Follow the provided developer and user instructions, use available tools carefully, and make verifiable changes in the current workspace.";
 const BUILTIN_CODEX_MODEL_CATALOG: &str =
@@ -138,6 +145,41 @@ pub struct CodexTruncationPolicy {
 
 pub fn build_codex_model_catalog(models: &[ProviderModel]) -> Result<CodexModelCatalog> {
     build_codex_model_catalog_with_defaults(models, &CodexModelDefaultsCatalog::default())
+}
+
+pub fn write_codex_model_catalog(codex_home: &Path, models: &[ProviderModel]) -> Result<()> {
+    let catalog =
+        build_codex_model_catalog_with_defaults(models, &CodexModelDefaultsCatalog::builtin()?)?;
+    let mut body = serde_json::to_vec_pretty(&catalog).map_err(|error| {
+        AppError::new(
+            "CODEX_MODEL_CATALOG_SERIALIZATION_FAILED",
+            error.to_string(),
+        )
+    })?;
+    body.push(b'\n');
+    fs::create_dir_all(codex_home)?;
+    #[cfg(unix)]
+    fs::set_permissions(codex_home, fs::Permissions::from_mode(0o700))?;
+    let target = codex_home.join("models_cache.json");
+    let temp = codex_home.join(format!(".models_cache.{}.tmp", Uuid::new_v4()));
+    let result = (|| -> Result<()> {
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(&temp)?;
+        file.write_all(&body)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temp, &target)?;
+        #[cfg(unix)]
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 pub fn build_codex_model_catalog_with_defaults(

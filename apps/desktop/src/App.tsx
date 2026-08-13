@@ -22,6 +22,7 @@ import { ApiAccountFlow } from './components/api-account-flow';
 import { ThemeToggle } from './components/theme-toggle';
 import { UIButton } from './components/ui-button';
 import { formatError, relaySessionLabel, sessionDisplayName } from './lib/format';
+import { resolveAccountProvider } from './lib/provider-models';
 import { quotaRefreshProfileIds } from './lib/quota';
 import { routeTitle as routeTitleFromModule } from './routes/types';
 import { UsagePage } from './routes/usage';
@@ -211,6 +212,7 @@ export function App() {
     apiAccountConnection,
     loadApiAccountConnection,
     updateApiAccountConnection,
+    refreshProviderModels,
     clearApiAccountConnection,
   } = useProviderStore();
 
@@ -261,6 +263,21 @@ export function App() {
     to: null,
   });
   const [includeArchivedUsage, setIncludeArchivedUsage] = useState(false);
+  const modelSwitchProvider = modelSwitchTarget
+    ? resolveAccountProvider(modelSwitchTarget, providers, bindings)
+    : undefined;
+
+  useEffect(() => {
+    if (!modelSwitchTarget || !modelSwitchProvider?.models.length) return;
+    if (modelSwitchProvider.models.some((model) => model.id === modelSwitchValue)) return;
+    const fallback = modelSwitchProvider.models.some(
+      (model) => model.id === modelSwitchProvider.defaultModel,
+    )
+      ? modelSwitchProvider.defaultModel
+      : modelSwitchProvider.models[0].id;
+    setModelSwitchValue(fallback);
+    setModelSwitchPlan(null);
+  }, [modelSwitchProvider, modelSwitchTarget, modelSwitchValue]);
   const antigravityRefreshInFlightRef = useRef(false);
   const loadedUsageSummaryKeyRef = useRef<string | null>(null);
   const defaultScopeUsageSummaryBaseKeyRef = useRef<string | null>(null);
@@ -962,10 +979,13 @@ export function App() {
             editApiAccount={openApiAccountEditor}
             apiAccountIds={bindings.map((binding) => binding.profileId)}
             switchModel={(account) => {
-              const provider = providers.find((item) => item.id === account.providerId);
+              const provider = resolveAccountProvider(account, providers, bindings);
               setModelSwitchTarget(account);
               setModelSwitchValue(account.model ?? provider?.defaultModel ?? '');
               setModelSwitchPlan(null);
+              if (provider) {
+                void refreshProviderModels(provider.id).catch(() => undefined);
+              }
             }}
             login={(account) =>
               authMode === 'pat' && account.hasPersonalAccessToken
@@ -1535,9 +1555,7 @@ export function App() {
                 setModelSwitchPlan(null);
               }}
             >
-              {providers
-                .find((provider) => provider.id === modelSwitchTarget.providerId)
-                ?.models.map((model) => (
+              {modelSwitchProvider?.models.map((model) => (
                   <option key={model.id} value={model.id}>
                     {model.label}
                   </option>

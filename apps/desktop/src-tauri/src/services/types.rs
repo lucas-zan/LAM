@@ -148,10 +148,12 @@ pub(crate) fn parse_codex_config(path: &Path) -> Result<CodexConfigBinding> {
 pub(crate) fn parse_toml_like_string(body: &str, key: &str) -> Option<String> {
     for line in body.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with('#') {
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('[') {
             continue;
         }
-        let (left, right) = trimmed.split_once('=')?;
+        let Some((left, right)) = trimmed.split_once('=') else {
+            continue;
+        };
         if left.trim() != key {
             continue;
         }

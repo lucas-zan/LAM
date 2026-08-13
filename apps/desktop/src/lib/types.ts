@@ -621,6 +621,8 @@ export type ProviderDefinitionV2 = {
   };
 };
 
+export type ProviderModelV2 = ProviderDefinitionV2['models'][number];
+
 export type CreateProviderRequestV2 = {
   expectedRevision: number;
   provider: ProviderDefinitionV2;
@@ -765,6 +767,7 @@ export type ApiAccountConnectionViewV2 = {
   selectedModel: string;
   providerStoreRevision: number;
   apiKeyConfigured: boolean;
+  models: ProviderModelV2[];
 };
 
 export type UpdateApiAccountConnectionRequestV2 = {
@@ -851,6 +854,12 @@ export type ProviderUpstreamTestViewV2 = {
   routeKind: RouteKindV2;
   modelsEndpoint: string;
   redactedSummary: string;
+  modelCount: number;
+};
+
+export type RefreshProviderModelsRequestV2 = {
+  providerId: string;
+  expectedRevision: number;
 };
 
 export type LegacyCreateProviderCompatRequestV2 = {
