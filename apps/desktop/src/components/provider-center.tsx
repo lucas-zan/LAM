@@ -9,6 +9,7 @@ import type {
   UpstreamAuthV2,
   UpdateApiAccountConnectionRequestV2,
 } from '../lib/types';
+import { sameModelIdSet } from '../lib/provider-models';
 import { UIButton } from './ui-button';
 import { Modal } from './shell';
 import { ProviderBindingDialog } from './provider-binding-dialog';
@@ -17,6 +18,7 @@ import { useProviderStore } from '../stores/providers';
 type CredentialKind = CredentialReferenceV2['kind'];
 type AuthKind = UpstreamAuthV2['kind'];
 type AuthCommandDraft = { executable: string; args: string[] };
+type ModelApplyMode = 'replace' | 'customize';
 
 function credentialLabel(auth: UpstreamAuthV2): string {
   if (auth.kind === 'none') return 'None';
@@ -556,19 +558,82 @@ export function ApiAccountConnectionEditor({
   const [baseUrl, setBaseUrl] = useState(connection.baseUrl);
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
+  const [applyingModels, setApplyingModels] = useState(false);
   const [refreshingModels, setRefreshingModels] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<ProviderModelV2[]>([]);
+  const [applyMode, setApplyMode] = useState<ModelApplyMode | null>(null);
+  const [draftModelIds, setDraftModelIds] = useState<string[]>([]);
+  const [draftSelectedModel, setDraftSelectedModel] = useState('');
   const [error, setError] = useState('');
+
+  const fetchedMatchesSaved =
+    fetchedModels.length > 0 && sameModelIdSet(fetchedModels, connection.models);
+
+  const checklistModels = useMemo(() => {
+    const byId = new Map<string, ProviderModelV2>();
+    for (const model of connection.models) byId.set(model.id, model);
+    for (const model of fetchedModels) byId.set(model.id, model);
+    return [...byId.values()];
+  }, [connection.models, fetchedModels]);
+
+  const candidateModels = useMemo(() => {
+    if (applyMode === 'replace') return fetchedModels;
+    if (applyMode === 'customize') {
+      return checklistModels.filter((model) => draftModelIds.includes(model.id));
+    }
+    return [];
+  }, [applyMode, checklistModels, draftModelIds, fetchedModels]);
+
+  const needsDefaultPick =
+    candidateModels.length > 0 &&
+    !candidateModels.some((model) => model.id === draftSelectedModel);
+
+  function normalizeBaseUrl(): string | null {
+    try {
+      const url = new URL(baseUrl.trim());
+      if (url.protocol !== 'https:' || url.username || url.password) throw new Error('invalid');
+      return url.toString().replace(/\/$/, '');
+    } catch {
+      return null;
+    }
+  }
+
+  function beginReplaceAll() {
+    setApplyMode('replace');
+    setDraftModelIds(fetchedModels.map((model) => model.id));
+    setDraftSelectedModel(
+      fetchedModels.some((model) => model.id === connection.selectedModel)
+        ? connection.selectedModel
+        : '',
+    );
+    setError('');
+  }
+
+  function beginCustomize() {
+    setApplyMode('customize');
+    setDraftModelIds(connection.models.map((model) => model.id));
+    setDraftSelectedModel(
+      connection.models.some((model) => model.id === connection.selectedModel)
+        ? connection.selectedModel
+        : '',
+    );
+    setError('');
+  }
+
+  function toggleDraftModel(modelId: string) {
+    setDraftModelIds((current) => {
+      const removing = current.includes(modelId);
+      const next = removing ? current.filter((id) => id !== modelId) : [...current, modelId];
+      if (removing && draftSelectedModel === modelId) setDraftSelectedModel('');
+      return next;
+    });
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError('');
-    let normalizedUrl: string;
-    try {
-      const url = new URL(baseUrl.trim());
-      if (url.protocol !== 'https:' || url.username || url.password) throw new Error('invalid');
-      normalizedUrl = url.toString().replace(/\/$/, '');
-    } catch {
+    const normalizedUrl = normalizeBaseUrl();
+    if (!normalizedUrl) {
       setError('Enter a valid HTTPS Provider URL');
       return;
     }
@@ -589,6 +654,41 @@ export function ApiAccountConnectionEditor({
     } finally {
       setApiKey('');
       setSaving(false);
+    }
+  }
+
+  async function applyModels() {
+    setError('');
+    const normalizedUrl = normalizeBaseUrl();
+    if (!normalizedUrl) {
+      setError('Enter a valid HTTPS Provider URL');
+      return;
+    }
+    if (!candidateModels.length) {
+      setError('Select at least one model before applying');
+      return;
+    }
+    if (needsDefaultPick || !draftSelectedModel.trim()) {
+      setError('Choose a default model from the new allowlist');
+      return;
+    }
+    if (!candidateModels.some((model) => model.id === draftSelectedModel)) {
+      setError('Default model must be present in the selected models');
+      return;
+    }
+    setApplyingModels(true);
+    try {
+      await onSave({
+        profileId: connection.profileId,
+        expectedProviderStoreRevision: connection.providerStoreRevision,
+        baseUrl: normalizedUrl,
+        models: candidateModels.map((model) => ({ id: model.id, label: model.label })),
+        selectedModel: draftSelectedModel.trim(),
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not apply models');
+    } finally {
+      setApplyingModels(false);
     }
   }
 
@@ -633,9 +733,15 @@ export function ApiAccountConnectionEditor({
             onClick={async () => {
               setRefreshingModels(true);
               setError('');
+              setApplyMode(null);
+              setDraftModelIds([]);
+              setDraftSelectedModel('');
               try {
-                setFetchedModels(await onRefreshModels());
+                const models = await onRefreshModels();
+                setFetchedModels(models);
+                if (!models.length) setError('No models were returned');
               } catch (reason) {
+                setFetchedModels([]);
                 setError(reason instanceof Error ? reason.message : 'Could not refresh models');
               } finally {
                 setRefreshingModels(false);
@@ -665,6 +771,82 @@ export function ApiAccountConnectionEditor({
                 ))}
               </div>
             </div>
+            {fetchedMatchesSaved ? (
+              <p className="statusHint" role="status">
+                Fetched models match the current allowlist.
+              </p>
+            ) : (
+              <div className="apiModelApplyActions">
+                <UIButton type="button" size="sm" onClick={beginReplaceAll}>
+                  Replace all
+                </UIButton>
+                <UIButton type="button" size="sm" onClick={beginCustomize}>
+                  Customize selection
+                </UIButton>
+              </div>
+            )}
+          </div>
+        ) : null}
+        {applyMode && !fetchedMatchesSaved ? (
+          <div className="apiModelApplyPanel">
+            {applyMode === 'customize' ? (
+              <fieldset className="apiModelFieldset">
+                <legend>Select active models</legend>
+                <div className="apiModelChecklistViewport">
+                  <div className="apiModelChecklist">
+                    {checklistModels.map((model) => {
+                      const active = draftModelIds.includes(model.id);
+                      return (
+                        <label
+                          key={model.id}
+                          className={`apiModelCheckItem ${active ? 'active' : ''}`}
+                        >
+                          <input
+                            type="checkbox"
+                            aria-label={`Select model ${model.id}`}
+                            checked={active}
+                            onChange={() => toggleDraftModel(model.id)}
+                          />
+                          <span>{model.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              </fieldset>
+            ) : (
+              <p className="statusHint">
+                Replace the saved allowlist with all {fetchedModels.length} fetched models.
+              </p>
+            )}
+            {candidateModels.length && (needsDefaultPick || draftSelectedModel) ? (
+              <label>
+                Default model
+                <select
+                  aria-label="Default model for allowlist"
+                  value={needsDefaultPick ? '' : draftSelectedModel}
+                  onChange={(event) => setDraftSelectedModel(event.target.value)}
+                >
+                  {needsDefaultPick ? <option value="">Select a default model</option> : null}
+                  {candidateModels.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <div className="apiModelApplyActions">
+              <UIButton
+                type="button"
+                variant="primary"
+                size="sm"
+                disabled={applyingModels || !candidateModels.length || needsDefaultPick}
+                onClick={() => void applyModels()}
+              >
+                {applyingModels ? 'Applying…' : 'Apply models'}
+              </UIButton>
+            </div>
           </div>
         ) : null}
       </div>
@@ -677,7 +859,7 @@ export function ApiAccountConnectionEditor({
         <UIButton type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </UIButton>
-        <UIButton type="submit" variant="primary" disabled={saving}>
+        <UIButton type="submit" variant="primary" disabled={saving || applyingModels}>
           Save API account
         </UIButton>
       </div>

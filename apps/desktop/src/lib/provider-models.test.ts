@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveAccountProvider } from './provider-models';
+import { resolveAccountProvider, sameModelIdSet } from './provider-models';
 import type {
   CodexAccount,
   ProfileProviderBindingViewV2,
@@ -25,5 +25,25 @@ describe('resolveAccountProvider', () => {
     expect(
       resolveAccountProvider({ ...account, providerId: 'account-opencode' }, [provider], []),
     ).toBe(provider);
+  });
+});
+
+describe('sameModelIdSet', () => {
+  it('matches by id set while ignoring order and labels', () => {
+    const left = [
+      { id: 'a', label: 'A' },
+      { id: 'b', label: 'B' },
+    ];
+    const right = [
+      { id: 'b', label: 'Bee' },
+      { id: 'a', label: 'Aye' },
+    ];
+    const shorter = [{ id: 'a', label: 'A' }];
+    const longer = [
+      { id: 'a', label: 'A' },
+      { id: 'b', label: 'B' },
+    ];
+    expect(sameModelIdSet(left, right)).toBe(true);
+    expect(sameModelIdSet(shorter, longer)).toBe(false);
   });
 });

@@ -213,6 +213,7 @@ export function App() {
     loadApiAccountConnection,
     updateApiAccountConnection,
     clearApiAccountConnection,
+    refreshProviderModels,
   } = useProviderStore();
 
   const selectedAccount = useAccountStore((s) => s.selectedAccount());
@@ -1168,6 +1169,10 @@ export function App() {
               onSave={async (request) => {
                 await updateApiAccountConnection(request);
                 closeApiAccountEditor();
+              }}
+              onRefreshModels={async () => {
+                const provider = await refreshProviderModels(apiAccountConnection.providerId);
+                return provider.models;
               }}
               onCancel={closeApiAccountEditor}
             />

@@ -5242,6 +5242,19 @@ pre {
   margin-top: 8px;
 }
 
+.apiModelApplyActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.apiModelApplyPanel {
+  margin-top: 14px;
+  display: grid;
+  gap: 12px;
+}
+
 .apiSelectedTag {
   display: inline-flex;
   align-items: center;

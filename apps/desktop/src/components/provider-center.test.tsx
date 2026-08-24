@@ -323,5 +323,92 @@ describe('ApiAccountConnectionEditor', () => {
     await waitFor(() => expect(onRefreshModels).toHaveBeenCalledOnce());
     expect(await screen.findByText('Fetched models')).toBeTruthy();
     expect(await screen.findByText('Model C')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Replace all' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Customize selection' })).toBeTruthy();
+  });
+
+  it('only hints when fetched models match the saved allowlist', async () => {
+    const onRefreshModels = vi.fn().mockResolvedValue([
+      { id: 'model-b', label: 'Model B renamed' },
+      { id: 'model-a', label: 'Model A renamed' },
+    ]);
+    render(
+      <ApiAccountConnectionEditor
+        connection={detail}
+        onSave={vi.fn()}
+        onRefreshModels={onRefreshModels}
+        onCancel={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch models' }));
+    expect(await screen.findByText('Fetched models match the current allowlist.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Replace all' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Customize selection' })).toBeNull();
+  });
+
+  it('applies a full replace with a required default when the current model is missing', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onRefreshModels = vi.fn().mockResolvedValue([
+      { id: 'model-c', label: 'Model C' },
+      { id: 'model-d', label: 'Model D' },
+    ]);
+    render(
+      <ApiAccountConnectionEditor
+        connection={detail}
+        onSave={onSave}
+        onRefreshModels={onRefreshModels}
+        onCancel={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch models' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace all' }));
+    expect(screen.getByRole('button', { name: 'Apply models' })).toHaveProperty('disabled', true);
+    fireEvent.change(screen.getByLabelText('Default model for allowlist'), {
+      target: { value: 'model-d' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply models' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave).toHaveBeenCalledWith({
+      profileId: 'work-api',
+      expectedProviderStoreRevision: 7,
+      baseUrl: 'https://api.example.test/v1',
+      models: [
+        { id: 'model-c', label: 'Model C' },
+        { id: 'model-d', label: 'Model D' },
+      ],
+      selectedModel: 'model-d',
+    });
+  });
+
+  it('customizes the allowlist from the union of saved and fetched models', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onRefreshModels = vi.fn().mockResolvedValue([
+      { id: 'model-a', label: 'Model A' },
+      { id: 'model-c', label: 'Model C' },
+    ]);
+    render(
+      <ApiAccountConnectionEditor
+        connection={detail}
+        onSave={onSave}
+        onRefreshModels={onRefreshModels}
+        onCancel={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch models' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize selection' }));
+    fireEvent.click(screen.getByLabelText('Select model model-b'));
+    fireEvent.click(screen.getByLabelText('Select model model-c'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply models' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave).toHaveBeenCalledWith({
+      profileId: 'work-api',
+      expectedProviderStoreRevision: 7,
+      baseUrl: 'https://api.example.test/v1',
+      models: [
+        { id: 'model-a', label: 'Model A' },
+        { id: 'model-c', label: 'Model C' },
+      ],
+      selectedModel: 'model-a',
+    });
   });
 });

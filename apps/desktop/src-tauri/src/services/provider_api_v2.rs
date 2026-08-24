@@ -809,6 +809,10 @@ pub struct UpdateApiAccountConnectionRequestV2 {
     pub base_url: String,
     #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub models: Option<Vec<ProviderModelDto>>,
+    #[serde(default)]
+    pub selected_model: Option<String>,
 }
 
 impl std::fmt::Debug for UpdateApiAccountConnectionRequestV2 {
@@ -822,6 +826,8 @@ impl std::fmt::Debug for UpdateApiAccountConnectionRequestV2 {
             )
             .field("base_url", &self.base_url)
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("models", &self.models)
+            .field("selected_model", &self.selected_model)
             .finish()
     }
 }
@@ -1342,7 +1348,18 @@ fn migrate_legacy_responses_credential<B: KeychainBackend>(
         restore_legacy_keychain(keychain, &reference, &secret, &codex_home)
     })?;
     let mut state = ProviderApiV2State::default();
-    if let Err(error) = rebind_api_account(home_root, &candidate.profile_id, &mut state, now_ms) {
+    let selected_model = list_binding_views_service_v2(home_root)?
+        .into_iter()
+        .find(|binding| binding.profile_id == candidate.profile_id)
+        .map(|binding| binding.selected_model)
+        .ok_or_else(|| AppError::new("PROFILE_BINDING_NOT_FOUND", &candidate.profile_id))?;
+    if let Err(error) = rebind_api_account(
+        home_root,
+        &candidate.profile_id,
+        &selected_model,
+        &mut state,
+        now_ms,
+    ) {
         replace_provider_credential(
             home_root,
             &candidate.provider_id,
@@ -3139,6 +3156,20 @@ pub fn update_api_account_connection_service_v2(
         now_ms,
     )?;
     let old_secret = stage_api_key_update(&context.codex_home, request.api_key.as_deref())?;
+    let selected_for_rebind = if request.models.is_some() {
+        request
+            .selected_model
+            .as_deref()
+            .ok_or_else(|| {
+                AppError::new(
+                    "API_ACCOUNT_SELECTED_MODEL_REQUIRED",
+                    "selectedModel is required when updating models",
+                )
+            })?
+            .to_string()
+    } else {
+        context.binding.selected_model.clone()
+    };
     let committed = update_api_account_provider(home_root, &context, &request, now_ms);
     let committed = match committed {
         Ok(snapshot) => snapshot,
@@ -3147,7 +3178,13 @@ pub fn update_api_account_connection_service_v2(
             return Err(error);
         }
     };
-    if let Err(error) = rebind_api_account(home_root, &request.profile_id, state, now_ms) {
+    if let Err(error) = rebind_api_account(
+        home_root,
+        &request.profile_id,
+        &selected_for_rebind,
+        state,
+        now_ms,
+    ) {
         rollback_api_account_provider(home_root, committed.revision, &context.provider_snapshot)?;
         restore_api_key(&context.codex_home, old_secret.as_ref())?;
         return Err(error);
@@ -3253,8 +3290,15 @@ fn validate_api_account_update(
     {
         return Err(AppError::new("CODEX_API_KEY_EMPTY", "API key is empty"));
     }
+    if request.models.is_some() && request.selected_model.as_ref().is_none_or(|value| value.trim().is_empty())
+    {
+        return Err(AppError::new(
+            "API_ACCOUNT_SELECTED_MODEL_REQUIRED",
+            "selectedModel is required when updating models",
+        ));
+    }
     build_provider(
-        provider_input_with_url(&context.provider, &request.base_url),
+        provider_input_for_update(&context.provider, request)?,
         &context.provider.updated_at,
     )?;
     let source = fs::read_to_string(&context.binding.config_projection.config_path)?;
@@ -3278,6 +3322,36 @@ fn provider_input_with_url(provider: &ProviderProfileV2, base_url: &str) -> Prov
         compatibility_profile: provider.compatibility_profile.clone(),
         codex: provider.codex.clone(),
     }
+}
+
+fn provider_input_for_update(
+    provider: &ProviderProfileV2,
+    request: &UpdateApiAccountConnectionRequestV2,
+) -> Result<ProviderInput> {
+    let mut input = provider_input_with_url(provider, &request.base_url);
+    if let Some(models) = &request.models {
+        let selected = request
+            .selected_model
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                AppError::new(
+                    "API_ACCOUNT_SELECTED_MODEL_REQUIRED",
+                    "selectedModel is required when updating models",
+                )
+            })?;
+        input.default_model = selected.into();
+        input.models = models
+            .iter()
+            .map(|model| ProviderModel {
+                id: model.id.clone(),
+                label: model.label.clone(),
+                capabilities: None,
+            })
+            .collect();
+    }
+    Ok(input)
 }
 
 fn stage_api_key_update(
@@ -3304,7 +3378,7 @@ fn update_api_account_provider(
     let stores = provider_hub_stores(home_root)?;
     ProviderRepository::new(stores.providers).update(
         request.expected_provider_store_revision,
-        provider_input_with_url(&context.provider, &request.base_url),
+        provider_input_for_update(&context.provider, request)?,
         &timestamp_from_ms(now_ms),
     )
 }
@@ -3312,17 +3386,14 @@ fn update_api_account_provider(
 fn rebind_api_account(
     home_root: &Path,
     profile_id: &str,
+    selected_model: &str,
     state: &mut ProviderApiV2State,
     now_ms: u64,
 ) -> Result<()> {
-    let binding = list_binding_views_service_v2(home_root)?
-        .into_iter()
-        .find(|binding| binding.profile_id == profile_id)
-        .ok_or_else(|| AppError::new("PROFILE_BINDING_NOT_FOUND", profile_id))?;
     let plan = plan_api_account_model_switch_service_v2(
         home_root,
         profile_id,
-        &binding.selected_model,
+        selected_model,
         state,
         now_ms,
     )?;

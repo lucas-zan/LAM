@@ -775,6 +775,8 @@ export type UpdateApiAccountConnectionRequestV2 = {
   expectedProviderStoreRevision: number;
   baseUrl: string;
   apiKey?: string;
+  models?: ProviderModelV2[];
+  selectedModel?: string;
 };
 
 export type ProfileAttachPlanViewV2 = {

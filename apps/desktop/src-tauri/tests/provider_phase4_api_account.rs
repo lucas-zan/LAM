@@ -276,6 +276,8 @@ fn api_account_connection_detail_is_redacted_and_url_key_updates_are_projected()
             expected_provider_store_revision: detail.provider_store_revision,
             base_url: "https://new.example.test/api/v1/".into(),
             api_key: Some("sk-replaced-not-real".into()),
+            models: None,
+            selected_model: None,
         },
         &mut state,
         2_000,
@@ -307,6 +309,8 @@ fn api_account_connection_update_preserves_key_and_rejects_stale_or_invalid_chan
             expected_provider_store_revision: detail.provider_store_revision,
             base_url: "https://url-only.example.test/v1".into(),
             api_key: None,
+            models: None,
+            selected_model: None,
         },
         &mut state,
         2_000,
@@ -322,6 +326,8 @@ fn api_account_connection_update_preserves_key_and_rejects_stale_or_invalid_chan
                 expected_provider_store_revision: detail.provider_store_revision,
                 base_url: "https://stale.example.test/v1".into(),
                 api_key: None,
+                models: None,
+                selected_model: None,
             },
             "STORE_REVISION_CONFLICT",
         ),
@@ -331,6 +337,8 @@ fn api_account_connection_update_preserves_key_and_rejects_stale_or_invalid_chan
                 expected_provider_store_revision: updated.provider_store_revision,
                 base_url: "http://insecure.example.test/v1".into(),
                 api_key: None,
+                models: None,
+                selected_model: None,
             },
             "PROVIDER_URL_INSECURE",
         ),
@@ -340,6 +348,8 @@ fn api_account_connection_update_preserves_key_and_rejects_stale_or_invalid_chan
                 expected_provider_store_revision: updated.provider_store_revision,
                 base_url: updated.base_url.clone(),
                 api_key: Some("   ".into()),
+                models: None,
+                selected_model: None,
             },
             "CODEX_API_KEY_EMPTY",
         ),
@@ -361,6 +371,107 @@ fn api_account_connection_update_preserves_key_and_rejects_stale_or_invalid_chan
             .base_url,
         "https://url-only.example.test/v1"
     );
+}
+
+#[test]
+fn api_account_connection_can_replace_saved_models_and_rewrite_catalog() {
+    let home = tempfile::tempdir().unwrap();
+    let mut state = ProviderApiV2State::default();
+    let created = create_native_account(home.path(), &mut state);
+    let detail = get_api_account_connection_service_v2(home.path(), "work-api").unwrap();
+    assert_eq!(
+        detail
+            .models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>(),
+        ["model-a", "model-b"]
+    );
+
+    let missing_selected = update_api_account_connection_service_v2(
+        home.path(),
+        UpdateApiAccountConnectionRequestV2 {
+            profile_id: "work-api".into(),
+            expected_provider_store_revision: detail.provider_store_revision,
+            base_url: detail.base_url.clone(),
+            api_key: None,
+            models: Some(vec![
+                ProviderModelDto {
+                    id: "model-c".into(),
+                    label: "Model C".into(),
+                },
+                ProviderModelDto {
+                    id: "model-d".into(),
+                    label: "Model D".into(),
+                },
+            ]),
+            selected_model: None,
+        },
+        &mut state,
+        2_500,
+    )
+    .unwrap_err();
+    assert_eq!(
+        missing_selected.code,
+        "API_ACCOUNT_SELECTED_MODEL_REQUIRED"
+    );
+
+    let updated = update_api_account_connection_service_v2(
+        home.path(),
+        UpdateApiAccountConnectionRequestV2 {
+            profile_id: "work-api".into(),
+            expected_provider_store_revision: detail.provider_store_revision,
+            base_url: detail.base_url.clone(),
+            api_key: None,
+            models: Some(vec![
+                ProviderModelDto {
+                    id: "model-c".into(),
+                    label: "Model C".into(),
+                },
+                ProviderModelDto {
+                    id: "model-d".into(),
+                    label: "Model D".into(),
+                },
+            ]),
+            selected_model: Some("model-d".into()),
+        },
+        &mut state,
+        2_600,
+    )
+    .unwrap();
+    assert_eq!(
+        updated
+            .models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>(),
+        ["model-c", "model-d"]
+    );
+    assert_eq!(updated.selected_model, "model-d");
+
+    let providers = list_provider_views_service_v2(home.path()).unwrap();
+    assert_eq!(providers[0].default_model, "model-d");
+    assert_eq!(
+        providers[0]
+            .models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>(),
+        ["model-c", "model-d"]
+    );
+    let bindings = list_binding_views_service_v2(home.path()).unwrap();
+    assert_eq!(bindings[0].selected_model, "model-d");
+
+    let catalog: serde_json::Value =
+        serde_json::from_slice(&fs::read(created.account.home_path.join("models.json")).unwrap())
+            .unwrap();
+    let slugs = catalog["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|model| model["slug"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(slugs, ["model-c", "model-d"]);
 }
 
 #[test]
