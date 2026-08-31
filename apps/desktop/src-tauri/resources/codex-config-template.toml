@@ -9,6 +9,9 @@ personality = "pragmatic"
 service_tier = "default"
 approvals_reviewer = "user"
 
+[desktop]
+enabled-reasoning-efforts = ["low", "medium", "high", "xhigh", "ultra", "max"]
+
 [features]
 multi_agent = true
 js_repl = false

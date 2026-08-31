@@ -102,6 +102,9 @@ async fn run() -> localagentmanager_core::Result<()> {
             total_timeout: Duration::from_secs(15 * 60),
             max_response_bytes: 32 * 1024 * 1024,
             max_inflight: 16,
+            connect_retries: 2,
+            connect_retry_delay: Duration::from_millis(200),
+            first_byte_retries: 1,
         },
         network_target_policy()?,
         Arc::new(KeychainAndEnvironmentCredentialResolver::new(

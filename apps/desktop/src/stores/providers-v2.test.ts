@@ -17,6 +17,7 @@ vi.mock('../lib/api', () => ({
   createProviderV2: vi.fn(),
   createProviderWithKeychainV2: vi.fn(),
   updateProviderV2: vi.fn(),
+  deleteProviderV2: vi.fn(),
   rotateProviderCredentialV2: vi.fn(),
   planAttachProviderV2: vi.fn(),
   executeAttachProviderV2: vi.fn(),
@@ -104,6 +105,7 @@ beforeEach(() => {
   vi.mocked(api.createProviderV2).mockResolvedValue(provider);
   vi.mocked(api.createProviderWithKeychainV2).mockResolvedValue(provider);
   vi.mocked(api.updateProviderV2).mockResolvedValue(provider);
+  vi.mocked(api.deleteProviderV2).mockResolvedValue({ providerId: 'company', storeRevision: 5 });
   vi.mocked(api.planAttachProviderV2).mockResolvedValue(attachPlan);
   vi.mocked(api.executeAttachProviderV2).mockResolvedValue({
     operationId: 'op-1',
@@ -209,6 +211,19 @@ describe('useProviderStore V2', () => {
       expectedRevision: 7,
       provider: definition,
     });
+  });
+
+  it('deletes a Provider against the visible revision then refreshes', async () => {
+    useProviderStore.setState({ providers: [provider], providerStoreRevision: 4 });
+
+    await useProviderStore.getState().deleteProvider('company');
+
+    expect(api.deleteProviderV2).toHaveBeenCalledWith({
+      expectedRevision: 4,
+      providerId: 'company',
+    });
+    expect(api.listProvidersV2).toHaveBeenCalledOnce();
+    expect(useAppStore.getState().status).toBe('Provider company deleted');
   });
 
   it('uses the explicit collection revision for Keychain create and credential rotation', async () => {

@@ -92,6 +92,37 @@ fn streamed_interleaved_tool_arguments_produce_stable_function_items() {
 }
 
 #[test]
+fn consecutive_responses_tool_calls_share_one_chat_assistant_message() {
+    let request = parsed(serde_json::json!({
+      "model":"m","stream":false,"store":false,
+      "input":[
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"run both"}]},
+        {"type":"function_call","call_id":"call-a","name":"a","arguments":"{}"},
+        {"type":"function_call","call_id":"call-b","name":"b","arguments":"{}"},
+        {"type":"function_call_output","call_id":"call-a","output":"a"},
+        {"type":"function_call_output","call_id":"call-b","output":"b"}
+      ]
+    }));
+    let chat = translate_responses_request(
+        &request,
+        "m",
+        &CompatibilityPolicy::generic_openai_compatible(),
+    )
+    .unwrap();
+    let assistant_messages = chat
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            ChatMessage::Assistant { tool_calls, .. } => Some(tool_calls),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(assistant_messages.len(), 1);
+    assert_eq!(assistant_messages[0].len(), 2);
+    assert_eq!(assistant_messages[0][1].id, "call-b");
+}
+
+#[test]
 fn malformed_linkage_arguments_limits_and_unsupported_tools_fail_preflight() {
     let result_first = parsed(serde_json::json!({
       "model":"m","stream":true,"store":false,

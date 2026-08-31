@@ -147,18 +147,16 @@ fn nonstream_and_stream_reasoning_are_suppressed_but_preserved_for_history() {
 }
 
 #[test]
-fn generic_policy_and_stream_reject_deepseek_only_fields() {
+fn generic_policy_forwards_effort_but_stream_rejects_deepseek_only_fields() {
     let source = tool_followup();
-    assert_eq!(
-        translate_responses_request(
-            &source,
-            "deepseek-fixture-model",
-            &CompatibilityPolicy::generic_openai_compatible()
-        )
-        .unwrap_err()
-        .code,
-        AdapterRequestErrorCode::UnsupportedParameter
-    );
+    let translated = translate_responses_request(
+        &source,
+        "deepseek-fixture-model",
+        &CompatibilityPolicy::generic_openai_compatible(),
+    )
+    .unwrap();
+    assert_eq!(translated.reasoning_effort.as_deref(), Some("xhigh"));
+    assert!(translated.thinking.is_none());
 
     let mut generic_stream = StreamingAdapter::new("r", "deepseek-fixture-model", 1);
     generic_stream.start().unwrap();
@@ -168,13 +166,11 @@ fn generic_policy_and_stream_reject_deepseek_only_fields() {
         .unwrap()
         .to_owned()
         + "\n\n";
-    assert_eq!(
-        generic_stream
-            .push_bytes(first_frame.as_bytes())
-            .unwrap_err()
-            .code,
-        StreamErrorCode::ProtocolMismatch
-    );
+    let events = generic_stream.push_bytes(first_frame.as_bytes()).unwrap();
+    assert!(!serde_json::to_string(&events)
+        .unwrap()
+        .contains("reasoning_content"));
+    assert_eq!(generic_stream.reasoning_content(), None);
 }
 
 #[test]

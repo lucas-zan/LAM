@@ -46,6 +46,7 @@ export function ProviderCards({
   onEdit,
   onAttach,
   onDetach,
+  onDelete,
   onTest,
 }: {
   providers: ProviderProfileViewV2[];
@@ -53,6 +54,7 @@ export function ProviderCards({
   onEdit: (provider: ProviderProfileViewV2) => void;
   onAttach: (provider: ProviderProfileViewV2) => void;
   onDetach: (binding: ProfileProviderBindingViewV2) => void;
+  onDelete: (provider: ProviderProfileViewV2) => void;
   onTest: (provider: ProviderProfileViewV2) => void;
 }) {
   if (!providers.length) {
@@ -109,6 +111,15 @@ export function ProviderCards({
               </UIButton>
               <UIButton size="sm" disabled={!attachable} onClick={() => onAttach(provider)}>
                 Attach
+              </UIButton>
+              <UIButton
+                size="sm"
+                variant="danger"
+                disabled={providerBindings.length > 0}
+                title={providerBindings.length ? 'Detach all accounts before deleting' : undefined}
+                onClick={() => onDelete(provider)}
+              >
+                Delete Provider
               </UIButton>
               {providerBindings.map((binding) => (
                 <UIButton
@@ -871,6 +882,7 @@ type CenterDialog =
   | { kind: 'editor'; provider: ProviderProfileViewV2 }
   | { kind: 'account-editor'; profileId: string }
   | { kind: 'attach'; provider: ProviderProfileViewV2 }
+  | { kind: 'delete'; provider: ProviderProfileViewV2 }
   | {
       kind: 'detach';
       provider: ProviderProfileViewV2;
@@ -898,6 +910,7 @@ export function ProviderCenter({
     recoveryMessage,
     apiAccountConnection,
     saveProvider,
+    deleteProvider,
     approveAuthCommand,
     rotateKeychainCredential,
     testProvider,
@@ -993,6 +1006,10 @@ export function ProviderCenter({
             clearPlans();
             setDialog({ kind: 'detach', provider, binding });
           }}
+          onDelete={(provider) => {
+            clearPlans();
+            setDialog({ kind: 'delete', provider });
+          }}
           onTest={(provider) => void testProvider(provider.id)}
         />
         <div className="infoBanner">
@@ -1072,6 +1089,32 @@ export function ProviderCenter({
             onClearPlan={clearPlans}
             onClose={closeDialog}
           />
+        </Modal>
+      ) : null}
+
+      {dialog?.kind === 'delete' ? (
+        <Modal title="Delete Provider" close={closeDialog}>
+          <p>
+            Delete the Provider connection <strong>{dialog.provider.name}</strong>?
+          </p>
+          <p className="statusHint">
+            This removes only the connection configuration. Codex accounts and their files are not
+            deleted.
+          </p>
+          <div className="modalFoot">
+            <UIButton variant="ghost" onClick={closeDialog}>
+              Cancel
+            </UIButton>
+            <UIButton
+              variant="danger"
+              onClick={async () => {
+                await deleteProvider(dialog.provider.id);
+                closeDialog();
+              }}
+            >
+              Delete Provider
+            </UIButton>
+          </div>
         </Modal>
       ) : null}
     </div>

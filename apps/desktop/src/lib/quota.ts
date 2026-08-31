@@ -84,7 +84,10 @@ export function quotaRefreshProfileIds(
   externalApiProfileIds: string[],
 ): string[] {
   const externalIds = new Set(externalApiProfileIds);
-  return accounts.filter((account) => !externalIds.has(account.id)).map((account) => account.id);
+  return accounts
+    .filter((account) => !externalIds.has(account.id))
+    .filter((account) => account.hasAuth)
+    .map((account) => account.id);
 }
 
 export function countAccountsWithQuotaData(

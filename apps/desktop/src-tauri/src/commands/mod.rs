@@ -894,6 +894,18 @@ pub async fn update_provider_v2(
 }
 
 #[tauri::command]
+pub async fn delete_provider_v2(
+    req: localagentmanager_core::DeleteProviderRequestV2,
+) -> Result<
+    localagentmanager_core::DeleteProviderResultV2,
+    localagentmanager_core::StructuredErrorView,
+> {
+    let home = home_root().map_err(localagentmanager_core::StructuredErrorView::from_error)?;
+    run_provider_api_v2(move || localagentmanager_core::delete_provider_service_v2(&home, req))
+        .await
+}
+
+#[tauri::command]
 pub async fn rotate_provider_credential_v2(
     req: localagentmanager_core::RotateProviderCredentialRequestV2,
 ) -> Result<

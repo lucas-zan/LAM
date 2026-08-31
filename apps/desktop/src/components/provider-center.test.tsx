@@ -50,6 +50,7 @@ describe('ProviderCards', () => {
         onEdit={vi.fn()}
         onAttach={vi.fn()}
         onDetach={vi.fn()}
+        onDelete={vi.fn()}
         onTest={onTest}
       />,
     );
@@ -78,6 +79,7 @@ describe('ProviderCards', () => {
         onEdit={vi.fn()}
         onAttach={vi.fn()}
         onDetach={vi.fn()}
+        onDelete={vi.fn()}
         onTest={vi.fn()}
       />,
     );
@@ -87,6 +89,51 @@ describe('ProviderCards', () => {
       false,
     );
     expect(screen.getByText('Gateway adapter route ready')).toBeTruthy();
+  });
+
+  it('offers deletion for an unbound Provider connection', () => {
+    const onDelete = vi.fn();
+    render(
+      <ProviderCards
+        providers={[{ ...provider, usedBy: [], readinessBlockers: [] }]}
+        bindings={[]}
+        onEdit={vi.fn()}
+        onAttach={vi.fn()}
+        onDetach={vi.fn()}
+        onDelete={onDelete}
+        onTest={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Provider' }));
+    expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: 'company' }));
+  });
+
+  it('requires bound accounts to be detached before Provider deletion', () => {
+    render(
+      <ProviderCards
+        providers={[provider]}
+        bindings={[
+          {
+            profileId: 'profile-a',
+            providerId: 'company',
+            selectedModel: 'model-a',
+            routeKind: 'direct',
+            revision: 1,
+            providerRevision: 3,
+          },
+        ]}
+        onEdit={vi.fn()}
+        onAttach={vi.fn()}
+        onDetach={vi.fn()}
+        onDelete={vi.fn()}
+        onTest={vi.fn()}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: 'Delete Provider' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.title).toBe('Detach all accounts before deleting');
   });
 });
 

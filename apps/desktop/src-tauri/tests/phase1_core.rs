@@ -1619,6 +1619,31 @@ fn quota_snapshot_uses_unavailable_state_without_fake_realtime_values() {
 }
 
 #[test]
+fn quota_skips_accounts_without_auth_material() {
+    let home = temp_home("quota-no-auth");
+    seed_codex_home(&home, "a");
+    // Create a profile directory with codex signals but no auth.json / auth-f.json.
+    let no_auth_home = home.join(".codex-nologin");
+    fs::create_dir_all(no_auth_home.join("sessions")).unwrap();
+    write(&no_auth_home.join("config.toml"), "model = \"gpt-5-codex\"\n");
+
+    // force refresh must not spawn an app-server probe for the unauthenticated profile.
+    let snapshot = get_profile_quota(&home, "nologin", true).unwrap();
+    assert_eq!(snapshot.profile_id, "nologin");
+    assert_eq!(snapshot.source, "usage_unavailable");
+    assert_eq!(snapshot.staleness, "unavailable");
+    assert!(snapshot
+        .alerts
+        .iter()
+        .any(|alert| alert.contains("Login needed")));
+
+    // Bulk refresh includes only the authenticated profile snapshot.
+    let refreshed = refresh_all_quotas(&home, None).unwrap();
+    assert!(refreshed.snapshots.iter().any(|s| s.profile_id == "a"));
+    assert!(!refreshed.snapshots.iter().any(|s| s.profile_id == "nologin"));
+}
+
+#[test]
 fn refresh_all_quotas_skips_external_api_bindings() {
     let home = temp_home("quota-external-api");
     seed_codex_home(&home, "external");

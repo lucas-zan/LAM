@@ -107,6 +107,17 @@ pub fn get_profile_quota(
     if force_refresh && external_api_profile_ids(home_root)?.contains(profile_id) {
         return Ok(external_api_quota_snapshot(profile_id));
     }
+    // Accounts without any auth material have no realtime quota to read; skip the
+    // app-server probe entirely so we do not spawn a process (or wait its timeout)
+    // for a profile that requires login.
+    if !account_has_auth_material(&account) {
+        if let Some(cached) = read_quota_cache(home_root, profile_id)? {
+            return Ok(cached);
+        }
+        let mut snapshot = unavailable_quota_snapshot(profile_id, None);
+        snapshot.alerts.push("Login needed; quota refresh skipped".into());
+        return Ok(snapshot);
+    }
     if force_refresh && app_server_quota_enabled() {
         match try_codex_app_server_quota(home_root, &account) {
             Ok(mut snapshot) => {
@@ -167,10 +178,20 @@ pub fn refresh_all_quotas(
     let accounts = list_accounts(home_root)?;
     let requested = profile_ids.unwrap_or_else(|| accounts.iter().map(|a| a.id.clone()).collect());
     let external_api_ids = external_api_profile_ids(home_root)?;
+    let accounts_by_id: std::collections::HashMap<String, &CodexAccount> = accounts
+        .iter()
+        .map(|account| (account.id.clone(), account))
+        .collect();
     let mut snapshots = Vec::new();
     let mut warnings = Vec::new();
     for profile_id in requested {
         if external_api_ids.contains(&profile_id) {
+            continue;
+        }
+        if accounts_by_id
+            .get(&profile_id)
+            .is_some_and(|account| !account_has_auth_material(account))
+        {
             continue;
         }
         match get_profile_quota(home_root, &profile_id, true) {
@@ -295,6 +316,11 @@ fn quota_fallback_warning(profile_id: &str, snapshot: &UsageQuotaSnapshot) -> St
         "{profile_id}: realtime quota unavailable; using {} quota{detail}",
         snapshot.staleness
     )
+}
+
+fn account_has_auth_material(account: &CodexAccount) -> bool {
+    account.codex_home.join("auth.json").exists()
+        || account.codex_home.join("auth-f.json").exists()
 }
 
 fn external_api_profile_ids(home_root: &Path) -> Result<std::collections::HashSet<String>> {

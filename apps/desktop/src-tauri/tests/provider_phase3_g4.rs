@@ -299,7 +299,15 @@ async fn deepseek_attach_real_gateway_codex_requests_and_detach() {
     let model = &catalog["models"][0];
     assert_eq!(model["slug"], "deepseek-chat");
     assert!(model.get("id").is_none());
-    assert_eq!(model["supported_reasoning_levels"], serde_json::json!([]));
+    assert_eq!(
+        model["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|level| level["effort"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["low", "medium", "high", "xhigh", "max", "ultra"]
+    );
     assert_eq!(model["supports_parallel_tool_calls"], false);
 
     Mock::given(method("POST"))

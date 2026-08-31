@@ -7,11 +7,13 @@ import * as api from '../lib/api';
 import type { ProviderProfileViewV2 } from '../lib/types';
 
 vi.mock('../lib/api', () => ({
+  inTauri: vi.fn(() => true),
   listProvidersV2: vi.fn(),
   listProfileProviderBindingsV2: vi.fn(),
   createProviderV2: vi.fn(),
   createProviderWithKeychainV2: vi.fn(),
   updateProviderV2: vi.fn(),
+  deleteProviderV2: vi.fn(),
   rotateProviderCredentialV2: vi.fn(),
   planAttachProviderV2: vi.fn(),
   executeAttachProviderV2: vi.fn(),
@@ -47,6 +49,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   useProviderStore.setState({
     providers: [provider],
+    providerStoreRevision: 4,
     bindings: [],
     attachPlan: null,
     detachPlan: null,
@@ -56,6 +59,10 @@ beforeEach(() => {
   useAppStore.setState({ status: 'Ready', error: '' });
   vi.mocked(api.listProvidersV2).mockResolvedValue({ revision: 4, providers: [provider] });
   vi.mocked(api.listProfileProviderBindingsV2).mockResolvedValue([]);
+  vi.mocked(api.deleteProviderV2).mockResolvedValue({
+    providerId: 'company',
+    storeRevision: 5,
+  });
   vi.mocked(api.testProviderUpstreamV2).mockResolvedValue({
     providerId: 'company',
     ok: true,
@@ -117,6 +124,23 @@ describe('ProviderCenter integrated flow', () => {
       'Direct Responses route and credential reference validated',
     );
     expect(useAppStore.getState().status).not.toContain('token');
+  });
+
+  it('confirms and deletes only the Provider connection', async () => {
+    render(<ProviderCenter profiles={['profile-a']} onAddExternalApi={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Provider' }));
+    expect(screen.getByRole('heading', { name: 'Delete Provider' })).toBeTruthy();
+    expect(screen.getByText(/Codex accounts and their files are not deleted/)).toBeTruthy();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete Provider' })[1]);
+
+    await waitFor(() =>
+      expect(api.deleteProviderV2).toHaveBeenCalledWith({
+        expectedRevision: 4,
+        providerId: 'company',
+      }),
+    );
+    expect(api.listProvidersV2).toHaveBeenCalledOnce();
   });
 
   it('routes an exclusive native Responses connection to the API account editor', async () => {

@@ -906,7 +906,7 @@ function TrayAccountList({
                       </div>
                     </div>
                     <div className="trayAccountActions">
-                      {!isApiAccount ? (
+                      {!isApiAccount && account.hasAuth ? (
                         <button
                           type="button"
                           className={`trayAccountRefreshButton ${isRefreshingQuota ? 'isRefreshing' : ''}`}
@@ -1213,6 +1213,10 @@ export function TrayQuotaPanel() {
 
   async function refreshAccountQuota(account: CodexAccount) {
     if (apiAccountIds.includes(account.id)) return;
+    if (!account.hasAuth) {
+      setStatus(`${account.displayName} needs login to refresh quota`);
+      return;
+    }
     setRefreshingQuotaIds((ids) => Array.from(new Set([...ids, account.id])));
     setStatus(`Refreshing ${account.displayName}...`);
     try {

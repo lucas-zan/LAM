@@ -190,6 +190,18 @@ pub struct UpstreamClientConfig {
     pub total_timeout: Duration,
     pub max_response_bytes: usize,
     pub max_inflight: usize,
+    /// Maximum extra connection-establishment attempts after the first try.
+    /// Only connection-phase failures (the request body never reached the
+    /// upstream) are retried; failures after the request was sent are never
+    /// retried automatically.
+    pub connect_retries: u8,
+    /// Delay between connection retry attempts.
+    pub connect_retry_delay: Duration,
+    /// Maximum extra attempts when the upstream accepted the connection but
+    /// did not produce the first response byte in time. The request may have
+    /// reached the upstream, so this is deliberately capped low to limit the
+    /// risk of duplicate processing.
+    pub first_byte_retries: u8,
 }
 
 impl UpstreamClientConfig {
@@ -201,6 +213,9 @@ impl UpstreamClientConfig {
             total_timeout: Duration::from_secs(2),
             max_response_bytes: 1024 * 1024,
             max_inflight: 4,
+            connect_retries: 0,
+            connect_retry_delay: Duration::from_millis(50),
+            first_byte_retries: 0,
         }
     }
 }
@@ -337,6 +352,7 @@ impl SecureUpstreamClient {
             || config.first_byte_timeout.is_zero()
             || config.stream_idle_timeout.is_zero()
             || config.total_timeout.is_zero()
+            || config.connect_retry_delay.is_zero()
         {
             return Err(AppError::new(
                 "UPSTREAM_CLIENT_LIMIT_INVALID",
@@ -379,35 +395,69 @@ impl SecureUpstreamClient {
             )
         })?;
         let url = join_controlled_path(&request.base_url, &request.controlled_path)?;
-        let addresses = tokio::select! {
-            _ = request.cancellation.cancelled() => return Err(cancelled()),
-            result = self.policy.validate_and_resolve(&url) => result?,
-        };
-        if addresses.is_empty() {
-            return Err(AppError::new(
-                "UPSTREAM_DNS_FAILED",
-                "upstream DNS returned no addresses",
-            ));
-        }
         let host = url.host_str().ok_or_else(target_forbidden)?.to_owned();
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .connect_timeout(self.config.connect_timeout)
-            .pool_max_idle_per_host(4)
-            .resolve_to_addrs(&host, &addresses)
-            .build()
-            .map_err(|_| {
-                AppError::new(
-                    "UPSTREAM_CLIENT_BUILD_FAILED",
-                    "upstream client initialization failed",
-                )
-            })?;
         let auth = self.resolve_auth(&request.auth)?;
         let deadline = Instant::now() + self.config.total_timeout;
         let mut attempts = 0_u8;
+        let mut first_byte_attempts = 0_u8;
+        let mut client = None;
         let response = loop {
             attempts += 1;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(timeout_error("UPSTREAM_TOTAL_TIMEOUT", attempts));
+            }
+            // DNS resolution happens before any request is sent, so a transient
+            // DNS failure is safe to retry within the connect budget.
+            let addresses = tokio::select! {
+                _ = request.cancellation.cancelled() => return Err(cancelled()),
+                result = self.policy.validate_and_resolve(&url) => result,
+            };
+            let addresses = match addresses {
+                Ok(addresses) if addresses.is_empty() => {
+                    let err = AppError::new(
+                        "UPSTREAM_DNS_FAILED",
+                        "upstream DNS returned no addresses",
+                    );
+                    if attempts <= self.config.connect_retries {
+                        let delay = self.config.connect_retry_delay.min(remaining);
+                        tokio::select! {
+                            _ = request.cancellation.cancelled() => return Err(cancelled()),
+                            _ = tokio::time::sleep(delay) => {}
+                        }
+                        continue;
+                    }
+                    return Err(err);
+                }
+                Ok(addresses) => addresses,
+                Err(error) if error.code == "UPSTREAM_DNS_FAILED" && attempts <= self.config.connect_retries => {
+                    let delay = self.config.connect_retry_delay.min(remaining);
+                    tokio::select! {
+                        _ = request.cancellation.cancelled() => return Err(cancelled()),
+                        _ = tokio::time::sleep(delay) => {}
+                    }
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            if client.is_none() {
+                client = Some(
+                    reqwest::Client::builder()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .no_proxy()
+                        .connect_timeout(self.config.connect_timeout)
+                        .pool_max_idle_per_host(4)
+                        .resolve_to_addrs(&host, &addresses)
+                        .build()
+                        .map_err(|_| {
+                            AppError::new(
+                                "UPSTREAM_CLIENT_BUILD_FAILED",
+                                "upstream client initialization failed",
+                            )
+                        })?,
+                );
+            }
+            let client = client.as_ref().expect("client built above");
             let mut builder = client.post(url.clone()).body(request.body.clone());
             for (name, value) in request.codex_headers.iter() {
                 builder = builder.header(name, value);
@@ -416,10 +466,6 @@ impl SecureUpstreamClient {
             if let Some((name, value)) = &auth {
                 builder = builder.header(name, value);
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(timeout_error("UPSTREAM_TOTAL_TIMEOUT", attempts));
-            }
             let first_byte = self.config.first_byte_timeout.min(remaining);
             let result = tokio::select! {
                 _ = request.cancellation.cancelled() => return Err(cancelled()),
@@ -427,9 +473,33 @@ impl SecureUpstreamClient {
             };
             match result {
                 Ok(Ok(response)) => break response,
-                Ok(Err(error)) if error.is_connect() && attempts == 1 => continue,
+                Ok(Err(error)) if error.is_connect() && attempts <= self.config.connect_retries => {
+                    // Connection-phase failure: the request body never reached the
+                    // upstream, so retrying is safe. Back off briefly before the
+                    // next attempt while staying inside total_timeout/cancellation.
+                    let delay = self.config.connect_retry_delay.min(remaining);
+                    tokio::select! {
+                        _ = request.cancellation.cancelled() => return Err(cancelled()),
+                        _ = tokio::time::sleep(delay) => {}
+                    }
+                    continue;
+                }
                 Ok(Err(_)) => return Err(transport_error(attempts)),
-                Err(_) => return Err(timeout_error("UPSTREAM_FIRST_BYTE_TIMEOUT", attempts)),
+                Err(_) => {
+                    // The connection was accepted but no first byte arrived.
+                    // The request may have reached the upstream, so allow only
+                    // a small, separate retry budget.
+                    first_byte_attempts += 1;
+                    if first_byte_attempts <= self.config.first_byte_retries {
+                        let delay = self.config.connect_retry_delay.min(remaining);
+                        tokio::select! {
+                            _ = request.cancellation.cancelled() => return Err(cancelled()),
+                            _ = tokio::time::sleep(delay) => {}
+                        }
+                        continue;
+                    }
+                    return Err(timeout_error("UPSTREAM_FIRST_BYTE_TIMEOUT", attempts));
+                }
             }
         };
         let status = response.status().as_u16();

@@ -628,6 +628,14 @@ export type CreateProviderRequestV2 = {
   provider: ProviderDefinitionV2;
 };
 export type UpdateProviderRequestV2 = CreateProviderRequestV2;
+export type DeleteProviderRequestV2 = {
+  expectedRevision: number;
+  providerId: string;
+};
+export type DeleteProviderResultV2 = {
+  providerId: string;
+  storeRevision: number;
+};
 
 export type DiscoverProviderModelsRequestV2 = {
   baseUrl: string;

@@ -1,4 +1,8 @@
+use localagentmanager_core::adapters::protocol::{parse_responses_request, ResponsesRequest};
 use localagentmanager_core::adapters::protocol::{MAX_EVENT_CHANNEL_CAPACITY, MAX_SSE_FRAME_BYTES};
+use localagentmanager_core::adapters::request::{
+    translate_responses_request_with_context, CompatibilityPolicy,
+};
 use localagentmanager_core::adapters::sse::*;
 
 fn chunk(
@@ -252,4 +256,179 @@ fn cancellation_and_backpressure_have_single_terminal_outcomes() {
             .code,
         StreamErrorCode::BackpressureOverflow
     );
+}
+
+#[test]
+fn namespace_tool_stream_restores_original_name_and_namespace() {
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "model":"m",
+        "stream":true,
+        "store":false,
+        "tools":[{"type":"namespace","name":"remote","tools":[
+            {"type":"function","name":"lookup","parameters":{"type":"object"}}
+        ]}],
+        "input":"lookup"
+    }))
+    .unwrap();
+    let request: ResponsesRequest = parse_responses_request(&bytes).unwrap();
+    let translated = translate_responses_request_with_context(
+        &request,
+        "m",
+        &CompatibilityPolicy::generic_openai_compatible(),
+    )
+    .unwrap();
+    let mut adapter =
+        StreamingAdapter::new_with_tool_context("resp-namespace", "m", 1, translated.context);
+    adapter.start().unwrap();
+    let chunk = serde_json::json!({
+      "id":"chat","object":"chat.completion.chunk","created":1,"model":"m",
+      "choices":[{"index":0,"delta":{"tool_calls":[
+        {"index":0,"id":"call-namespace","type":"function","function":{"name":"remote__lookup","arguments":"{}"}}
+      ]},"finish_reason":"tool_calls"}]
+    });
+    let mut events = adapter
+        .push_bytes(format!("data: {chunk}\n\ndata: [DONE]\n\n").as_bytes())
+        .unwrap();
+    adapter.end_of_stream().unwrap();
+    let terminal = events.pop().unwrap();
+    let completed = terminal.completed_response().unwrap();
+    assert!(matches!(
+        &completed.output[0],
+        localagentmanager_core::adapters::nonstream::ResponsesOutputItem::FunctionCall {
+            name, namespace, ..
+        } if name == "lookup" && namespace.as_deref() == Some("remote")
+    ));
+}
+
+#[test]
+fn streamed_tool_identity_may_arrive_after_arguments_without_data_loss() {
+    let mut adapter = StreamingAdapter::new("resp-late-tool", "m", 1);
+    adapter.start().unwrap();
+    let frames = [
+        serde_json::json!({
+          "id":"chat","object":"chat.completion.chunk","created":1,"model":"m",
+          "choices":[{"index":0,"delta":{"tool_calls":[
+            {"index":0,"function":{"arguments":"{\"x\":"}}
+          ]}}]
+        }),
+        serde_json::json!({
+          "id":"chat","object":"chat.completion.chunk","created":1,"model":"m",
+          "choices":[{"index":0,"delta":{"tool_calls":[
+            {"index":0,"id":"call-late","type":"function","function":{"name":"lookup","arguments":"1}"}}
+          ]},"finish_reason":"tool_calls"}]
+        }),
+    ];
+    let mut events = Vec::new();
+    for frame in frames {
+        events.extend(
+            adapter
+                .push_bytes(format!("data: {frame}\n\n").as_bytes())
+                .unwrap(),
+        );
+    }
+    events.extend(adapter.push_bytes(b"data: [DONE]\n\n").unwrap());
+    adapter.end_of_stream().unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind() == "response.output_item.added")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter_map(|event| match event {
+                ResponsesStreamEvent::FunctionCallArgumentsDelta { delta, .. } =>
+                    Some(delta.as_str()),
+                _ => None,
+            })
+            .collect::<String>(),
+        "{\"x\":1}"
+    );
+    let terminal = events.pop().unwrap();
+    let completed = terminal.completed_response().unwrap();
+    assert!(matches!(
+        &completed.output[0],
+        localagentmanager_core::adapters::nonstream::ResponsesOutputItem::FunctionCall {
+            call_id, name, arguments, ..
+        } if call_id == "call-late" && name == "lookup" && arguments == "{\"x\":1}"
+    ));
+}
+
+#[test]
+fn streamed_custom_tool_call_uses_codex_custom_input_events() {
+    let request: ResponsesRequest = parse_responses_request(
+        &serde_json::to_vec(&serde_json::json!({
+            "model":"m","stream":true,"store":false,
+            "tools":[{"type":"custom","name":"apply_patch","description":"patch","format":{"type":"text"}}],
+            "input":"edit"
+        })).unwrap(),
+    ).unwrap();
+    let translated = translate_responses_request_with_context(
+        &request,
+        "m",
+        &CompatibilityPolicy::generic_openai_compatible(),
+    )
+    .unwrap();
+    let mut adapter =
+        StreamingAdapter::new_with_tool_context("resp-custom", "m", 1, translated.context);
+    adapter.start().unwrap();
+    let frames = [
+        serde_json::json!({
+          "id":"chat","object":"chat.completion.chunk","created":1,"model":"m",
+          "choices":[{"index":0,"delta":{"tool_calls":[
+            {"index":0,"id":"custom-1","type":"function","function":{"name":"apply_patch","arguments":"{\"input\":\""}}
+          ]}}]
+        }),
+        serde_json::json!({
+          "id":"chat","object":"chat.completion.chunk","created":1,"model":"m",
+          "choices":[{"index":0,"delta":{"tool_calls":[
+            {"index":0,"function":{"arguments":"*** End Patch\"}"}}
+          ]},"finish_reason":"tool_calls"}]
+        }),
+    ];
+    let mut events = Vec::new();
+    for frame in frames {
+        events.extend(
+            adapter
+                .push_bytes(format!("data: {frame}\n\n").as_bytes())
+                .unwrap(),
+        );
+    }
+    events.extend(adapter.push_bytes(b"data: [DONE]\n\n").unwrap());
+    adapter.end_of_stream().unwrap();
+    assert!(events
+        .iter()
+        .any(|event| event.kind() == "response.custom_tool_call_input.delta"));
+    let terminal = events.last().unwrap().completed_response().unwrap();
+    assert!(matches!(
+        &terminal.output[0],
+        localagentmanager_core::adapters::nonstream::ResponsesOutputItem::CustomToolCall { input, .. }
+            if input == "*** End Patch"
+    ));
+}
+
+#[test]
+fn generic_stream_tolerates_reasoning_extensions_and_legacy_function_finish() {
+    let mut adapter = StreamingAdapter::new("resp-legacy", "bound-model", 1);
+    adapter.start().unwrap();
+    let frame = chunk(
+        serde_json::json!({
+            "reasoning_content":"provider-private",
+            "function_call":{"name":"local_shell","arguments":"{\"command\":[\"pwd\"]}"}
+        }),
+        Some("function_call"),
+        None,
+    );
+    let mut events = adapter
+        .push_bytes(format!("data: {frame}\n\ndata: [DONE]\n\n").as_bytes())
+        .unwrap();
+    adapter.end_of_stream().unwrap();
+    let terminal = events.pop().unwrap();
+    let response = terminal.completed_response().unwrap();
+    assert!(matches!(
+        &response.output[0],
+        localagentmanager_core::adapters::nonstream::ResponsesOutputItem::LocalShellCall { .. }
+    ));
 }

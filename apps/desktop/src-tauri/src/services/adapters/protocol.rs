@@ -87,6 +87,10 @@ pub struct ResponsesRequest {
     pub text: Option<ResponsesTextConfig>,
     #[serde(default)]
     pub client_metadata: BTreeMap<String, String>,
+    #[serde(default)]
+    pub service_tier: Option<String>,
+    #[serde(default)]
+    pub stream_options: Option<ResponsesStreamOptions>,
 }
 
 impl fmt::Debug for ResponsesRequest {
@@ -129,6 +133,8 @@ pub struct NamedToolChoice {
     #[serde(rename = "type")]
     pub kind: FunctionType,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -144,15 +150,41 @@ pub struct ReasoningConfig {
     pub effort: Option<ReasoningEffort>,
     #[serde(default)]
     pub summary: Option<String>,
+    #[serde(default)]
+    pub context: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResponsesStreamOptions {
+    #[serde(default)]
+    pub reasoning_summary_delivery: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningEffort {
+    None,
     Low,
     Medium,
     High,
     Xhigh,
+    Max,
+    Ultra,
+}
+
+impl ReasoningEffort {
+    pub fn as_wire_value(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Low => Some("low"),
+            Self::Medium => Some("medium"),
+            Self::High => Some("high"),
+            Self::Xhigh => Some("xhigh"),
+            Self::Max => Some("max"),
+            Self::Ultra => Some("ultra"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -180,21 +212,120 @@ pub enum TextFormat {
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponsesInputItem {
+    AdditionalTools {
+        #[serde(default)]
+        id: Option<String>,
+        role: String,
+        tools: Vec<ResponsesTool>,
+    },
     Message {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
         role: ResponsesRole,
         content: Vec<ResponsesContentPart>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<String>,
+    },
+    AgentMessage {
+        #[serde(default)]
+        id: Option<String>,
+        author: String,
+        recipient: String,
+        content: Vec<Value>,
+    },
+    LocalShellCall {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        call_id: Option<String>,
+        status: String,
+        action: Value,
     },
     FunctionCall {
         call_id: String,
         name: String,
         arguments: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        namespace: Option<String>,
         #[serde(default)]
         id: Option<String>,
     },
     FunctionCallOutput {
         call_id: String,
-        output: String,
+        output: Value,
     },
+    McpToolCallOutput {
+        call_id: String,
+        output: Value,
+    },
+    ToolSearchCall {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        call_id: Option<String>,
+        #[serde(default)]
+        status: Option<String>,
+        execution: String,
+        arguments: Value,
+    },
+    CustomToolCall {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        status: Option<String>,
+        call_id: String,
+        name: String,
+        #[serde(default)]
+        namespace: Option<String>,
+        input: String,
+    },
+    CustomToolCallOutput {
+        #[serde(default)]
+        id: Option<String>,
+        call_id: String,
+        #[serde(default)]
+        name: Option<String>,
+        output: Value,
+    },
+    ToolSearchOutput {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        call_id: Option<String>,
+        status: String,
+        execution: String,
+        tools: Vec<Value>,
+    },
+    WebSearchCall {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        status: Option<String>,
+        #[serde(default)]
+        action: Option<Value>,
+    },
+    ImageGenerationCall {
+        #[serde(default)]
+        id: Option<String>,
+        status: String,
+        #[serde(default)]
+        revised_prompt: Option<String>,
+        #[serde(default)]
+        result: Option<String>,
+    },
+    #[serde(alias = "compaction_summary")]
+    Compaction {
+        #[serde(default)]
+        id: Option<String>,
+        encrypted_content: String,
+    },
+    ContextCompaction {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        encrypted_content: Option<String>,
+    },
+    CompactionTrigger,
     Reasoning {
         #[serde(flatten)]
         options: BTreeMap<String, Value>,
@@ -204,18 +335,46 @@ pub enum ResponsesInputItem {
 impl fmt::Debug for ResponsesInputItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Message { role, content } => f
+            Self::AdditionalTools { role, tools, .. } => f
+                .debug_struct("AdditionalTools")
+                .field("role", role)
+                .field("tools", &"<redacted>")
+                .field("tool_count", &tools.len())
+                .finish(),
+            Self::Message { role, content, .. } => f
                 .debug_struct("Message")
                 .field("role", role)
                 .field("content", &"<redacted>")
                 .field("content_count", &content.len())
                 .finish(),
+            Self::AgentMessage {
+                author,
+                recipient,
+                content,
+                ..
+            } => f
+                .debug_struct("AgentMessage")
+                .field("author", author)
+                .field("recipient", recipient)
+                .field("content", &"<redacted>")
+                .field("content_count", &content.len())
+                .finish(),
+            Self::LocalShellCall { call_id, .. } => f
+                .debug_struct("LocalShellCall")
+                .field("call_id", call_id)
+                .field("action", &"<redacted>")
+                .finish(),
             Self::FunctionCall {
-                call_id, name, id, ..
+                call_id,
+                name,
+                namespace,
+                id,
+                ..
             } => f
                 .debug_struct("FunctionCall")
                 .field("call_id", call_id)
                 .field("name", name)
+                .field("namespace", namespace)
                 .field("arguments", &"<redacted>")
                 .field("id", id)
                 .finish(),
@@ -224,6 +383,54 @@ impl fmt::Debug for ResponsesInputItem {
                 .field("call_id", call_id)
                 .field("output", &"<redacted>")
                 .finish(),
+            Self::McpToolCallOutput { call_id, .. } => f
+                .debug_struct("McpToolCallOutput")
+                .field("call_id", call_id)
+                .field("output", &"<redacted>")
+                .finish(),
+            Self::ToolSearchCall { call_id, .. } => f
+                .debug_struct("ToolSearchCall")
+                .field("call_id", call_id)
+                .field("arguments", &"<redacted>")
+                .finish(),
+            Self::CustomToolCall { call_id, name, .. } => f
+                .debug_struct("CustomToolCall")
+                .field("call_id", call_id)
+                .field("name", name)
+                .field("input", &"<redacted>")
+                .finish(),
+            Self::CustomToolCallOutput { call_id, .. } => f
+                .debug_struct("CustomToolCallOutput")
+                .field("call_id", call_id)
+                .field("output", &"<redacted>")
+                .finish(),
+            Self::ToolSearchOutput { call_id, .. } => f
+                .debug_struct("ToolSearchOutput")
+                .field("call_id", call_id)
+                .field("tools", &"<redacted>")
+                .finish(),
+            Self::WebSearchCall { id, .. } => f
+                .debug_struct("WebSearchCall")
+                .field("id", id)
+                .field("action", &"<redacted>")
+                .finish(),
+            Self::ImageGenerationCall { id, status, .. } => f
+                .debug_struct("ImageGenerationCall")
+                .field("id", id)
+                .field("status", status)
+                .field("result", &"<redacted>")
+                .finish(),
+            Self::Compaction { id, .. } => f
+                .debug_struct("Compaction")
+                .field("id", id)
+                .field("encrypted_content", &"<redacted>")
+                .finish(),
+            Self::ContextCompaction { id, .. } => f
+                .debug_struct("ContextCompaction")
+                .field("id", id)
+                .field("encrypted_content", &"<redacted>")
+                .finish(),
+            Self::CompactionTrigger => f.debug_struct("CompactionTrigger").finish(),
             Self::Reasoning { options } => f
                 .debug_struct("Reasoning")
                 .field("options", &"<redacted>")
@@ -258,7 +465,7 @@ pub enum ResponsesContentPart {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponsesTool {
     Function {
@@ -275,6 +482,20 @@ pub enum ResponsesTool {
         #[serde(default)]
         description: Option<String>,
         tools: Value,
+    },
+    ToolSearch {
+        execution: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        parameters: Value,
+    },
+    Custom {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        format: Value,
     },
     WebSearch {
         #[serde(flatten)]
@@ -294,8 +515,10 @@ where
     }
     match WireInput::deserialize(deserializer)? {
         WireInput::Text(text) => Ok(vec![ResponsesInputItem::Message {
+            id: None,
             role: ResponsesRole::User,
             content: vec![ResponsesContentPart::InputText { text }],
+            phase: None,
         }]),
         WireInput::Items(items) => Ok(items),
     }
@@ -444,6 +667,8 @@ fn validate_request_shape(value: &Value) -> Result<(), ProtocolError> {
         "max_output_tokens",
         "text",
         "client_metadata",
+        "service_tier",
+        "stream_options",
     ]);
     if let Some(field) = object.keys().find(|field| !known.contains(field.as_str())) {
         return Err(ProtocolError::new(
@@ -461,6 +686,9 @@ fn validate_input_parts(input: Option<&Value>) -> Result<(), ProtocolError> {
         return Ok(());
     };
     for (item_index, item) in items.iter().enumerate() {
+        if item.get("type").and_then(Value::as_str) != Some("message") {
+            continue;
+        }
         let Some(parts) = item.get("content").and_then(Value::as_array) else {
             continue;
         };
@@ -509,22 +737,34 @@ pub struct ChatCompletionRequest {
     pub messages: Vec<ChatMessage>,
     #[serde(default)]
     pub stream: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<ChatStreamOptions>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
     #[serde(default)]
     pub tools: Vec<ChatTool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ChatToolChoice>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parallel_tool_calls: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ChatResponseFormat>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<ThinkingConfig>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search_options: Option<ChatWebSearchOptions>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ChatWebSearchOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_context_size: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_location: Option<Value>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -649,7 +889,6 @@ pub struct ThinkingConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ChatCompletionResponse {
     pub id: String,
     pub object: String,
@@ -663,7 +902,6 @@ pub struct ChatCompletionResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ChatChoice {
     pub index: u32,
     pub message: ChatAssistantMessage,
@@ -673,18 +911,23 @@ pub struct ChatChoice {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ChatAssistantMessage {
     pub role: String,
+    #[serde(default)]
     pub content: Option<String>,
     #[serde(default)]
     pub reasoning_content: Option<String>,
     #[serde(default)]
     pub tool_calls: Option<Vec<ChatToolCall>>,
+    #[serde(default)]
+    pub annotations: Vec<Value>,
+    #[serde(default)]
+    pub refusal: Option<String>,
+    #[serde(default)]
+    pub function_call: Option<ChatFunctionCall>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ChatToolCall {
     pub id: String,
     #[serde(rename = "type")]
@@ -693,14 +936,12 @@ pub struct ChatToolCall {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ChatFunctionCall {
     pub name: String,
     pub arguments: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ChatUsage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
@@ -728,7 +969,6 @@ pub struct CompletionTokenDetails {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ChatChunk {
     pub id: String,
     pub object: String,
@@ -742,7 +982,6 @@ pub struct ChatChunk {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ChatChunkChoice {
     pub index: u32,
     pub delta: ChatDelta,
@@ -753,7 +992,6 @@ pub struct ChatChunkChoice {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ChatDelta {
     #[serde(default)]
     pub role: Option<String>,
@@ -763,10 +1001,15 @@ pub struct ChatDelta {
     pub reasoning_content: Option<String>,
     #[serde(default)]
     pub tool_calls: Vec<ChatToolCallDelta>,
+    #[serde(default)]
+    pub annotations: Vec<Value>,
+    #[serde(default)]
+    pub refusal: Option<String>,
+    #[serde(default)]
+    pub function_call: Option<ChatFunctionCallDelta>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ChatToolCallDelta {
     pub index: u32,
     #[serde(default)]
@@ -778,7 +1021,6 @@ pub struct ChatToolCallDelta {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ChatFunctionCallDelta {
     #[serde(default)]
     pub name: Option<String>,

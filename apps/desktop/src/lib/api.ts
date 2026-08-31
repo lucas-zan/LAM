@@ -56,6 +56,8 @@ import type {
   UsageSummaryRequest,
   UsageThreadSummary,
   CreateProviderRequestV2,
+  DeleteProviderRequestV2,
+  DeleteProviderResultV2,
   CreateProviderWithKeychainRequestV2,
   UpdateProviderRequestV2,
   ProviderListViewV2,
@@ -571,6 +573,12 @@ export async function updateProviderV2(
   req: UpdateProviderRequestV2,
 ): Promise<ProviderProfileViewV2> {
   return invoke<ProviderProfileViewV2>('update_provider_v2', { req });
+}
+
+export async function deleteProviderV2(
+  req: DeleteProviderRequestV2,
+): Promise<DeleteProviderResultV2> {
+  return invoke<DeleteProviderResultV2>('delete_provider_v2', { req });
 }
 
 export async function rotateProviderCredentialV2(

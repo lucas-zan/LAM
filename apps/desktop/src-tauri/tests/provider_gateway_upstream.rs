@@ -132,6 +132,9 @@ fn client(server: &MockServer, credentials: MapCredentials) -> SecureUpstreamCli
             total_timeout: Duration::from_secs(2),
             max_response_bytes: 1024 * 1024,
             max_inflight: 4,
+            connect_retries: 0,
+            connect_retry_delay: Duration::from_millis(10),
+            first_byte_retries: 0,
         },
         Arc::new(TestPolicy(*server.address())),
         Arc::new(credentials),
@@ -341,7 +344,7 @@ async fn cancellation_and_response_limit_abort_transport() {
 }
 
 #[tokio::test]
-async fn proven_connect_failure_uses_exactly_one_bounded_retry() {
+async fn connect_failure_with_zero_configured_retries_tries_once() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     drop(listener);
@@ -364,5 +367,155 @@ async fn proven_connect_failure_uses_exactly_one_bounded_retry() {
         .await
         .unwrap_err();
     assert_eq!(error.code, "UPSTREAM_TRANSPORT_FAILED");
+    assert_eq!(error.details.unwrap()["attempts"], 1);
+}
+
+#[tokio::test]
+async fn connect_failure_retries_up_to_configured_budget_within_timeout() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let config = UpstreamClientConfig {
+        connect_retries: 2,
+        connect_retry_delay: Duration::from_millis(20),
+        ..UpstreamClientConfig::for_test()
+    };
+    let transport = SecureUpstreamClient::new(
+        config,
+        Arc::new(TestPolicy(address)),
+        Arc::new(MapCredentials::default()),
+    )
+    .unwrap();
+    let error = transport
+        .send(UpstreamRequest {
+            base_url: format!("http://provider.test:{}/api/v1", address.port()),
+            controlled_path: "chat/completions".into(),
+            auth: UpstreamAuth::None,
+            body: b"{}".to_vec(),
+            content_type: "application/json".into(),
+            codex_headers: Default::default(),
+            cancellation: GatewayCancellation::new(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "UPSTREAM_TRANSPORT_FAILED");
+    // 1 initial attempt + 2 configured retries.
+    assert_eq!(error.details.unwrap()["attempts"], 3);
+}
+
+#[tokio::test]
+async fn connect_failure_respects_total_timeout_while_retrying() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let config = UpstreamClientConfig {
+        total_timeout: Duration::from_millis(80),
+        connect_retries: 5,
+        connect_retry_delay: Duration::from_millis(50),
+        ..UpstreamClientConfig::for_test()
+    };
+    let transport = SecureUpstreamClient::new(
+        config,
+        Arc::new(TestPolicy(address)),
+        Arc::new(MapCredentials::default()),
+    )
+    .unwrap();
+    let error = transport
+        .send(UpstreamRequest {
+            base_url: format!("http://provider.test:{}/api/v1", address.port()),
+            controlled_path: "chat/completions".into(),
+            auth: UpstreamAuth::None,
+            body: b"{}".to_vec(),
+            content_type: "application/json".into(),
+            codex_headers: Default::default(),
+            cancellation: GatewayCancellation::new(),
+        })
+        .await
+        .unwrap_err();
+    // total_timeout (80ms) cuts retries short. Either the deadline expires
+    // between attempts (UPSTREAM_TOTAL_TIMEOUT) or the final connect fails
+    // first (UPSTREAM_TRANSPORT_FAILED); both are acceptable, and the attempt
+    // count must stay well below the configured 6.
+    assert!(
+        error.code == "UPSTREAM_TRANSPORT_FAILED" || error.code == "UPSTREAM_TOTAL_TIMEOUT",
+        "unexpected code {}",
+        error.code
+    );
+    let attempts = error
+        .details
+        .as_ref()
+        .and_then(|d| d.get("attempts"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1);
+    assert!(attempts >= 1 && attempts <= 3, "attempts={attempts}");
+}
+
+#[tokio::test]
+async fn first_byte_timeout_retries_once_when_configured() {
+    let server = MockServer::start().await;
+    // 每次请求都延迟超过 first_byte_timeout，模拟上游建连后无响应。
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_secs(5))
+                .set_body_json(serde_json::json!({"ok": true})),
+        )
+        .expect(2)
+        .mount(&server)
+        .await;
+    let config = UpstreamClientConfig {
+        first_byte_timeout: Duration::from_millis(100),
+        total_timeout: Duration::from_secs(2),
+        first_byte_retries: 1,
+        connect_retries: 0,
+        ..UpstreamClientConfig::for_test()
+    };
+    let transport = SecureUpstreamClient::new(
+        config,
+        Arc::new(TestPolicy(*server.address())),
+        Arc::new(MapCredentials::default()),
+    )
+    .unwrap();
+    let error = transport
+        .send(request(&server, UpstreamAuth::None))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "UPSTREAM_FIRST_BYTE_TIMEOUT");
+    // 1 次初始 + 1 次配置的重试。
     assert_eq!(error.details.unwrap()["attempts"], 2);
+}
+
+#[tokio::test]
+async fn first_byte_timeout_with_zero_retries_tries_once() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_secs(5))
+                .set_body_json(serde_json::json!({"ok": true})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let config = UpstreamClientConfig {
+        first_byte_timeout: Duration::from_millis(100),
+        total_timeout: Duration::from_secs(2),
+        first_byte_retries: 0,
+        connect_retries: 0,
+        ..UpstreamClientConfig::for_test()
+    };
+    let transport = SecureUpstreamClient::new(
+        config,
+        Arc::new(TestPolicy(*server.address())),
+        Arc::new(MapCredentials::default()),
+    )
+    .unwrap();
+    let error = transport
+        .send(request(&server, UpstreamAuth::None))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "UPSTREAM_FIRST_BYTE_TIMEOUT");
+    assert_eq!(error.details.unwrap()["attempts"], 1);
 }

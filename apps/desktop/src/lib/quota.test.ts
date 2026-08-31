@@ -78,7 +78,8 @@ describe('quotaDisplayWindows', () => {
 });
 
 describe('quotaRefreshProfileIds', () => {
-  const account = (id: string): CodexAccount => ({ id }) as CodexAccount;
+  const account = (id: string, hasAuth = true): CodexAccount =>
+    ({ id, hasAuth }) as CodexAccount;
 
   it('excludes External API bindings while preserving normal account order', () => {
     expect(
@@ -94,6 +95,21 @@ describe('quotaRefreshProfileIds', () => {
       'main',
       'team',
     ]);
+  });
+
+  it('excludes accounts that are not logged in', () => {
+    expect(
+      quotaRefreshProfileIds([account('main'), account('shd', false), account('team')], []),
+    ).toEqual(['main', 'team']);
+  });
+
+  it('excludes unauthenticated accounts even when they have an External API binding', () => {
+    expect(
+      quotaRefreshProfileIds(
+        [account('main'), account('shd', false), account('external', false)],
+        ['external'],
+      ),
+    ).toEqual(['main']);
   });
 });
 

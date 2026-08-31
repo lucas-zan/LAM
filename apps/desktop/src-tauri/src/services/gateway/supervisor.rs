@@ -10,7 +10,8 @@ use super::recovery::{
 };
 use super::server::{HealthDocument, HealthProofKey};
 use super::sidecar::{
-    GatewayRuntimeState, GatewayStateRepository, RestartDecision, SupervisorPolicy,
+    AuthenticatedControl, ControlCommand, ControlSocketClient, GatewayRuntimeState,
+    GatewayStateRepository, RestartDecision, SupervisorPolicy,
 };
 use crate::services::error::{AppError, Result};
 use crate::services::provider_keychain::{KeychainCredentialService, SystemKeychainBackend};
@@ -24,7 +25,139 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
+
+/// Best-effort shutdown of the packaged gateway on application exit.
+///
+/// This is the exit hook for the desktop shell: it prefers a signed
+/// `Shutdown` command over the control socket and only falls back to a
+/// process-level SIGTERM when the authenticated control path is unavailable.
+pub async fn shutdown_packaged_gateway(home_root: &Path) -> Result<()> {
+    let paths = ProviderHubPaths::for_home(home_root);
+    let Ok(root) = paths.ensure_canonical_root() else {
+        return Ok(());
+    };
+    let lock = InstallationLock::new(root.join("provider-hub.lock"), Duration::from_secs(5));
+    let state_repo = gateway_state_repository(&root, lock.clone());
+    let snapshot = state_repo.load()?;
+    let Some(pid) = snapshot.value.process_id else {
+        return Ok(());
+    };
+    let identity = load_or_create_system_install_identity(&snapshot.value.install_id);
+    let control_path = packaged_control_path(&snapshot.value)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    if let Ok(identity) = identity {
+        if request_control_shutdown(
+            &control_path,
+            &identity,
+            snapshot.revision,
+            pid,
+            &now,
+            &state_repo,
+        )
+        .await
+        {
+            return Ok(());
+        }
+    }
+    terminate_gateway_fallback(pid)?;
+    let current = state_repo.load()?;
+    let _ = state_repo.release_process(current.revision, pid, &now);
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn request_control_shutdown(
+    control_path: &Path,
+    identity: &[u8; 32],
+    _expected_revision: u64,
+    pid: u32,
+    now: &str,
+    state_repo: &GatewayStateRepository,
+) -> bool {
+    let uid = unsafe { libc::geteuid() };
+    let control = match AuthenticatedControl::new(identity, uid) {
+        Ok(control) => control,
+        Err(_) => return false,
+    };
+    let envelope = match control.sign(
+        rand::random::<u64>().max(1),
+        ControlCommand::Shutdown,
+        serde_json::json!({}),
+    ) {
+        Ok(envelope) => envelope,
+        Err(_) => return false,
+    };
+    let response = match tokio::time::timeout(
+        Duration::from_secs(2),
+        ControlSocketClient::send(control_path, &control, &envelope),
+    )
+    .await
+    {
+        Ok(Ok(response)) => response,
+        _ => return false,
+    };
+    if response.payload["ok"].as_bool() != Some(true) {
+        return false;
+    }
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match GatewayProcessControl::inspect(&SystemGatewayProcessControl, pid) {
+            Ok(None) => {
+                let current = match state_repo.load() {
+                    Ok(current) => current,
+                    Err(_) => return true,
+                };
+                if current.value.process_id == Some(pid) {
+                    let _ = state_repo.release_process(current.revision, pid, now);
+                }
+                return true;
+            }
+            _ => {
+                if Instant::now() >= deadline {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+    }
+    false
+}
+
+#[cfg(not(unix))]
+async fn request_control_shutdown(
+    _control_path: &Path,
+    _identity: &[u8; 32],
+    _expected_revision: u64,
+    _pid: u32,
+    _now: &str,
+    _state_repo: &GatewayStateRepository,
+) -> bool {
+    let _ = (_control_path, _identity, _expected_revision, _pid, _now, _state_repo);
+    false
+}
+
+#[cfg(unix)]
+fn terminate_gateway_fallback(pid: u32) -> Result<()> {
+    match GatewayProcessControl::inspect(&SystemGatewayProcessControl, pid) {
+        Ok(None) => Ok(()),
+        Ok(Some(_)) => GatewayProcessControl::terminate(
+            &SystemGatewayProcessControl,
+            pid,
+            Duration::from_secs(2),
+        )
+        .map(|_| ()),
+        Err(_) => {
+            unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+            Ok(())
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_gateway_fallback(_pid: u32) -> Result<()> {
+    Ok(())
+}
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;

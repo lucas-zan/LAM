@@ -88,12 +88,40 @@ fn empty_model_mismatch_stateful_and_invalid_role_order_are_rejected() {
 #[test]
 fn unsupported_items_tools_and_policy_fields_fail_before_upstream_request() {
     let namespace = request(serde_json::json!({
-      "model":"m", "input":"hi", "stream":true, "store":false,
-      "tools":[{"type":"namespace","name":"remote","tools":{}}]
+      "model":"m", "stream":true, "store":false,
+      "tool_choice":{"type":"function","namespace":"remote","name":"exec"},
+      "tools":[{"type":"namespace","name":"remote","tools":[
+        {"type":"function","name":"exec","description":"run a command","parameters":{"type":"object"}}
+      ]}],
+      "input":[
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+        {"type":"function_call","call_id":"call-1","namespace":"remote","name":"exec","arguments":"{}"}
+      ]
     }));
-    let error = translate_responses_request(&namespace, "m", &generic()).unwrap_err();
-    assert_eq!(error.code, AdapterRequestErrorCode::UnsupportedTool);
-    assert_eq!(error.path.as_deref(), Some("$.tools[0].type"));
+    let translated = translate_responses_request_with_context(&namespace, "m", &generic()).unwrap();
+    assert_eq!(translated.request.tools[0].function.name, "remote__exec");
+    assert_eq!(
+        translated
+            .request
+            .tool_choice
+            .as_ref()
+            .and_then(ChatToolChoice::function_name),
+        Some("remote__exec")
+    );
+    assert_eq!(
+        translated
+            .context
+            .resolve_chat_tool("remote__exec")
+            .unwrap()
+            .namespace
+            .as_deref(),
+        Some("remote")
+    );
+    assert!(translated.request.messages.iter().any(|message| matches!(
+        message,
+        ChatMessage::Assistant { tool_calls, .. }
+            if tool_calls[0].function.name == "remote__exec"
+    )));
 
     let parallel = request(serde_json::json!({
       "model":"m", "input":"hi", "stream":true, "store":false,
@@ -123,30 +151,147 @@ fn unsupported_items_tools_and_policy_fields_fail_before_upstream_request() {
 }
 
 #[test]
-fn web_search_tool_is_rejected_by_chat_completions_translation() {
+fn openai_chat_translation_maps_hosted_search_to_chat_search_options() {
     let source = request(serde_json::json!({
       "model":"m", "input":"hi", "stream":true, "store":false,
-      "tools":[{"type":"web_search","search_context_size":"medium"}]
+      "tools":[{"type":"web_search","external_web_access":false,"search_context_size":"medium","user_location":{"type":"approximate","country":"CN"}}]
     }));
 
-    let error = translate_responses_request(&source, "m", &generic()).unwrap_err();
+    let translated = translate_responses_request_with_context(&source, "m", &generic()).unwrap();
+    assert!(translated.request.tools.is_empty());
+    assert_eq!(
+        translated
+            .request
+            .web_search_options
+            .as_ref()
+            .unwrap()
+            .search_context_size
+            .as_deref(),
+        Some("medium")
+    );
+    assert_eq!(
+        translated
+            .request
+            .web_search_options
+            .as_ref()
+            .unwrap()
+            .user_location
+            .as_ref()
+            .unwrap()["country"],
+        serde_json::json!("CN")
+    );
+}
+
+#[test]
+fn openai_chat_translation_maps_default_cached_search_without_rejecting_the_turn() {
+    let source = request(serde_json::json!({
+      "model":"m", "input":"hi", "stream":true, "store":false,
+      "tools":[{"type":"web_search","external_web_access":false}]
+    }));
+
+    let translated = translate_responses_request_with_context(&source, "m", &generic())
+        .expect("default Codex cached search must not block a Chat turn");
+    assert_eq!(
+        translated.request.web_search_options,
+        Some(ChatWebSearchOptions {
+            search_context_size: None,
+            user_location: None,
+        })
+    );
+}
+
+#[test]
+fn additional_tools_and_codex_client_tools_are_bridged_without_loss() {
+    let source = request(serde_json::json!({
+      "model":"m", "stream":false, "store":false,
+      "input":[
+        {"type":"additional_tools","role":"developer","tools":[
+          {"type":"custom","name":"apply_patch","description":"patch","format":{"type":"text"}},
+          {"type":"tool_search","execution":"client","description":"discover","parameters":{"type":"object","properties":{"query":{"type":"string"}}}}
+        ]},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"edit"}]},
+        {"type":"custom_tool_call","call_id":"custom-1","name":"apply_patch","input":"*** Begin Patch"},
+        {"type":"custom_tool_call_output","call_id":"custom-1","output":"ok"},
+        {"type":"tool_search_call","call_id":"search-1","execution":"client","arguments":{"query":"calendar"}},
+        {"type":"tool_search_output","call_id":"search-1","status":"completed","execution":"client","tools":[]}
+      ]
+    }));
+
+    let translated = translate_responses_request_with_context(&source, "m", &generic()).unwrap();
+    assert_eq!(translated.request.tools.len(), 2);
+    assert_eq!(translated.request.tools[0].function.name, "apply_patch");
+    assert_eq!(
+        translated.request.tools[0].function.parameters,
+        serde_json::json!({
+            "type":"object",
+            "properties":{"input":{"type":"string"}},
+            "required":["input"]
+        })
+    );
+    assert_eq!(translated.request.tools[1].function.name, "tool_search");
+    assert_eq!(
+        translated.context.tool_kind("apply_patch"),
+        Some(ToolKind::Custom)
+    );
+    assert_eq!(
+        translated.context.tool_kind("tool_search"),
+        Some(ToolKind::ToolSearch)
+    );
+    assert!(translated.request.messages.iter().any(|message| matches!(
+        message,
+        ChatMessage::Tool { tool_call_id, content }
+            if tool_call_id == "custom-1" && content == "ok"
+    )));
+    assert!(translated.request.messages.iter().any(|message| matches!(
+        message,
+        ChatMessage::Tool { tool_call_id, content }
+            if tool_call_id == "search-1" && content == "[]"
+    )));
+}
+
+#[test]
+fn malformed_or_colliding_namespace_tools_fail_explicitly() {
+    let malformed = request(serde_json::json!({
+      "model":"m", "input":"hi", "stream":true, "store":false,
+      "tools":[{"type":"namespace","name":"remote","tools":{}}]
+    }));
+    let error = translate_responses_request(&malformed, "m", &generic()).unwrap_err();
+    assert_eq!(error.code, AdapterRequestErrorCode::UnsupportedTool);
+    assert_eq!(error.path.as_deref(), Some("$.tools[0].tools"));
+
+    let colliding = request(serde_json::json!({
+      "model":"m", "input":"hi", "stream":true, "store":false,
+      "tools":[
+        {"type":"namespace","name":"remote.one","tools":[{"type":"function","name":"exec"}]},
+        {"type":"namespace","name":"remote_one","tools":[{"type":"function","name":"exec"}]}
+      ]
+    }));
+    let error = translate_responses_request(&colliding, "m", &generic()).unwrap_err();
+    assert_eq!(error.code, AdapterRequestErrorCode::ToolNameCollision);
+
+    let mut unsupported_policy = generic();
+    unsupported_policy.supports_namespace_function_tools = false;
+    let error = translate_responses_request(&malformed, "m", &unsupported_policy).unwrap_err();
     assert_eq!(error.code, AdapterRequestErrorCode::UnsupportedTool);
     assert_eq!(error.path.as_deref(), Some("$.tools[0].type"));
 }
 
 #[test]
-fn reasoning_followup_is_rejected_at_the_exact_chat_translation_path() {
+fn readable_reasoning_history_is_replayed_as_chat_assistant_context() {
     let source = request(serde_json::json!({
       "model":"m", "stream":true, "store":false,
       "input":[
         {"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
-        {"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"cipher"}
+        {"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"plan"}],"encrypted_content":"cipher"}
       ]
     }));
 
-    let error = translate_responses_request(&source, "m", &generic()).unwrap_err();
-    assert_eq!(error.code, AdapterRequestErrorCode::UnsupportedInput);
-    assert_eq!(error.path.as_deref(), Some("$.input[1]"));
+    let translated = translate_responses_request(&source, "m", &generic()).unwrap();
+    assert!(translated.messages.iter().any(|message| matches!(
+        message,
+        ChatMessage::Assistant { reasoning_content: Some(content), .. }
+            if content == "plan"
+    )));
 }
 
 #[test]
@@ -156,6 +301,51 @@ fn generic_translation_has_no_provider_identity() {
     let debug = format!("{policy:?}");
     assert!(!debug.to_ascii_lowercase().contains("deepseek"));
     assert!(!debug.contains("provider_id"));
+}
+
+#[test]
+fn generic_translation_forwards_active_reasoning_and_omits_none() {
+    for effort in ["low", "medium", "high", "xhigh", "max", "ultra"] {
+        let source = request(serde_json::json!({
+            "model":"m", "input":"hi", "stream":true, "store":false,
+            "reasoning":{"effort":effort}
+        }));
+        let translated = translate_responses_request(&source, "m", &generic()).unwrap();
+        assert_eq!(translated.reasoning_effort.as_deref(), Some(effort));
+    }
+
+    let none = request(serde_json::json!({
+        "model":"m", "input":"hi", "stream":true, "store":false,
+        "reasoning":{"effort":"none"}
+    }));
+    let translated = translate_responses_request(&none, "m", &generic()).unwrap();
+    assert_eq!(translated.reasoning_effort, None);
+}
+
+#[test]
+fn translated_chat_request_omits_unset_optional_wire_fields() {
+    let source = request(serde_json::json!({
+        "model":"m", "input":"hi", "stream":true, "store":false
+    }));
+    let translated = translate_responses_request_with_context(&source, "m", &generic()).unwrap();
+    let wire = serde_json::to_value(translated.request).unwrap();
+
+    for field in [
+        "max_tokens",
+        "tool_choice",
+        "parallel_tool_calls",
+        "response_format",
+        "thinking",
+        "reasoning_effort",
+        "service_tier",
+        "web_search_options",
+    ] {
+        assert!(
+            wire.get(field).is_none(),
+            "unset field must be omitted: {field}"
+        );
+    }
+    assert_eq!(wire["stream_options"]["include_usage"], true);
 }
 
 #[test]

@@ -42,7 +42,17 @@ fn catalog_uses_the_exact_tested_nonempty_codex_item_contract() {
     }
     assert!(!first.contains_key("id"));
     assert!(!first.contains_key("owned_by"));
-    assert_eq!(first["supported_reasoning_levels"], serde_json::json!([]));
+    assert_eq!(
+        first["supported_reasoning_levels"],
+        serde_json::json!([
+            {"effort":"low","description":"Fast responses with lighter reasoning"},
+            {"effort":"medium","description":"Balances speed and reasoning depth for everyday tasks"},
+            {"effort":"high","description":"Greater reasoning depth for complex problems"},
+            {"effort":"xhigh","description":"Extra high reasoning depth for complex problems"},
+            {"effort":"max","description":"Maximum reasoning depth for the hardest problems"},
+            {"effort":"ultra","description":"Maximum reasoning with automatic task delegation"}
+        ])
+    );
     assert_eq!(first["supports_reasoning_summaries"], false);
     assert_eq!(first["support_verbosity"], false);
     assert_eq!(first["supports_parallel_tool_calls"], false);

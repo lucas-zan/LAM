@@ -3,17 +3,23 @@ use super::server::{
     GatewayHttpRequest, GatewayHttpResponse, GatewayRouteHandler, RequestUsageMetadata,
 };
 use super::upstream::{GatewayCancellation, SecureUpstreamClient, UpstreamRequest};
-use crate::services::adapters::deepseek::DeepSeekCompatibilityPreset;
-use crate::services::adapters::nonstream::{convert_nonstream_response, DeterministicContext};
+use crate::services::adapters::deepseek::{
+    capture_nonstream_reasoning, DeepSeekCompatibilityPreset, ReasoningHistory, MAX_REASONING_BYTES,
+};
+use crate::services::adapters::nonstream::{
+    convert_nonstream_response_with_tools, DeterministicContext,
+};
 use crate::services::adapters::protocol::{
     extract_responses_usage, parse_responses_passthrough, parse_responses_request,
-    ChatCompletionResponse,
+    ChatCompletionResponse, ReasoningEffort, ResponsesRequest,
 };
 use crate::services::adapters::registry::{
     AdapterExchange, AdapterRegistry, AdapterRequirement, AdapterVersion,
     ResponsesToChatCompletionsAdapter, WireProtocol,
 };
-use crate::services::adapters::request::translate_responses_request;
+use crate::services::adapters::request::{
+    translate_responses_request_with_history_and_context, ToolTranslationContext,
+};
 use crate::services::adapters::sse::{ResponsesStreamEvent, StreamingAdapter};
 use crate::services::error::{AppError, Result};
 use crate::services::provider_v2::{AdapterConfig, ProviderProtocol};
@@ -21,10 +27,11 @@ use axum::body::{Body, Bytes};
 use axum::http::StatusCode;
 use chrono::Utc;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
@@ -41,6 +48,70 @@ struct BudgetedFrame {
 }
 
 const MAX_RESPONSES_SSE_PENDING_BYTES: usize = 64 * 1024;
+const MAX_REASONING_HISTORY_SESSIONS: usize = 256;
+
+struct ReasoningHistoryEntry {
+    last_used: u64,
+    history: ReasoningHistory,
+}
+
+struct ReasoningHistoryStore {
+    clock: u64,
+    entries: BTreeMap<String, ReasoningHistoryEntry>,
+}
+
+impl Default for ReasoningHistoryStore {
+    fn default() -> Self {
+        Self {
+            clock: 0,
+            entries: BTreeMap::new(),
+        }
+    }
+}
+
+impl ReasoningHistoryStore {
+    fn snapshot(&mut self, key: &str) -> ReasoningHistory {
+        self.clock = self.clock.wrapping_add(1);
+        self.ensure_entry(key);
+        let entry = self.entries.get_mut(key).expect("history entry exists");
+        entry.last_used = self.clock;
+        entry.history.clone()
+    }
+
+    fn record(&mut self, key: &str, call_ids: &[String], reasoning: &str) -> Result<()> {
+        if call_ids.is_empty() || reasoning.is_empty() {
+            return Ok(());
+        }
+        self.clock = self.clock.wrapping_add(1);
+        self.ensure_entry(key);
+        let entry = self.entries.get_mut(key).expect("history entry exists");
+        entry.last_used = self.clock;
+        let call_ids = call_ids.iter().map(String::as_str).collect::<Vec<_>>();
+        entry
+            .history
+            .record_tool_turn(&call_ids, reasoning)
+            .map_err(|error| AppError::new(error.stable_code(), error.message))
+    }
+
+    fn ensure_entry(&mut self, key: &str) {
+        if self.entries.len() >= MAX_REASONING_HISTORY_SESSIONS && !self.entries.contains_key(key) {
+            if let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, _)| key.clone())
+            {
+                self.entries.remove(&oldest);
+            }
+        }
+        self.entries
+            .entry(key.to_owned())
+            .or_insert_with(|| ReasoningHistoryEntry {
+                last_used: self.clock,
+                history: ReasoningHistory::new(MAX_REASONING_BYTES),
+            });
+    }
+}
 
 #[derive(Default)]
 struct ResponsesTerminalObserver {
@@ -136,6 +207,7 @@ pub struct GatewayRouteComposer {
     upstream: Arc<SecureUpstreamClient>,
     adapters: Arc<AdapterRegistry>,
     model_defaults: Arc<CodexModelDefaultsCatalog>,
+    reasoning_histories: Arc<Mutex<ReasoningHistoryStore>>,
 }
 
 impl GatewayRouteComposer {
@@ -160,7 +232,35 @@ impl GatewayRouteComposer {
             upstream,
             adapters: Arc::new(adapters),
             model_defaults: Arc::new(model_defaults),
+            reasoning_histories: Arc::new(Mutex::new(ReasoningHistoryStore::default())),
         }
+    }
+
+    fn reasoning_history_snapshot(&self, key: &str) -> ReasoningHistory {
+        self.reasoning_histories
+            .lock()
+            .map(|mut store| store.snapshot(key))
+            .unwrap_or_else(|_| ReasoningHistory::new(MAX_REASONING_BYTES))
+    }
+
+    fn record_reasoning(
+        &self,
+        key: Option<&str>,
+        call_ids: &[String],
+        reasoning: &str,
+    ) -> Result<()> {
+        let Some(key) = key else {
+            return Ok(());
+        };
+        self.reasoning_histories
+            .lock()
+            .map_err(|_| {
+                AppError::new(
+                    "ADAPTER_HISTORY_UNAVAILABLE",
+                    "reasoning history is unavailable",
+                )
+            })?
+            .record(key, call_ids, reasoning)
     }
 
     async fn responses(&self, request: GatewayHttpRequest) -> Result<GatewayHttpResponse> {
@@ -204,14 +304,7 @@ impl GatewayRouteComposer {
         let requested_model = parsed.model.clone();
         let compatibility = match request.binding.provider.compatibility_profile.as_deref() {
             None | Some("openai_chat_completions") => Compatibility::Generic,
-            Some("deepseek_chat_completions") if parsed.reasoning.is_some() => {
-                if !parsed.tools.is_empty() {
-                    return Ok(error_response(
-                        400,
-                        "ADAPTER_REASONING_HISTORY_UNREPRESENTABLE",
-                        "Codex 0.144.1 full-history tool follow-up cannot carry required Provider reasoning metadata",
-                    ));
-                }
+            Some("deepseek_chat_completions") if active_reasoning(&parsed) => {
                 Compatibility::DeepSeek(DeepSeekCompatibilityPreset::thinking_enabled())
             }
             Some("deepseek_chat_completions") => {
@@ -225,6 +318,15 @@ impl GatewayRouteComposer {
                 ))
             }
         };
+        let reasoning_key = matches!(
+            &compatibility,
+            Compatibility::DeepSeek(preset) if preset.policy.requires_reasoning_for_tool_calls
+        )
+        .then(|| reasoning_history_key(&request));
+        let reasoning_history = reasoning_key
+            .as_deref()
+            .map(|key| self.reasoning_history_snapshot(key))
+            .unwrap_or_else(|| ReasoningHistory::new(0));
         let adapter_id = match &request.binding.provider.adapter {
             AdapterConfig::Local { adapter_id, .. } => adapter_id,
             _ => {
@@ -261,19 +363,24 @@ impl GatewayRouteComposer {
                 ))
             }
         };
-        let mut translated =
-            match translate_responses_request(&parsed, &requested_model, compatibility.policy()) {
-                Ok(translated) => translated,
-                Err(error) => {
-                    return Ok(error_response(
-                        400,
-                        request_error_code(error.code),
-                        &error.message,
-                    ))
-                }
-            };
+        let mut translated = match translate_responses_request_with_history_and_context(
+            &parsed,
+            &requested_model,
+            compatibility.policy(),
+            &reasoning_history,
+        ) {
+            Ok(translated) => translated,
+            Err(error) => {
+                let message = adapter_request_error_message(&error);
+                return Ok(error_response(
+                    400,
+                    request_error_code(error.code),
+                    &message,
+                ));
+            }
+        };
         if let Compatibility::DeepSeek(preset) = &compatibility {
-            if let Err(error) = preset.apply_request(&parsed, &mut translated) {
+            if let Err(error) = preset.apply_request(&parsed, &mut translated.request) {
                 return Ok(error_response(400, error.stable_code(), &error.message));
             }
         }
@@ -293,13 +400,19 @@ impl GatewayRouteComposer {
                 ))
             }
         };
-        let body = serde_json::to_vec(&translated).map_err(|_| {
+        let body = serde_json::to_vec(&translated.request).map_err(|_| {
             AppError::new(
                 "ADAPTER_SERIALIZATION_FAILED",
                 "translated request could not be serialized",
             )
         })?;
+        let tool_context = translated.context;
         let cancellation = GatewayCancellation::new();
+        let error_context = UpstreamErrorContext::new(
+            &request.binding.provider.id,
+            &request.binding.provider.base_url,
+            &request.request_id,
+        );
         let upstream_request = UpstreamRequest {
             base_url: request.binding.provider.base_url.clone(),
             controlled_path,
@@ -316,11 +429,21 @@ impl GatewayRouteComposer {
                 exchange,
                 compatibility.captures_reasoning(),
                 requested_model,
+                tool_context,
+                reasoning_key,
+                error_context,
             )
             .await
         } else {
-            self.nonstream(upstream_request, exchange, requested_model)
-                .await
+            self.nonstream(
+                upstream_request,
+                exchange,
+                requested_model,
+                tool_context,
+                reasoning_key,
+                error_context,
+            )
+            .await
         }
     }
 
@@ -546,6 +669,9 @@ impl GatewayRouteComposer {
         upstream_request: UpstreamRequest,
         mut exchange: Box<dyn AdapterExchange>,
         requested_model: String,
+        tool_context: ToolTranslationContext,
+        reasoning_key: Option<String>,
+        error_context: UpstreamErrorContext,
     ) -> Result<GatewayHttpResponse> {
         let response = match self.upstream.send(upstream_request).await {
             Ok(response) => response,
@@ -557,11 +683,13 @@ impl GatewayRouteComposer {
         let attempts = response.attempts;
         if !(200..300).contains(&response.status) {
             let _ = exchange.cancel();
-            return Ok(error_response(
+            return Ok(upstream_http_error_response(
                 response.status,
-                "UPSTREAM_HTTP_ERROR",
-                "upstream rejected the translated request",
+                response.content_type.as_deref(),
+                &response.body,
+                &error_context,
             )
+            .with_retry_after(response.retry_after)
             .with_metrics(None, attempts)
             .with_upstream_metrics(response.status, response.first_byte_ms));
         }
@@ -576,6 +704,24 @@ impl GatewayRouteComposer {
                 ));
             }
         };
+        if let Some(reasoning_key) = reasoning_key.as_deref() {
+            let call_ids = chat_tool_call_ids(&chat);
+            match capture_nonstream_reasoning(&chat, MAX_REASONING_BYTES) {
+                Ok(Some(reasoning)) => {
+                    if let Err(error) =
+                        self.record_reasoning(Some(reasoning_key), &call_ids, reasoning.as_str())
+                    {
+                        let _ = exchange.cancel();
+                        return Ok(error_response(502, &error.code, &error.message));
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = exchange.cancel();
+                    return Ok(error_response(502, error.stable_code(), &error.message));
+                }
+            }
+        }
         let usage = chat.usage.as_ref().map(|usage| RequestUsageMetadata {
             input_tokens: usage.prompt_tokens,
             output_tokens: usage.completion_tokens,
@@ -583,7 +729,12 @@ impl GatewayRouteComposer {
         });
         let response_id = format!("resp_{}", Uuid::new_v4().simple());
         let mut context = DeterministicContext::new(Utc::now().timestamp(), response_id);
-        let converted = match convert_nonstream_response(&chat, &requested_model, &mut context) {
+        let converted = match convert_nonstream_response_with_tools(
+            &chat,
+            &requested_model,
+            &mut context,
+            &tool_context,
+        ) {
             Ok(converted) => converted,
             Err(error) => {
                 let _ = exchange.cancel();
@@ -618,6 +769,9 @@ impl GatewayRouteComposer {
         mut exchange: Box<dyn AdapterExchange>,
         capture_reasoning: bool,
         requested_model: String,
+        tool_context: ToolTranslationContext,
+        reasoning_key: Option<String>,
+        error_context: UpstreamErrorContext,
     ) -> Result<GatewayHttpResponse> {
         let mut upstream = match self.upstream.open_stream(upstream_request).await {
             Ok(response) => response,
@@ -630,12 +784,22 @@ impl GatewayRouteComposer {
         let upstream_status = upstream.status;
         let first_byte_ms = upstream.first_byte_ms;
         if !(200..300).contains(&upstream.status) {
+            let status = upstream.status;
+            let content_type = upstream.content_type.clone();
+            let retry_after = upstream.retry_after.clone();
+            let attempts = upstream.attempts;
+            let mut body = Vec::new();
+            while let Some(chunk) = upstream.next_chunk().await? {
+                body.extend_from_slice(&chunk);
+            }
             let _ = exchange.cancel();
-            return Ok(error_response(
-                upstream.status,
-                "UPSTREAM_HTTP_ERROR",
-                "upstream rejected the translated stream",
+            return Ok(upstream_http_error_response(
+                status,
+                content_type.as_deref(),
+                &body,
+                &error_context,
             )
+            .with_retry_after(retry_after)
             .with_metrics(None, attempts)
             .with_upstream_metrics(upstream_status, first_byte_ms));
         }
@@ -658,13 +822,15 @@ impl GatewayRouteComposer {
             crate::services::adapters::protocol::MAX_EVENT_CHANNEL_BYTES,
         ));
         let downstream_cancellation = cancellation.clone();
+        let reasoning_histories = self.reasoning_histories.clone();
         let (completion, completed) = oneshot::channel();
         tokio::spawn(async move {
             let _completion = completion;
-            let mut adapter = StreamingAdapter::new(
+            let mut adapter = StreamingAdapter::new_with_tool_context(
                 format!("resp_{}", Uuid::new_v4().simple()),
                 requested_model,
                 Utc::now().timestamp(),
+                tool_context,
             );
             if capture_reasoning {
                 adapter.enable_reasoning_capture(
@@ -707,6 +873,30 @@ impl GatewayRouteComposer {
                                 send_events(&sender, &byte_budget, adapter.failure_events()).await;
                             let _ = exchange.cancel();
                         } else {
+                            if let Some(reasoning_key) = reasoning_key.as_deref() {
+                                let call_ids = adapter.tool_call_ids();
+                                if let Some(reasoning) = adapter.reasoning_content() {
+                                    let result = reasoning_histories
+                                        .lock()
+                                        .map_err(|_| ())
+                                        .and_then(|mut store| {
+                                            store
+                                                .record(reasoning_key, &call_ids, reasoning)
+                                                .map_err(|_| ())
+                                        });
+                                    if result.is_err() {
+                                        let frame = responses_stream_error_frame(
+                                            "ADAPTER_HISTORY_UNAVAILABLE",
+                                            "reasoning history could not be recorded",
+                                        );
+                                        let _ =
+                                            send_passthrough_bytes(&sender, &byte_budget, &frame)
+                                                .await;
+                                        let _ = exchange.cancel();
+                                        return;
+                                    }
+                                }
+                            }
                             let _ = exchange.finish();
                         }
                         return;
@@ -750,6 +940,39 @@ impl GatewayRouteComposer {
             ),
         }
     }
+}
+
+fn active_reasoning(request: &ResponsesRequest) -> bool {
+    request.reasoning.as_ref().is_some_and(|reasoning| {
+        reasoning
+            .effort
+            .is_some_and(|effort| effort != ReasoningEffort::None)
+            || reasoning.summary.is_some()
+            || reasoning.context.is_some()
+    })
+}
+
+fn reasoning_history_key(request: &GatewayHttpRequest) -> String {
+    let conversation = request
+        .upstream_headers
+        .get("thread-id")
+        .or_else(|| request.upstream_headers.get("session-id"))
+        .unwrap_or(&request.binding.profile_id);
+    format!(
+        "{}:{}:{conversation}",
+        request.binding.provider.id, request.binding.profile_id
+    )
+}
+
+fn chat_tool_call_ids(response: &ChatCompletionResponse) -> Vec<String> {
+    response
+        .choices
+        .first()
+        .into_iter()
+        .flat_map(|choice| choice.message.tool_calls.as_deref().unwrap_or_default())
+        .filter(|call| !call.id.is_empty())
+        .map(|call| call.id.clone())
+        .collect()
 }
 
 fn responses_stream_error_frame(code: &str, message: &str) -> Vec<u8> {
@@ -974,8 +1197,18 @@ fn request_error_code(
         | ToolResultBeforeCall
         | ToolArgumentsInvalid
         | ToolArgumentsLimitExceeded
+        | ToolNameCollision
         | ReasoningHistoryRequired => "ADAPTER_INVALID_REQUEST",
     }
+}
+
+fn adapter_request_error_message(
+    error: &crate::services::adapters::request::AdapterRequestError,
+) -> String {
+    error.path.as_deref().map_or_else(
+        || error.message.clone(),
+        |path| format!("{} at {path}", error.message),
+    )
 }
 
 #[cfg(test)]

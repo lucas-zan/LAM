@@ -1,8 +1,10 @@
+use axum::http::{HeaderMap, HeaderValue};
 use localagentmanager_core::gateway::binding::GatewayBindingSnapshot;
 use localagentmanager_core::gateway::routes::GatewayRouteComposer;
 use localagentmanager_core::gateway::server::{GatewayHttpRequest, GatewayRouteHandler};
 use localagentmanager_core::gateway::upstream::{
-    NetworkTargetPolicy, SecureUpstreamClient, UpstreamClientConfig, UpstreamCredentialResolver,
+    CodexUpstreamHeaders, NetworkTargetPolicy, SecureUpstreamClient, UpstreamClientConfig,
+    UpstreamCredentialResolver,
 };
 use localagentmanager_core::provider_credentials::{CredentialSource, SecretValue, UpstreamAuth};
 use localagentmanager_core::provider_keychain::KeychainCredentialReference;
@@ -162,6 +164,76 @@ async fn nonstream_text_is_translated_through_real_upstream_transport() {
 }
 
 #[tokio::test]
+async fn namespace_tools_round_trip_through_nonstream_gateway_bridge() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({
+            "model":"deepseek-chat",
+            "stream":false,
+            "tools":[{"type":"function","function":{"name":"remote__lookup"}}]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id":"chat-namespace","object":"chat.completion","created":1,"model":"deepseek-chat",
+            "choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[
+                {"id":"call-namespace","type":"function","function":{"name":"remote__lookup","arguments":"{}"}}
+            ]},"finish_reason":"tool_calls"}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let response = composer(&server)
+        .handle(request(
+            &server,
+            serde_json::json!({
+                "model":"deepseek-chat",
+                "input":"lookup",
+                "stream":false,
+                "tools":[{"type":"namespace","name":"remote","tools":[
+                    {"type":"function","name":"lookup","parameters":{"type":"object"}}
+                ]}]
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value =
+        serde_json::from_slice(&response.collect_bytes().await.unwrap()).unwrap();
+    assert_eq!(body["output"][0]["type"], "function_call");
+    assert_eq!(body["output"][0]["name"], "lookup");
+    assert_eq!(body["output"][0]["namespace"], "remote");
+    assert_eq!(body["output"][0]["call_id"], "call-namespace");
+}
+
+#[tokio::test]
+async fn generic_chat_completions_forwards_selected_reasoning_effort() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({
+            "model":"deepseek-chat", "stream":false, "reasoning_effort":"ultra"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id":"chat-reasoning","object":"chat.completion","created":1,"model":"deepseek-chat",
+            "choices":[{"index":0,"message":{"role":"assistant","content":"reasoned"},"finish_reason":"stop"}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mut gateway_request = request(
+        &server,
+        serde_json::json!({
+            "model":"deepseek-chat", "input":"hi", "stream":false,
+            "reasoning":{"effort":"ultra"}
+        }),
+    );
+    gateway_request.binding.provider.compatibility_profile = Some("openai_chat_completions".into());
+
+    let response = composer(&server).handle(gateway_request).await.unwrap();
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
 async fn stream_flushes_responses_sse_events_in_contract_order() {
     let server = MockServer::start().await;
     let chunks = [
@@ -199,6 +271,158 @@ async fn stream_flushes_responses_sse_events_in_contract_order() {
     let completed = wire.find("event: response.completed").unwrap();
     assert!(created < delta && delta < completed);
     assert!(wire.contains("\"delta\":\"hello\""));
+}
+
+#[tokio::test]
+async fn namespace_tools_round_trip_through_streaming_gateway_bridge() {
+    let server = MockServer::start().await;
+    let chunks = [
+        serde_json::json!({
+            "id":"c","object":"chat.completion.chunk","created":1,"model":"deepseek-chat",
+            "choices":[{"index":0,"delta":{"tool_calls":[
+                {"index":0,"function":{"arguments":"{}"}}
+            ]}}]
+        }),
+        serde_json::json!({
+            "id":"c","object":"chat.completion.chunk","created":1,"model":"deepseek-chat",
+            "choices":[{"index":0,"delta":{"tool_calls":[
+                {"index":0,"id":"call-stream-namespace","type":"function","function":{"name":"remote__lookup"}}
+            ]},"finish_reason":"tool_calls"}]
+        }),
+    ];
+    let upstream_wire = format!(
+        "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+        chunks[0], chunks[1]
+    );
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({
+            "tools":[{"type":"function","function":{"name":"remote__lookup"}}]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(upstream_wire, "text/event-stream"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let response = composer(&server)
+        .handle(request(
+            &server,
+            serde_json::json!({
+                "model":"deepseek-chat",
+                "input":"lookup",
+                "stream":true,
+                "tools":[{"type":"namespace","name":"remote","tools":[
+                    {"type":"function","name":"lookup","parameters":{"type":"object"}}
+                ]}]
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.content_type(), "text/event-stream");
+    let wire = String::from_utf8(response.collect_bytes().await.unwrap()).unwrap();
+    assert!(wire.contains("\"name\":\"lookup\""));
+    assert!(wire.contains("\"namespace\":\"remote\""));
+    assert!(wire.contains("\"call_id\":\"call-stream-namespace\""));
+    assert!(wire.contains("event: response.completed"));
+}
+
+#[tokio::test]
+async fn openai_chat_maps_default_codex_search_options_and_reaches_upstream() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({
+            "web_search_options": {}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id":"chat-search","object":"chat.completion","created":1,"model":"deepseek-chat",
+            "choices":[{"index":0,"message":{"role":"assistant","content":"searched"},"finish_reason":"stop"}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mut gateway_request = request(
+        &server,
+        serde_json::json!({
+            "model":"deepseek-chat",
+            "input":"search",
+            "stream":false,
+            "tools":[{"type":"web_search","external_web_access":false}]
+        }),
+    );
+    gateway_request.binding.provider.compatibility_profile = Some("openai_chat_completions".into());
+
+    let response = composer(&server).handle(gateway_request).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value =
+        serde_json::from_slice(&response.collect_bytes().await.unwrap()).unwrap();
+    assert_eq!(body["output"][0]["content"][0]["text"], "searched");
+}
+
+#[tokio::test]
+async fn adapted_nonstream_surfaces_upstream_error_detail() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": {"message": "web_search_options is not supported"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mut gateway_request = request(
+        &server,
+        serde_json::json!({
+            "model":"deepseek-chat",
+            "input":"search",
+            "stream":false,
+            "tools":[{"type":"web_search"}]
+        }),
+    );
+    gateway_request.binding.provider.compatibility_profile = Some("openai_chat_completions".into());
+
+    let response = composer(&server).handle(gateway_request).await.unwrap();
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value =
+        serde_json::from_slice(&response.collect_bytes().await.unwrap()).unwrap();
+    assert_eq!(body["error"]["source"], "upstream");
+    assert_eq!(body["error"]["upstreamStatus"], 400);
+    assert!(body["error"]["message"]
+        .as_str()
+        .unwrap()
+        .ends_with("web_search_options is not supported"));
+}
+
+#[tokio::test]
+async fn adapted_stream_surfaces_upstream_error_detail() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": {"message": "streaming is not supported for this model"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mut gateway_request = request(
+        &server,
+        serde_json::json!({
+            "model":"deepseek-chat",
+            "input":"hello",
+            "stream":true
+        }),
+    );
+    gateway_request.binding.provider.compatibility_profile = Some("openai_chat_completions".into());
+
+    let response = composer(&server).handle(gateway_request).await.unwrap();
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value =
+        serde_json::from_slice(&response.collect_bytes().await.unwrap()).unwrap();
+    assert_eq!(body["error"]["source"], "upstream");
+    assert_eq!(body["error"]["upstreamStatus"], 400);
+    assert!(body["error"]["message"]
+        .as_str()
+        .unwrap()
+        .ends_with("streaming is not supported for this model"));
 }
 
 #[tokio::test]
@@ -873,12 +1097,19 @@ async fn upstream_transport_disconnect_emits_exactly_one_failed_terminal_event()
 }
 
 #[tokio::test]
-async fn deepseek_thinking_with_tools_is_rejected_before_upstream_when_codex_history_cannot_carry_reasoning(
-) {
+async fn deepseek_thinking_first_turn_with_tools_reaches_upstream() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .respond_with(ResponseTemplate::new(500))
-        .expect(0)
+        .and(path("/api/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({
+            "thinking":{"type":"enabled"},
+            "tools":[{"type":"function","function":{"name":"lookup"}}]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id":"chat-thinking","object":"chat.completion","created":1,"model":"deepseek-chat",
+            "choices":[{"index":0,"message":{"role":"assistant","content":"ready"},"finish_reason":"stop"}]
+        })))
+        .expect(1)
         .mount(&server)
         .await;
     let response = composer(&server)
@@ -894,13 +1125,191 @@ async fn deepseek_thinking_with_tools_is_rejected_before_upstream_when_codex_his
         ))
         .await
         .unwrap();
-    assert_eq!(response.status(), 400);
-    let error: serde_json::Value =
-        serde_json::from_slice(&response.collect_bytes().await.unwrap()).unwrap();
-    assert_eq!(
-        error["error"]["code"],
-        "ADAPTER_REASONING_HISTORY_UNREPRESENTABLE"
+    assert_eq!(response.status(), 200);
+    let body = response.collect_bytes().await.unwrap();
+    let response_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(response_json["output"][0]["content"][0]["text"], "ready");
+}
+
+#[tokio::test]
+async fn deepseek_empty_reasoning_config_keeps_thinking_disabled() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({
+            "thinking":{"type":"disabled"},
+            "tools":[{"type":"function","function":{"name":"lookup"}}]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id":"chat-no-thinking","object":"chat.completion","created":1,"model":"deepseek-chat",
+            "choices":[{"index":0,"message":{"role":"assistant","content":"ready"},"finish_reason":"stop"}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mut gateway_request = request(
+        &server,
+        serde_json::json!({
+            "model":"deepseek-chat",
+            "input":"plain turn",
+            "stream":false,
+            "reasoning":{},
+            "tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]
+        }),
     );
+    gateway_request.binding.provider.compatibility_profile =
+        Some("deepseek_chat_completions".into());
+
+    let response = composer(&server).handle(gateway_request).await.unwrap();
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn deepseek_thinking_tool_followup_replays_reasoning_by_thread() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id":"chat-thinking-loop","object":"chat.completion","created":1,"model":"deepseek-chat",
+            "choices":[{"index":0,"message":{
+                "role":"assistant","content":null,"reasoning_content":"plan",
+                "tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{}"}}]
+            },"finish_reason":"tool_calls"}]
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let mut header_map = HeaderMap::new();
+    header_map.insert("thread-id", HeaderValue::from_static("thread-reasoning-1"));
+    let headers = CodexUpstreamHeaders::capture(&header_map);
+    let composer = composer(&server);
+    let first_body = serde_json::json!({
+        "model":"deepseek-chat",
+        "input":"lookup",
+        "stream":false,
+        "reasoning":{"effort":"high"},
+        "tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]
+    });
+    let mut first = request(&server, first_body);
+    first.upstream_headers = headers.clone();
+    let first_response = composer.handle(first).await.unwrap();
+    assert_eq!(first_response.status(), 200);
+    let _ = first_response.collect_bytes().await.unwrap();
+
+    let second_body = serde_json::json!({
+        "model":"deepseek-chat",
+        "stream":false,
+        "reasoning":{"effort":"high"},
+        "tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],
+        "input":[
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"lookup"}]},
+            {"type":"function_call","call_id":"call-1","name":"lookup","arguments":"{}"},
+            {"type":"function_call_output","call_id":"call-1","output":"result"}
+        ]
+    });
+    let mut second = request(&server, second_body);
+    second.upstream_headers = headers;
+    let second_response = composer.handle(second).await.unwrap();
+    assert_eq!(second_response.status(), 200);
+    let _ = second_response.collect_bytes().await.unwrap();
+
+    let received = server.received_requests().await.unwrap();
+    assert_eq!(received.len(), 2);
+    let translated: serde_json::Value = serde_json::from_slice(&received[1].body).unwrap();
+    let assistant = translated["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["role"] == "assistant" && message["tool_calls"].is_array())
+        .unwrap();
+    assert_eq!(assistant["reasoning_content"], "plan");
+    assert_eq!(assistant["tool_calls"][0]["id"], "call-1");
+}
+
+#[tokio::test]
+async fn deepseek_streaming_tool_followup_replays_captured_reasoning_by_thread() {
+    let server = MockServer::start().await;
+    let stream_wire = format!(
+        "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+        serde_json::json!({
+            "id":"chat-stream-loop","object":"chat.completion.chunk","created":1,"model":"deepseek-chat",
+            "choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"stream-plan"},"finish_reason":null}]
+        }),
+        serde_json::json!({
+            "id":"chat-stream-loop","object":"chat.completion.chunk","created":1,"model":"deepseek-chat",
+            "choices":[{"index":0,"delta":{"tool_calls":[
+                {"index":0,"id":"call-stream-1","type":"function","function":{"name":"lookup","arguments":"{}"}}
+            ]},"finish_reason":"tool_calls"}]
+        })
+    );
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({"stream":true})))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(stream_wire, "text/event-stream"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/chat/completions"))
+        .and(body_partial_json(serde_json::json!({"stream":false})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id":"chat-stream-loop-final","object":"chat.completion","created":1,"model":"deepseek-chat",
+            "choices":[{"index":0,"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut headers_map = HeaderMap::new();
+    headers_map.insert("thread-id", HeaderValue::from_static("thread-stream-1"));
+    let headers = CodexUpstreamHeaders::capture(&headers_map);
+    let composer = composer(&server);
+    let tools = serde_json::json!([{
+        "type":"function","name":"lookup","parameters":{"type":"object"}
+    }]);
+    let mut first = request(
+        &server,
+        serde_json::json!({
+            "model":"deepseek-chat","input":"lookup","stream":true,
+            "reasoning":{"effort":"high"},"tools":tools
+        }),
+    );
+    first.upstream_headers = headers.clone();
+    let response = composer.handle(first).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let wire = String::from_utf8(response.collect_bytes().await.unwrap()).unwrap();
+    assert!(wire.contains("response.completed"));
+
+    let mut second = request(
+        &server,
+        serde_json::json!({
+            "model":"deepseek-chat","stream":false,
+            "reasoning":{"effort":"high"},"tools":[{
+                "type":"function","name":"lookup","parameters":{"type":"object"}
+            }],
+            "input":[
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"lookup"}]},
+                {"type":"function_call","call_id":"call-stream-1","name":"lookup","arguments":"{}"},
+                {"type":"function_call_output","call_id":"call-stream-1","output":"result"}
+            ]
+        }),
+    );
+    second.upstream_headers = headers;
+    let response = composer.handle(second).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let _ = response.collect_bytes().await.unwrap();
+
+    let received = server.received_requests().await.unwrap();
+    let translated: serde_json::Value = serde_json::from_slice(&received[1].body).unwrap();
+    let assistant = translated["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["role"] == "assistant" && message["tool_calls"].is_array())
+        .unwrap();
+    assert_eq!(assistant["reasoning_content"], "stream-plan");
+    assert_eq!(assistant["tool_calls"][0]["id"], "call-stream-1");
 }
 
 #[test]

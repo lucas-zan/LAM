@@ -655,7 +655,7 @@ export function Accounts({
                   ) : null}
                 </div>
                 <div className="cardHeadActions">
-                  {!isApiAccount ? (
+                  {!isApiAccount && account.hasAuth ? (
                     <UIButton
                       variant="icon"
                       size="sm"

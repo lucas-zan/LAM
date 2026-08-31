@@ -23,6 +23,14 @@
 
 **What improves**: Responses Providers can receive Codex `web_search` definitions unchanged, while Responses-to-Chat-Completions adapters continue to fail closed for hosted tools they cannot represent.
 
+**Follow-up boundary**: The real Command Code Chat smoke now passes the
+Responses parser and namespace bridge, then stops at the generic Chat
+adapter's hosted-tool check (`$.tools[9].type`). Command Code's published
+Provider API does not define a hosted or standalone search operation for this
+binding. Resolving that case requires a native/provider-specific search
+contract or an explicitly authorized Gateway-owned search backend; this todo
+does not authorize silently dropping or re-labeling `web_search`.
+
 ## Scope
 
 **In scope**:

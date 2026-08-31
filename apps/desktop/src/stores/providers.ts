@@ -28,6 +28,7 @@ interface ProviderState {
   refreshGeneration: number;
   refresh: () => Promise<void>;
   saveProvider: (provider: ProviderDefinitionV2, editing: boolean) => Promise<void>;
+  deleteProvider: (providerId: string) => Promise<void>;
   approveAuthCommand: (executable: string, args: string[]) => Promise<string>;
   createKeychainProvider: (provider: ProviderDefinitionV2, secret: string) => Promise<void>;
   rotateKeychainCredential: (
@@ -147,6 +148,28 @@ export const useProviderStore = create<ProviderState>()((set, get) => ({
       useAppStore
         .getState()
         .setStatus(`Provider ${provider.id} ${editing ? 'updated' : 'created'}`);
+    } catch (error) {
+      await recoverProviderConflict(
+        error,
+        () =>
+          set({
+            attachPlan: null,
+            detachPlan: null,
+            recoveryMessage: 'Provider state changed. Refresh completed; preview again.',
+          }),
+        get().refresh,
+      );
+      useAppStore.getState().setError(formatError(error));
+      throw error;
+    }
+  },
+
+  deleteProvider: async (providerId) => {
+    const expectedRevision = requiredProviderStoreRevision(get());
+    try {
+      await api.deleteProviderV2({ expectedRevision, providerId });
+      await get().refresh();
+      useAppStore.getState().setStatus(`Provider ${providerId} deleted`);
     } catch (error) {
       await recoverProviderConflict(
         error,

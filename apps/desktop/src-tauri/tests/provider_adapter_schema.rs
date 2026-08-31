@@ -1,6 +1,6 @@
 use localagentmanager_core::adapters::protocol::{
     extract_responses_usage, parse_responses_passthrough, parse_responses_request, ChatChunk,
-    ChatCompletionResponse, ProtocolErrorCode, ResponsesInputItem, ResponsesTool,
+    ChatCompletionResponse, ProtocolErrorCode, ReasoningEffort, ResponsesInputItem, ResponsesTool,
     MAX_REQUEST_BYTES,
 };
 use serde_json::Value;
@@ -50,6 +50,59 @@ fn captured_codex_requests_parse_into_the_controlled_schema() {
 }
 
 #[test]
+fn desktop_reasoning_efforts_parse_while_unknown_values_remain_rejected() {
+    for (wire, expected) in [
+        ("none", ReasoningEffort::None),
+        ("low", ReasoningEffort::Low),
+        ("medium", ReasoningEffort::Medium),
+        ("high", ReasoningEffort::High),
+        ("xhigh", ReasoningEffort::Xhigh),
+        ("max", ReasoningEffort::Max),
+        ("ultra", ReasoningEffort::Ultra),
+    ] {
+        let body = serde_json::json!({
+            "model":"m", "input":"hi", "stream":true, "store":false,
+            "reasoning":{"effort":wire}
+        });
+        let parsed = parse_responses_request(&serde_json::to_vec(&body).unwrap()).unwrap();
+        assert_eq!(parsed.reasoning.unwrap().effort, Some(expected));
+    }
+
+    let unknown = br#"{"model":"m","input":"hi","stream":true,"store":false,"reasoning":{"effort":"extreme"}}"#;
+    assert!(parse_responses_request(unknown).is_err());
+}
+
+#[test]
+fn codex_stream_options_and_reasoning_context_are_accepted() {
+    let request = parse_responses_request(
+        br#"{
+            "model":"m",
+            "input":"hello",
+            "stream":true,
+            "store":false,
+            "stream_options":{"reasoning_summary_delivery":"sequential_cutoff"},
+            "reasoning":{"effort":"high","context":"all_turns"}
+        }"#,
+    )
+    .expect("Codex Responses request controls must be accepted");
+
+    assert_eq!(
+        request
+            .stream_options
+            .as_ref()
+            .and_then(|options| options.reasoning_summary_delivery.as_deref()),
+        Some("sequential_cutoff")
+    );
+    assert_eq!(
+        request
+            .reasoning
+            .as_ref()
+            .and_then(|reasoning| reasoning.context.as_deref()),
+        Some("all_turns")
+    );
+}
+
+#[test]
 fn protocol_types_round_trip_without_losing_null_or_empty_semantics() {
     let response: ChatCompletionResponse = serde_json::from_value(serde_json::json!({
         "id": "chat-1",
@@ -86,6 +139,28 @@ fn protocol_types_round_trip_without_losing_null_or_empty_semantics() {
 }
 
 #[test]
+fn chat_usage_accepts_standard_provider_extension_fields() {
+    let response: ChatCompletionResponse = serde_json::from_value(serde_json::json!({
+        "id":"chat-usage",
+        "object":"chat.completion",
+        "created":1,
+        "model":"m",
+        "choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+        "usage":{
+            "prompt_tokens":4,
+            "completion_tokens":2,
+            "total_tokens":6,
+            "prompt_tokens_details":{"cached_tokens":1,"audio_tokens":0},
+            "completion_tokens_details":{"reasoning_tokens":1,"audio_tokens":0,"accepted_prediction_tokens":0}
+        },
+        "service_tier":"default"
+    }))
+    .expect("Chat usage extensions must not break Responses adaptation");
+
+    assert_eq!(response.usage.unwrap().total_tokens, 6);
+}
+
+#[test]
 fn web_search_tool_parses_and_preserves_hosted_options() {
     let request = parse_responses_request(
         br#"{"model":"m","input":"hello","stream":true,"store":false,"tools":[{"type":"web_search","search_context_size":"medium","user_location":{"type":"approximate","country":"CN"}}]}"#,
@@ -100,6 +175,148 @@ fn web_search_tool_parses_and_preserves_hosted_options() {
     let encoded = serde_json::to_value(&request.tools[0]).unwrap();
     assert_eq!(encoded["type"], "web_search");
     assert_eq!(encoded["user_location"]["country"], "CN");
+}
+
+#[test]
+fn codex_client_tool_items_and_responses_lite_tools_parse() {
+    let request = parse_responses_request(
+        &serde_json::to_vec(&serde_json::json!({
+            "model":"m",
+            "stream":true,
+            "store":false,
+            "input":[
+                {"type":"additional_tools","role":"developer","tools":[
+                    {"type":"custom","name":"apply_patch","description":"patch","format":{"type":"text"}},
+                    {"type":"tool_search","execution":"client","description":"discover","parameters":{"type":"object"}}
+                ]},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"edit"}]},
+                {"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"plan"}],"encrypted_content":"cipher"},
+                {"type":"custom_tool_call","id":"ctc_1","call_id":"call-1","name":"apply_patch","input":"*** Begin Patch"},
+                {"type":"custom_tool_call_output","call_id":"call-1","output":[{"type":"input_text","text":"applied"}]},
+                {"type":"tool_search_call","call_id":"search-1","execution":"client","arguments":{"query":"calendar"}},
+                {"type":"tool_search_output","call_id":"search-1","status":"completed","execution":"client","tools":[]},
+                {"type":"local_shell_call","call_id":"shell-1","status":"completed","action":{"type":"exec","command":["pwd"]}}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert!(request.input.iter().any(
+        |item| matches!(item, ResponsesInputItem::AdditionalTools { tools, .. } if tools.len() == 2)
+    ));
+    assert!(request
+        .input
+        .iter()
+        .any(|item| matches!(item, ResponsesInputItem::CustomToolCall { input, .. } if input == "*** Begin Patch")));
+    assert!(request
+        .input
+        .iter()
+        .any(|item| matches!(item, ResponsesInputItem::CustomToolCallOutput { .. })));
+    assert!(request
+        .input
+        .iter()
+        .any(|item| matches!(item, ResponsesInputItem::ToolSearchCall { .. })));
+    assert!(request
+        .input
+        .iter()
+        .any(|item| matches!(item, ResponsesInputItem::ToolSearchOutput { .. })));
+    assert!(request
+        .input
+        .iter()
+        .any(|item| matches!(item, ResponsesInputItem::LocalShellCall { .. })));
+}
+
+#[test]
+fn codex_compaction_and_image_history_items_parse_for_chat_adaptation() {
+    let request = parse_responses_request(
+        &serde_json::to_vec(&serde_json::json!({
+            "model":"m",
+            "stream":true,
+            "store":false,
+            "input":[
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},
+                {"type":"image_generation_call","id":"ig_1","status":"completed","revised_prompt":"draw","result":"artifact"},
+                {"type":"compaction","id":"cmp_1","encrypted_content":"cipher"},
+                {"type":"context_compaction","id":"ctx_1","encrypted_content":"cipher-2"},
+                {"type":"compaction_trigger"}
+            ]
+        }))
+        .unwrap(),
+    )
+    .expect("known Codex history items must be accepted");
+
+    assert!(request
+        .input
+        .iter()
+        .any(|item| matches!(item, ResponsesInputItem::ImageGenerationCall { .. })));
+    assert!(request
+        .input
+        .iter()
+        .any(|item| matches!(item, ResponsesInputItem::Compaction { .. })));
+    assert!(request
+        .input
+        .iter()
+        .any(|item| matches!(item, ResponsesInputItem::ContextCompaction { .. })));
+    assert!(request
+        .input
+        .iter()
+        .any(|item| matches!(item, ResponsesInputItem::CompactionTrigger)));
+}
+
+#[test]
+fn codex_mcp_and_encrypted_agent_history_items_are_accepted() {
+    let request = parse_responses_request(
+        &serde_json::to_vec(&serde_json::json!({
+            "model":"m",
+            "stream":true,
+            "store":false,
+            "input":[
+                {"type":"agent_message","author":"codex","recipient":"user","content":[
+                    {"type":"input_text","text":"handoff"},
+                    {"type":"encrypted_content","encrypted_content":"cipher"}
+                ]},
+                {"type":"function_call","call_id":"mcp-1","name":"calendar__list","arguments":"{}"},
+                {"type":"mcp_tool_call_output","call_id":"mcp-1","output":{
+                    "content":[{"type":"text","text":"events"}],"is_error":false
+                }}
+            ]
+        }))
+        .unwrap(),
+    )
+    .expect("Codex MCP and encrypted agent history must parse");
+
+    assert_eq!(request.input.len(), 3);
+    assert!(matches!(
+        &request.input[2],
+        ResponsesInputItem::McpToolCallOutput { call_id, .. } if call_id == "mcp-1"
+    ));
+}
+
+#[test]
+fn compaction_summary_alias_and_chat_provider_extensions_are_tolerated() {
+    let request = parse_responses_request(
+        br#"{"model":"m","input":[{"type":"compaction_summary","encrypted_content":"cipher"}],"stream":false,"store":false}"#,
+    )
+    .expect("Codex compaction_summary alias must parse");
+    assert!(matches!(
+        request.input.first(),
+        Some(ResponsesInputItem::Compaction { encrypted_content, .. }) if encrypted_content == "cipher"
+    ));
+
+    let response: ChatCompletionResponse = serde_json::from_value(serde_json::json!({
+        "id":"chat-extension",
+        "object":"chat.completion",
+        "created":1,
+        "model":"m",
+        "choices":[{"index":0,"message":{"role":"assistant","tool_calls":[
+            {"id":"call-1","type":"function","function":{"name":"f","arguments":"{}","provider_extension":true}}
+        ]},"finish_reason":"tool_calls"}],
+        "usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2,"reasoning_tokens":1},
+        "provider_extension":{"trace_id":"trace-1"}
+    }))
+    .expect("standard provider extensions must not break Chat response parsing");
+    assert_eq!(response.choices[0].message.content, None);
 }
 
 #[test]
@@ -172,10 +389,13 @@ fn input_image_content_parses_and_round_trips() {
 
 #[test]
 fn passthrough_metadata_accepts_unmodeled_history_items_without_schema_validation() {
-    // A `web_search_call` history item is rejected by the strict schema but must
-    // pass the lenient passthrough parser used by the Responses-native route.
+    // A `web_search_call` history item is understood by the Chat bridge and must
+    // also pass the lenient parser used by the Responses-native route.
     let body = br#"{"model":"m","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"rust"}}]}"#;
-    assert!(parse_responses_request(body).is_err());
+    assert!(matches!(
+        &parse_responses_request(body).unwrap().input[1],
+        ResponsesInputItem::WebSearchCall { .. }
+    ));
 
     let metadata = parse_responses_passthrough(body).unwrap();
     assert_eq!(metadata.model, "m");

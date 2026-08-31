@@ -230,7 +230,7 @@ fn codex_model(
     CodexModelInfo {
         slug: model.id,
         display_name: model.label,
-        supported_reasoning_levels: Vec::new(),
+        supported_reasoning_levels: codex_reasoning_levels(),
         shell_type: CodexShellType::ShellCommand,
         visibility: CodexModelVisibility::List,
         supported_in_api: true,
@@ -250,4 +250,24 @@ fn codex_model(
         effective_context_window_percent: defaults
             .and_then(|value| value.effective_context_window_percent),
     }
+}
+
+fn codex_reasoning_levels() -> Vec<CodexReasoningLevel> {
+    [
+        ("low", "Fast responses with lighter reasoning"),
+        (
+            "medium",
+            "Balances speed and reasoning depth for everyday tasks",
+        ),
+        ("high", "Greater reasoning depth for complex problems"),
+        ("xhigh", "Extra high reasoning depth for complex problems"),
+        ("max", "Maximum reasoning depth for the hardest problems"),
+        ("ultra", "Maximum reasoning with automatic task delegation"),
+    ]
+    .into_iter()
+    .map(|(effort, description)| CodexReasoningLevel {
+        effort: effort.into(),
+        description: description.into(),
+    })
+    .collect()
 }

@@ -69,6 +69,7 @@ const API_ACCOUNT_SAFE_TOP_LEVEL_KEYS: &[&str] = &[
     "suppress_unstable_features_warning",
 ];
 const API_ACCOUNT_SAFE_FEATURE_KEYS: &[&str] = &["multi_agent", "js_repl"];
+const API_ACCOUNT_SAFE_DESKTOP_KEYS: &[&str] = &["enabled-reasoning-efforts"];
 
 pub trait ProviderCredentialResolver {
     fn resolve(&self, source: &CredentialSource) -> Result<SecretValue>;
@@ -270,6 +271,20 @@ pub struct CreateProviderRequestV2 {
 }
 
 pub type UpdateProviderRequestV2 = CreateProviderRequestV2;
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteProviderRequestV2 {
+    pub expected_revision: u64,
+    pub provider_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteProviderResultV2 {
+    pub provider_id: String,
+    pub store_revision: u64,
+}
 
 impl CreateProviderRequestV2 {
     pub fn to_domain(&self, now: &str) -> Result<ProviderProfileV2> {
@@ -1994,6 +2009,59 @@ pub fn update_provider_service_v2(
     Ok(view)
 }
 
+pub fn delete_provider_service_v2(
+    home_root: &Path,
+    request: DeleteProviderRequestV2,
+) -> Result<DeleteProviderResultV2> {
+    let stores = provider_hub_stores(home_root)?;
+    let bound_profiles: Vec<String> = stores
+        .bindings
+        .load_or_default()?
+        .value
+        .bindings
+        .iter()
+        .filter(|binding| binding.provider_id == request.provider_id)
+        .map(|binding| binding.profile_id.clone())
+        .collect();
+    if !bound_profiles.is_empty() {
+        return Err(AppError {
+            code: "PROVIDER_IN_USE".into(),
+            message: format!(
+                "Provider {} is attached; detach its accounts before deleting it",
+                request.provider_id
+            ),
+            recoverable: true,
+            details: Some(serde_json::json!({ "profiles": bound_profiles })),
+        });
+    }
+
+    let repository = ProviderRepository::new(stores.providers);
+    let snapshot = repository.load()?;
+    let provider = snapshot
+        .value
+        .providers
+        .iter()
+        .find(|provider| provider.id == request.provider_id)
+        .cloned()
+        .ok_or_else(|| AppError::new("PROVIDER_NOT_FOUND", &request.provider_id))?;
+    let committed = repository.delete(request.expected_revision, &request.provider_id)?;
+
+    let source = match provider.upstream_auth {
+        UpstreamAuth::Bearer { source } | UpstreamAuth::Header { source, .. } => Some(source),
+        UpstreamAuth::None => None,
+    };
+    if let Some(source) = source {
+        if let Ok(reference) = KeychainCredentialReference::try_from(&source) {
+            KeychainCredentialService::new(Arc::new(SystemKeychainBackend)).revoke(&reference)?;
+        }
+    }
+
+    Ok(DeleteProviderResultV2 {
+        provider_id: request.provider_id,
+        store_revision: committed.revision,
+    })
+}
+
 pub fn list_provider_views_service_v2(home_root: &Path) -> Result<Vec<ProviderProfileView>> {
     Ok(list_provider_hub_view_v2(home_root)?.providers)
 }
@@ -2832,7 +2900,8 @@ pub fn execute_api_account_service_v2_with_fault(
         ));
     }
     let stores = provider_hub_stores(home_root)?;
-    if stores.providers.load_or_default()?.revision != plan.expected_provider_store_revision {
+    let providers = stores.providers.load_or_default()?;
+    if providers.revision != plan.expected_provider_store_revision {
         return Err(AppError::new(
             "API_ACCOUNT_PLAN_STALE",
             "Provider store changed after planning",
@@ -2847,6 +2916,8 @@ pub fn execute_api_account_service_v2_with_fault(
             "Account was created after planning",
         ));
     }
+
+    let disable_hosted_web_search = api_account_disables_hosted_web_search(&plan, &providers.value);
 
     create_api_account_journal(home_root, &request.plan_id, &plan)?;
 
@@ -2869,7 +2940,9 @@ pub fn execute_api_account_service_v2_with_fault(
             return Err(error);
         }
     };
-    if let Err(error) = ensure_api_account_config(home_root, &account.home_path) {
+    if let Err(error) =
+        ensure_api_account_config(home_root, &account.home_path, disable_hosted_web_search)
+    {
         compensate_api_account_creation(home_root, &request.plan_id, &plan, None)?;
         return Err(error);
     }
@@ -3290,7 +3363,11 @@ fn validate_api_account_update(
     {
         return Err(AppError::new("CODEX_API_KEY_EMPTY", "API key is empty"));
     }
-    if request.models.is_some() && request.selected_model.as_ref().is_none_or(|value| value.trim().is_empty())
+    if request.models.is_some()
+        && request
+            .selected_model
+            .as_ref()
+            .is_none_or(|value| value.trim().is_empty())
     {
         return Err(AppError::new(
             "API_ACCOUNT_SELECTED_MODEL_REQUIRED",
@@ -3602,10 +3679,14 @@ pub fn recover_api_account_transactions_at_root_service_v2(
                 }
             }
             ApiAccountJournalKindV2::Delete if !binding_committed => {
-                let account_exists = super::account::list_accounts(&home_root)?
+                let account = super::account::list_accounts(&home_root)?
                     .iter()
-                    .any(|account| account.id == record.account_name);
-                if account_exists {
+                    .find(|account| account.id == record.account_name)
+                    .cloned();
+                let account_can_restore = account
+                    .as_ref()
+                    .is_some_and(|account| account.managed && account.has_config);
+                if account_can_restore {
                     let mut state = ProviderApiV2State::default();
                     restore_detached_api_account(
                         &home_root,
@@ -3825,7 +3906,32 @@ fn api_account_fault() -> AppError {
     )
 }
 
-fn ensure_api_account_config(home_root: &Path, codex_home: &Path) -> Result<()> {
+fn api_account_disables_hosted_web_search(
+    plan: &ApiAccountPlanV2,
+    providers: &ProviderCollection,
+) -> bool {
+    match &plan.request.provider {
+        ApiAccountProviderSelectionV2::New { provider } => {
+            provider.protocol == ProviderProtocolDto::ChatCompletions
+                && provider.compatibility_profile.as_deref() == Some("deepseek_chat_completions")
+        }
+        ApiAccountProviderSelectionV2::Existing { provider_id } => providers
+            .providers
+            .iter()
+            .find(|provider| provider.id == *provider_id)
+            .is_some_and(|provider| {
+                provider.protocol == ProviderProtocol::ChatCompletions
+                    && provider.compatibility_profile.as_deref()
+                        == Some("deepseek_chat_completions")
+            }),
+    }
+}
+
+fn ensure_api_account_config(
+    home_root: &Path,
+    codex_home: &Path,
+    disable_hosted_web_search: bool,
+) -> Result<()> {
     let path = codex_home.join("config.toml");
     if path.exists() {
         return Err(AppError::new(
@@ -3833,7 +3939,7 @@ fn ensure_api_account_config(home_root: &Path, codex_home: &Path) -> Result<()> 
             "new API Account config must not already exist",
         ));
     }
-    let contents = api_account_config_contents(home_root)?;
+    let contents = api_account_config_contents(home_root, disable_hosted_web_search)?;
     fs::write(&path, contents.as_bytes())?;
     #[cfg(unix)]
     {
@@ -3843,7 +3949,10 @@ fn ensure_api_account_config(home_root: &Path, codex_home: &Path) -> Result<()> 
     Ok(())
 }
 
-fn api_account_config_contents(home_root: &Path) -> Result<String> {
+fn api_account_config_contents(
+    home_root: &Path,
+    disable_hosted_web_search: bool,
+) -> Result<String> {
     let mut template = API_ACCOUNT_CODEX_CONFIG_TEMPLATE
         .parse::<DocumentMut>()
         .map_err(|error| AppError::new("API_ACCOUNT_TEMPLATE_INVALID", error.to_string()))?;
@@ -3852,24 +3961,35 @@ fn api_account_config_contents(home_root: &Path) -> Result<String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error.into()),
     };
-    let Some(source) = source else {
-        return Ok(template.to_string());
-    };
-
-    for key in API_ACCOUNT_SAFE_TOP_LEVEL_KEYS {
-        if let Some(item) = source.get(key).filter(|item| item.is_value()) {
-            template[key] = item.clone();
-        }
-    }
-    if let (Some(source_features), Some(template_features)) = (
-        source.get("features").and_then(Item::as_table_like),
-        template.get_mut("features").and_then(Item::as_table_mut),
-    ) {
-        for key in API_ACCOUNT_SAFE_FEATURE_KEYS {
-            if let Some(item) = source_features.get(key).filter(|item| item.is_value()) {
-                template_features.insert(key, item.clone());
+    if let Some(source) = source {
+        for key in API_ACCOUNT_SAFE_TOP_LEVEL_KEYS {
+            if let Some(item) = source.get(key).filter(|item| item.is_value()) {
+                template[key] = item.clone();
             }
         }
+        if let (Some(source_features), Some(template_features)) = (
+            source.get("features").and_then(Item::as_table_like),
+            template.get_mut("features").and_then(Item::as_table_mut),
+        ) {
+            for key in API_ACCOUNT_SAFE_FEATURE_KEYS {
+                if let Some(item) = source_features.get(key).filter(|item| item.is_value()) {
+                    template_features.insert(key, item.clone());
+                }
+            }
+        }
+        if let (Some(source_desktop), Some(template_desktop)) = (
+            source.get("desktop").and_then(Item::as_table_like),
+            template.get_mut("desktop").and_then(Item::as_table_mut),
+        ) {
+            for key in API_ACCOUNT_SAFE_DESKTOP_KEYS {
+                if let Some(item) = source_desktop.get(key).filter(|item| item.is_value()) {
+                    template_desktop.insert(key, item.clone());
+                }
+            }
+        }
+    }
+    if disable_hosted_web_search {
+        template["web_search"] = value("disabled");
     }
     Ok(template.to_string())
 }

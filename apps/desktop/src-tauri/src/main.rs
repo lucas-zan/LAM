@@ -1,10 +1,20 @@
 mod commands;
 mod tray;
 
-use tauri::{Manager, WindowEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 
 fn should_hide_instead_of_close(label: &str) -> bool {
     label == "main"
+}
+
+fn run_exit_cleanup() {
+    let home = match localagentmanager_core::resolve_home_root() {
+        Ok(home) => home,
+        Err(_) => return,
+    };
+    let _ = tauri::async_runtime::block_on(
+        localagentmanager_core::gateway::supervisor::shutdown_packaged_gateway(&home),
+    );
 }
 
 fn main() {
@@ -133,6 +143,7 @@ fn main() {
             commands::create_provider_with_keychain_v2,
             commands::create_provider_legacy_compat_v2,
             commands::update_provider_v2,
+            commands::delete_provider_v2,
             commands::rotate_provider_credential_v2,
             commands::list_profile_provider_bindings_v2,
             commands::plan_attach_provider_v2,
@@ -170,8 +181,13 @@ fn main() {
             commands::restart_chatgpt,
             commands::quit_app,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running LAM");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run_return(|_app_handle, event| {
+            if let RunEvent::ExitRequested { .. } = event {
+                run_exit_cleanup();
+            }
+        });
 }
 
 #[cfg(test)]

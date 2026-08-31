@@ -144,7 +144,9 @@ impl DeepSeekCompatibilityPreset {
                 supports_developer_role: false,
                 supports_parallel_tool_calls: true,
                 supports_structured_output: true,
+                supports_namespace_function_tools: true,
                 supports_reasoning: true,
+                supports_hosted_web_search: false,
                 requires_assistant_content_for_tool_calls: true,
                 requires_reasoning_for_tool_calls: mode == ThinkingMode::Enabled,
             },
@@ -193,10 +195,14 @@ impl DeepSeekCompatibilityPreset {
 
 fn map_effort(effort: Option<ReasoningEffort>) -> &'static str {
     match effort {
-        Some(ReasoningEffort::Xhigh) => "max",
-        Some(ReasoningEffort::Low | ReasoningEffort::Medium | ReasoningEffort::High) | None => {
-            "high"
-        }
+        Some(ReasoningEffort::Xhigh | ReasoningEffort::Max | ReasoningEffort::Ultra) => "max",
+        Some(
+            ReasoningEffort::None
+            | ReasoningEffort::Low
+            | ReasoningEffort::Medium
+            | ReasoningEffort::High,
+        )
+        | None => "high",
     }
 }
 

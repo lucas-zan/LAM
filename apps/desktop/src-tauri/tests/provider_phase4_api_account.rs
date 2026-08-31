@@ -1,18 +1,18 @@
 use localagentmanager_core::account::{list_accounts, repair_managed_wrappers};
 use localagentmanager_core::provider_api_v2::{
     create_provider_service_v2, delete_api_account_service_v2,
-    delete_api_account_service_v2_with_fault, execute_api_account_model_switch_service_v2,
-    execute_api_account_service_v2, execute_api_account_service_v2_with_fault,
-    get_api_account_connection_service_v2, list_binding_views_service_v2,
-    list_provider_hub_view_v2, list_provider_views_service_v2,
+    delete_api_account_service_v2_with_fault, delete_provider_service_v2,
+    execute_api_account_model_switch_service_v2, execute_api_account_service_v2,
+    execute_api_account_service_v2_with_fault, get_api_account_connection_service_v2,
+    list_binding_views_service_v2, list_provider_hub_view_v2, list_provider_views_service_v2,
     migrate_native_responses_bindings_service_v2,
     migrate_native_responses_bindings_with_keychain_service_v2,
     plan_api_account_model_switch_service_v2, plan_api_account_service_v2,
     recover_api_account_transactions_service_v2, update_api_account_connection_service_v2,
     AdapterDto, ApiAccountFaultPoint, ApiAccountProviderSelectionV2, CodexOptionsDto,
-    CreateProviderRequestV2, CredentialReferenceDto, ExecuteApiAccountRequestV2,
-    PlanApiAccountRequestV2, ProviderApiV2State, ProviderDefinitionDto, ProviderModelDto,
-    ProviderProtocolDto, UpdateApiAccountConnectionRequestV2, UpstreamAuthDto,
+    CreateProviderRequestV2, CredentialReferenceDto, DeleteProviderRequestV2,
+    ExecuteApiAccountRequestV2, PlanApiAccountRequestV2, ProviderApiV2State, ProviderDefinitionDto,
+    ProviderModelDto, ProviderProtocolDto, UpdateApiAccountConnectionRequestV2, UpstreamAuthDto,
 };
 use localagentmanager_core::provider_config_editor::config_hash;
 use localagentmanager_core::provider_credentials::SecretValue;
@@ -84,6 +84,100 @@ fn provider() -> ProviderDefinitionDto {
     }
 }
 
+#[test]
+fn deleting_a_v2_provider_requires_no_bindings_and_preserves_the_account() {
+    let home = tempfile::tempdir().unwrap();
+    let created = create_provider_service_v2(
+        home.path(),
+        CreateProviderRequestV2 {
+            expected_revision: 0,
+            provider: provider(),
+        },
+        "2026-08-26T00:00:00Z",
+    )
+    .unwrap();
+
+    let deleted = delete_provider_service_v2(
+        home.path(),
+        DeleteProviderRequestV2 {
+            expected_revision: created.store_revision,
+            provider_id: created.id.clone(),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(deleted.provider_id, "account-work-api");
+    assert!(list_provider_views_service_v2(home.path())
+        .unwrap()
+        .is_empty());
+    assert!(list_accounts(home.path()).unwrap().is_empty());
+}
+
+#[test]
+fn deleting_a_bound_v2_provider_is_rejected_without_detaching_the_account() {
+    let home = tempfile::tempdir().unwrap();
+    let mut state = ProviderApiV2State::default();
+    let plan = plan_api_account_service_v2(home.path(), request(), &mut state, 1_000).unwrap();
+    execute_api_account_service_v2(
+        home.path(),
+        ExecuteApiAccountRequestV2 {
+            plan_id: plan.plan_id,
+            fingerprint: plan.fingerprint,
+            api_key: None,
+        },
+        &mut state,
+        1_100,
+    )
+    .unwrap();
+    let snapshot = list_provider_hub_view_v2(home.path()).unwrap();
+
+    let error = delete_provider_service_v2(
+        home.path(),
+        DeleteProviderRequestV2 {
+            expected_revision: snapshot.revision,
+            provider_id: "account-work-api".into(),
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code, "PROVIDER_IN_USE");
+    assert_eq!(list_accounts(home.path()).unwrap().len(), 1);
+    assert_eq!(
+        list_provider_views_service_v2(home.path()).unwrap().len(),
+        1
+    );
+    assert_eq!(list_binding_views_service_v2(home.path()).unwrap().len(), 1);
+}
+
+#[test]
+fn deleting_a_v2_provider_rejects_a_stale_store_revision() {
+    let home = tempfile::tempdir().unwrap();
+    create_provider_service_v2(
+        home.path(),
+        CreateProviderRequestV2 {
+            expected_revision: 0,
+            provider: provider(),
+        },
+        "2026-08-26T00:00:00Z",
+    )
+    .unwrap();
+
+    let error = delete_provider_service_v2(
+        home.path(),
+        DeleteProviderRequestV2 {
+            expected_revision: 0,
+            provider_id: "account-work-api".into(),
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code, "STORE_REVISION_CONFLICT");
+    assert_eq!(
+        list_provider_views_service_v2(home.path()).unwrap().len(),
+        1
+    );
+}
+
 fn request() -> PlanApiAccountRequestV2 {
     PlanApiAccountRequestV2 {
         account_name: "work-api".into(),
@@ -93,6 +187,56 @@ fn request() -> PlanApiAccountRequestV2 {
             provider: Box::new(provider()),
         },
     }
+}
+
+fn deepseek_chat_request() -> PlanApiAccountRequestV2 {
+    let mut provider = provider();
+    provider.id = "account-deepseek-chat".into();
+    provider.name = "DeepSeek Chat connection".into();
+    provider.protocol = ProviderProtocolDto::ChatCompletions;
+    provider.adapter = AdapterDto::Local {
+        adapter_id: "responses_to_chat_completions".into(),
+        upstream_path: "/chat/completions".into(),
+    };
+    provider.compatibility_profile = Some("deepseek_chat_completions".into());
+    provider.codex.route_via_gateway = true;
+    PlanApiAccountRequestV2 {
+        account_name: "deepseek-chat".into(),
+        selected_model: "model-a".into(),
+        overwrite_wrapper: false,
+        provider: ApiAccountProviderSelectionV2::New {
+            provider: Box::new(provider),
+        },
+    }
+}
+
+#[test]
+fn deepseek_chat_api_account_is_planned_through_gateway_and_declares_hosted_search_disabled() {
+    let home = tempfile::tempdir().unwrap();
+    let mut state = ProviderApiV2State::default();
+    let plan = plan_api_account_service_v2(home.path(), deepseek_chat_request(), &mut state, 1_000)
+        .unwrap();
+    assert_eq!(
+        plan.route_kind,
+        localagentmanager_core::provider_api_v2::RouteKindDto::Gateway
+    );
+    assert!(plan.blockers.is_empty());
+
+    let outcome = execute_api_account_service_v2(
+        home.path(),
+        ExecuteApiAccountRequestV2 {
+            plan_id: plan.plan_id,
+            fingerprint: plan.fingerprint,
+            api_key: None,
+        },
+        &mut state,
+        1_100,
+    )
+    .unwrap();
+    let config = fs::read_to_string(outcome.account.home_path.join("config.toml")).unwrap();
+    let parsed = config.parse::<toml::Value>().unwrap();
+    assert_eq!(parsed["web_search"].as_str(), Some("disabled"));
+    assert_eq!(parsed["features"]["multi_agent"].as_bool(), Some(true));
 }
 
 fn native_key_request() -> PlanApiAccountRequestV2 {
@@ -411,10 +555,7 @@ fn api_account_connection_can_replace_saved_models_and_rewrite_catalog() {
         2_500,
     )
     .unwrap_err();
-    assert_eq!(
-        missing_selected.code,
-        "API_ACCOUNT_SELECTED_MODEL_REQUIRED"
-    );
+    assert_eq!(missing_selected.code, "API_ACCOUNT_SELECTED_MODEL_REQUIRED");
 
     let updated = update_api_account_connection_service_v2(
         home.path(),
@@ -668,6 +809,10 @@ service_tier = "default"
 approvals_reviewer = "user"
 notify = ["sh", "-c", "secret-notification-command"]
 
+[desktop]
+enabled-reasoning-efforts = ["low", "high", "max"]
+open-link-in-target-preference = "private-machine-state"
+
 [features]
 multi_agent = false
 js_repl = true
@@ -709,6 +854,15 @@ Authorization = "do-not-copy"
     assert_eq!(parsed["personality"].as_str(), Some("friendly"));
     assert_eq!(parsed["features"]["multi_agent"].as_bool(), Some(false));
     assert_eq!(parsed["features"]["js_repl"].as_bool(), Some(true));
+    assert_eq!(
+        parsed["desktop"]["enabled-reasoning-efforts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(toml::Value::as_str)
+            .collect::<Vec<_>>(),
+        ["low", "high", "max"]
+    );
     assert_eq!(parsed["model"].as_str(), Some("model-a"));
     assert_eq!(parsed["model_provider"].as_str(), Some("account-work-api"));
     assert!(!config.contains("secret-notification-command"));
@@ -716,6 +870,7 @@ Authorization = "do-not-copy"
     assert!(!config.contains("do-not-copy"));
     assert!(!config.contains("/private/user/project"));
     assert!(!config.contains("private-mcp.example"));
+    assert!(!config.contains("private-machine-state"));
 }
 
 #[test]
@@ -739,6 +894,15 @@ fn api_account_uses_builtin_codex_template_when_normal_config_is_missing() {
     let parsed = config.parse::<toml::Value>().unwrap();
     assert_eq!(parsed["model_reasoning_effort"].as_str(), Some("medium"));
     assert_eq!(parsed["personality"].as_str(), Some("pragmatic"));
+    assert_eq!(
+        parsed["desktop"]["enabled-reasoning-efforts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(toml::Value::as_str)
+            .collect::<Vec<_>>(),
+        ["low", "medium", "high", "xhigh", "ultra", "max"]
+    );
     assert_eq!(parsed["features"]["multi_agent"].as_bool(), Some(true));
     assert_eq!(parsed["features"]["js_repl"].as_bool(), Some(false));
     assert_eq!(parsed["model"].as_str(), Some("model-a"));
@@ -948,6 +1112,58 @@ fn startup_recovery_reattaches_an_account_after_delete_crashes_post_detach() {
     let bindings = list_binding_views_service_v2(home.path()).unwrap();
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].selected_model, "model-a");
+    assert_eq!(
+        recover_api_account_transactions_service_v2(home.path())
+            .unwrap()
+            .recovered,
+        0
+    );
+}
+
+#[test]
+fn startup_recovery_preserves_a_runtime_recreated_partially_deleted_account() {
+    let home = tempfile::tempdir().unwrap();
+    let mut state = ProviderApiV2State::default();
+    let plan = plan_api_account_service_v2(home.path(), request(), &mut state, 1_000).unwrap();
+    let created = execute_api_account_service_v2(
+        home.path(),
+        ExecuteApiAccountRequestV2 {
+            plan_id: plan.plan_id,
+            fingerprint: plan.fingerprint,
+            api_key: None,
+        },
+        &mut state,
+        1_100,
+    )
+    .unwrap();
+
+    let error = delete_api_account_service_v2_with_fault(
+        home.path(),
+        "work-api",
+        &mut state,
+        2_000,
+        Some(ApiAccountFaultPoint::CrashAfterDeleteDetach),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "API_ACCOUNT_DELETE_CRASH_SIMULATED");
+
+    fs::remove_dir_all(&created.account.home_path).unwrap();
+    fs::create_dir_all(&created.account.home_path).unwrap();
+    fs::write(
+        created.account.home_path.join("history.jsonl"),
+        "runtime recreated after delete\n",
+    )
+    .unwrap();
+
+    let report = recover_api_account_transactions_service_v2(home.path()).unwrap();
+    assert_eq!(report.recovered, 1);
+    assert!(created.account.home_path.join("history.jsonl").exists());
+    assert!(list_binding_views_service_v2(home.path())
+        .unwrap()
+        .is_empty());
+    assert!(list_provider_views_service_v2(home.path())
+        .unwrap()
+        .is_empty());
     assert_eq!(
         recover_api_account_transactions_service_v2(home.path())
             .unwrap()

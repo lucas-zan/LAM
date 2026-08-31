@@ -1,10 +1,11 @@
 use super::nonstream::{
-    map_usage, IncompleteDetails, ResponsesOutputContent, ResponsesOutputItem, ResponsesResponse,
-    ResponsesStatus,
+    map_annotations, map_usage, unwrap_custom_input, IncompleteDetails, ResponsesOutputContent,
+    ResponsesOutputItem, ResponsesResponse, ResponsesStatus,
 };
 use super::protocol::{
     ChatChunk, ChatToolCallDelta, MAX_RESPONSE_BYTES, MAX_SSE_FRAME_BYTES, MAX_TOOL_ARGUMENT_BYTES,
 };
+use super::request::{ToolIdentity, ToolKind, ToolTranslationContext};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -147,6 +148,22 @@ pub enum ResponsesStreamEvent {
         name: String,
         arguments: String,
     },
+    #[serde(rename = "response.custom_tool_call_input.delta")]
+    CustomToolCallInputDelta {
+        sequence_number: u64,
+        response_id: String,
+        item_id: String,
+        output_index: usize,
+        delta: String,
+    },
+    #[serde(rename = "response.custom_tool_call_input.done")]
+    CustomToolCallInputDone {
+        sequence_number: u64,
+        response_id: String,
+        item_id: String,
+        output_index: usize,
+        input: String,
+    },
 }
 
 impl ResponsesStreamEvent {
@@ -165,6 +182,8 @@ impl ResponsesStreamEvent {
             Self::Cancelled { .. } => "response.cancelled",
             Self::FunctionCallArgumentsDelta { .. } => "response.function_call_arguments.delta",
             Self::FunctionCallArgumentsDone { .. } => "response.function_call_arguments.done",
+            Self::CustomToolCallInputDelta { .. } => "response.custom_tool_call_input.delta",
+            Self::CustomToolCallInputDone { .. } => "response.custom_tool_call_input.done",
         }
     }
 
@@ -182,7 +201,9 @@ impl ResponsesStreamEvent {
             | Self::ContentPartDone { response_id, .. }
             | Self::OutputItemDone { response_id, .. }
             | Self::FunctionCallArgumentsDelta { response_id, .. }
-            | Self::FunctionCallArgumentsDone { response_id, .. } => response_id,
+            | Self::FunctionCallArgumentsDone { response_id, .. }
+            | Self::CustomToolCallInputDelta { response_id, .. }
+            | Self::CustomToolCallInputDone { response_id, .. } => response_id,
         }
     }
 
@@ -360,22 +381,41 @@ pub struct StreamingAdapter {
     tool_calls: BTreeMap<u32, ToolAccumulator>,
     tool_call_ids: BTreeSet<String>,
     reasoning: String,
+    annotations: Vec<serde_json::Value>,
     reasoning_limit: Option<usize>,
     response_limit: usize,
     terminal_status: ResponsesStatus,
     incomplete_reason: Option<String>,
+    tool_context: ToolTranslationContext,
 }
 
 struct ToolAccumulator {
-    item_id: String,
-    call_id: String,
-    name: String,
+    item_id: Option<String>,
+    call_id: Option<String>,
+    chat_name: Option<String>,
+    name: Option<String>,
+    namespace: Option<String>,
+    kind: ToolKind,
     arguments: String,
-    output_index: usize,
+    output_index: Option<usize>,
 }
 
 impl StreamingAdapter {
     pub fn new(response_id: impl Into<String>, model: impl Into<String>, created_at: i64) -> Self {
+        Self::new_with_tool_context(
+            response_id,
+            model,
+            created_at,
+            ToolTranslationContext::default(),
+        )
+    }
+
+    pub fn new_with_tool_context(
+        response_id: impl Into<String>,
+        model: impl Into<String>,
+        created_at: i64,
+        tool_context: ToolTranslationContext,
+    ) -> Self {
         let response_id = response_id.into();
         Self {
             item_id: format!("msg-{response_id}-1"),
@@ -393,10 +433,12 @@ impl StreamingAdapter {
             tool_calls: BTreeMap::new(),
             tool_call_ids: BTreeSet::new(),
             reasoning: String::new(),
+            annotations: Vec::new(),
             reasoning_limit: None,
             response_limit: MAX_RESPONSE_BYTES,
             terminal_status: ResponsesStatus::Completed,
             incomplete_reason: None,
+            tool_context,
         }
     }
     pub fn state(&self) -> StreamState {
@@ -413,6 +455,20 @@ impl StreamingAdapter {
     }
     pub fn reasoning_content(&self) -> Option<&str> {
         (!self.reasoning.is_empty()).then_some(self.reasoning.as_str())
+    }
+    pub fn tool_call_ids(&self) -> Vec<String> {
+        self.output
+            .iter()
+            .filter_map(|item| match item {
+                ResponsesOutputItem::FunctionCall { call_id, .. }
+                | ResponsesOutputItem::CustomToolCall { call_id, .. }
+                | ResponsesOutputItem::ToolSearchCall { call_id, .. }
+                | ResponsesOutputItem::LocalShellCall { call_id, .. } => Some(call_id.clone()),
+                ResponsesOutputItem::Message { .. }
+                | ResponsesOutputItem::WebSearchCall { .. }
+                | ResponsesOutputItem::Reasoning { .. } => None,
+            })
+            .collect()
     }
     pub fn start(&mut self) -> Result<Vec<ResponsesStreamEvent>, StreamError> {
         if self.state != StreamState::New {
@@ -507,20 +563,20 @@ impl StreamingAdapter {
             }
             if let Some(reasoning) = choice.delta.reasoning_content {
                 if !reasoning.is_empty() {
-                    let Some(limit) = self.reasoning_limit else {
-                        return self.fail(StreamError::new(
-                            StreamErrorCode::ProtocolMismatch,
-                            "reasoning_content is not enabled by the compatibility policy",
-                        ));
-                    };
-                    if self.reasoning.len().saturating_add(reasoning.len()) > limit {
-                        return self.fail(StreamError::new(
-                            StreamErrorCode::ReasoningLimitExceeded,
-                            "reasoning content exceeds the configured limit",
-                        ));
+                    if let Some(limit) = self.reasoning_limit {
+                        if self.reasoning.len().saturating_add(reasoning.len()) > limit {
+                            return self.fail(StreamError::new(
+                                StreamErrorCode::ReasoningLimitExceeded,
+                                "reasoning content exceeds the configured limit",
+                            ));
+                        }
+                        self.reasoning.push_str(&reasoning);
                     }
-                    self.reasoning.push_str(&reasoning);
                 }
+            }
+            if !choice.delta.annotations.is_empty() {
+                self.annotations
+                    .extend(map_annotations(&choice.delta.annotations));
             }
             if let Some(content) = choice.delta.content {
                 if !content.is_empty() {
@@ -533,11 +589,33 @@ impl StreamingAdapter {
                     events.extend(self.text_delta(content));
                 }
             }
-            for tool_delta in choice.delta.tool_calls {
+            if !choice.delta.tool_calls.is_empty() && self.item_open {
+                events.extend(self.finish_text_item());
+            }
+            let mut tool_deltas = choice.delta.tool_calls;
+            if tool_deltas.is_empty() {
+                if let Some(function) = choice.delta.function_call {
+                    tool_deltas.push(ChatToolCallDelta {
+                        index: 0,
+                        id: Some(format!("call-{}", self.response_id)),
+                        kind: Some(super::protocol::FunctionType::Function),
+                        function: Some(function),
+                    });
+                }
+            }
+            for tool_delta in tool_deltas {
                 events.extend(self.accept_tool_delta(tool_delta)?);
             }
             if let Some(reason) = choice.finish_reason.as_deref() {
-                if !matches!(reason, "stop" | "length" | "content_filter" | "tool_calls") {
+                if !matches!(
+                    reason,
+                    "stop"
+                        | "length"
+                        | "content_filter"
+                        | "tool_calls"
+                        | "function_call"
+                        | "insufficient_system_resource"
+                ) {
                     return self.fail(StreamError::new(
                         StreamErrorCode::ProtocolMismatch,
                         "unknown stream finish reason",
@@ -552,9 +630,13 @@ impl StreamingAdapter {
                         self.terminal_status = ResponsesStatus::Incomplete;
                         self.incomplete_reason = Some("content_filter".into());
                     }
+                    "insufficient_system_resource" => {
+                        self.terminal_status = ResponsesStatus::Incomplete;
+                        self.incomplete_reason = Some("insufficient_system_resource".into());
+                    }
                     _ => {}
                 }
-                if reason == "tool_calls" {
+                if matches!(reason, "tool_calls" | "function_call") {
                     if self.item_open {
                         events.extend(self.finish_text_item());
                     }
@@ -572,44 +654,157 @@ impl StreamingAdapter {
         &mut self,
         delta: ChatToolCallDelta,
     ) -> Result<Vec<ResponsesStreamEvent>, StreamError> {
-        let mut events = Vec::new();
-        if !self.tool_calls.contains_key(&delta.index) {
-            let call_id = delta
-                .id
-                .clone()
-                .filter(|id| !id.is_empty())
-                .ok_or_else(|| {
-                    StreamError::new(
-                        StreamErrorCode::ProtocolMismatch,
-                        "first tool delta requires an ID",
-                    )
-                })?;
-            let name = delta
-                .function
-                .as_ref()
-                .and_then(|function| function.name.clone())
-                .filter(|name| !name.is_empty())
-                .ok_or_else(|| {
-                    StreamError::new(
-                        StreamErrorCode::ProtocolMismatch,
-                        "first tool delta requires a function name",
-                    )
-                })?;
-            if !self.tool_call_ids.insert(call_id.clone()) {
+        let tool_index = delta.index;
+        let chat_name = delta
+            .function
+            .as_ref()
+            .and_then(|function| function.name.clone())
+            .filter(|name| !name.is_empty());
+        let call_id = delta.id.filter(|id| !id.is_empty());
+        let fragment = delta
+            .function
+            .and_then(|function| function.arguments)
+            .unwrap_or_default();
+        self.tool_calls
+            .entry(tool_index)
+            .or_insert_with(|| ToolAccumulator {
+                item_id: None,
+                call_id: None,
+                chat_name: None,
+                name: None,
+                namespace: None,
+                kind: ToolKind::Function,
+                arguments: String::new(),
+                output_index: None,
+            });
+        let already_materialized = self
+            .tool_calls
+            .get(&delta.index)
+            .is_some_and(|call| call.item_id.is_some());
+        let output_index_hint = (!already_materialized).then(|| {
+            self.output.len()
+                + self
+                    .tool_calls
+                    .values()
+                    .filter(|call| call.output_index.is_some())
+                    .count()
+        });
+        if let Some(call_id) = call_id.as_ref() {
+            let duplicate = self
+                .tool_calls
+                .get(&tool_index)
+                .and_then(|call| call.call_id.as_ref())
+                .is_none()
+                && self.tool_call_ids.contains(call_id);
+            if duplicate {
                 return self.fail(StreamError::new(
                     StreamErrorCode::DuplicateToolCall,
                     "duplicate streamed tool call ID",
                 ));
             }
-            let output_index = self.output.len() + self.tool_calls.len();
-            let item_id = format!("fc-{}-{}", self.response_id, output_index + 1);
-            let item = ResponsesOutputItem::FunctionCall {
-                id: item_id.clone(),
-                status: ResponsesStatus::InProgress,
-                call_id: call_id.clone(),
-                name: name.clone(),
-                arguments: String::new(),
-            };
+            let changed = self
+                .tool_calls
+                .get(&tool_index)
+                .and_then(|call| call.call_id.as_ref())
+                .is_some_and(|existing| existing != call_id);
+            if changed {
+                return self.fail(StreamError::new(
+                    StreamErrorCode::ProtocolMismatch,
+                    "streamed tool call ID changed",
+                ));
+            }
+        }
+        if let Some(chat_name) = chat_name.as_ref() {
+            let changed = self
+                .tool_calls
+                .get(&tool_index)
+                .and_then(|call| call.chat_name.as_ref())
+                .is_some_and(|existing| existing != chat_name);
+            if changed {
+                return self.fail(StreamError::new(
+                    StreamErrorCode::ProtocolMismatch,
+                    "streamed tool function name changed",
+                ));
+            }
+        }
+        if let Some(call_id) = call_id.as_ref() {
+            self.tool_call_ids.insert(call_id.clone());
+        }
+        let identity = chat_name.as_ref().map(|chat_name| {
+            self.tool_context
+                .resolve_chat_tool(chat_name)
+                .cloned()
+                .unwrap_or_else(|| ToolIdentity {
+                    namespace: None,
+                    name: chat_name.clone(),
+                })
+        });
+        let tool_kind = chat_name
+            .as_deref()
+            .and_then(|name| self.tool_context.tool_kind(name))
+            .or_else(|| {
+                chat_name
+                    .as_deref()
+                    .filter(|name| *name == "local_shell")
+                    .map(|_| ToolKind::LocalShell)
+            })
+            .unwrap_or(ToolKind::Function);
+        let exceeds_limit = self.tool_calls.get(&tool_index).is_some_and(|call| {
+            call.arguments.len().saturating_add(fragment.len()) > MAX_TOOL_ARGUMENT_BYTES
+        });
+        if exceeds_limit {
+            return self.fail(StreamError::new(
+                StreamErrorCode::ToolArgumentsLimitExceeded,
+                "streamed tool arguments exceed 1 MiB",
+            ));
+        }
+        let mut added_item = None;
+        let mut argument_delta = None;
+        {
+            let accumulator = self.tool_calls.get_mut(&tool_index).unwrap();
+            if accumulator.call_id.is_none() {
+                accumulator.call_id = call_id;
+            }
+            if accumulator.chat_name.is_none() {
+                if let Some(chat_name) = chat_name {
+                    let identity = identity.unwrap();
+                    accumulator.chat_name = Some(chat_name);
+                    accumulator.name = Some(identity.name);
+                    accumulator.namespace = identity.namespace;
+                    accumulator.kind = tool_kind;
+                }
+            }
+            accumulator.arguments.push_str(&fragment);
+            if !already_materialized
+                && accumulator.item_id.is_none()
+                && accumulator.call_id.is_some()
+                && accumulator.name.is_some()
+            {
+                let output_index = output_index_hint.unwrap();
+                let item_id = format!("fc-{}-{}", self.response_id, output_index + 1);
+                accumulator.item_id = Some(item_id.clone());
+                accumulator.output_index = Some(output_index);
+                added_item = Some((
+                    item_id,
+                    output_index,
+                    accumulator.call_id.clone().unwrap(),
+                    accumulator.name.clone().unwrap(),
+                    accumulator.namespace.clone(),
+                    accumulator.kind,
+                ));
+                if !accumulator.arguments.is_empty() && accumulator.kind != ToolKind::Custom {
+                    argument_delta = Some(accumulator.arguments.clone());
+                }
+            } else if already_materialized
+                && !fragment.is_empty()
+                && accumulator.kind != ToolKind::Custom
+            {
+                argument_delta = Some(fragment);
+            }
+        }
+        let mut events = Vec::new();
+        if let Some((item_id, output_index, call_id, name, namespace, kind)) = added_item {
+            let item = in_progress_tool_item(item_id, call_id, name, namespace, kind);
             let response_id = self.response_id.clone();
             events.push(
                 self.event(|sequence| ResponsesStreamEvent::OutputItemAdded {
@@ -619,41 +814,19 @@ impl StreamingAdapter {
                     item,
                 }),
             );
-            self.tool_calls.insert(
-                delta.index,
-                ToolAccumulator {
-                    item_id,
-                    call_id,
-                    name,
-                    arguments: String::new(),
-                    output_index,
-                },
-            );
         }
-        let fragment = delta
-            .function
-            .and_then(|function| function.arguments)
-            .unwrap_or_default();
-        if !fragment.is_empty() {
-            let accumulator = self.tool_calls.get_mut(&delta.index).unwrap();
-            if accumulator.arguments.len().saturating_add(fragment.len()) > MAX_TOOL_ARGUMENT_BYTES
-            {
-                return self.fail(StreamError::new(
-                    StreamErrorCode::ToolArgumentsLimitExceeded,
-                    "streamed tool arguments exceed 1 MiB",
-                ));
-            }
-            accumulator.arguments.push_str(&fragment);
+        if let Some(delta) = argument_delta {
+            let accumulator = self.tool_calls.get(&tool_index).unwrap();
             let response_id = self.response_id.clone();
-            let item_id = accumulator.item_id.clone();
-            let output_index = accumulator.output_index;
+            let item_id = accumulator.item_id.clone().unwrap();
+            let output_index = accumulator.output_index.unwrap();
             events.push(self.event(
                 |sequence| ResponsesStreamEvent::FunctionCallArgumentsDelta {
                     sequence_number: sequence,
                     response_id,
-                    item_id,
+                    item_id: item_id.clone(),
                     output_index,
-                    delta: fragment,
+                    delta,
                 },
             ));
         }
@@ -668,41 +841,126 @@ impl StreamingAdapter {
             ));
         }
         let calls = std::mem::take(&mut self.tool_calls);
+        let mut calls = calls.into_values().collect::<Vec<_>>();
+        calls.sort_by_key(|call| call.output_index.unwrap_or(usize::MAX));
         let mut events = Vec::new();
-        for (_, call) in calls {
-            if serde_json::from_str::<serde_json::Value>(&call.arguments).is_err() {
+        for call in calls {
+            let ToolAccumulator {
+                item_id,
+                call_id,
+                name,
+                namespace,
+                kind,
+                arguments,
+                output_index,
+                ..
+            } = call;
+            let (item_id, call_id, name, namespace, output_index) =
+                match (item_id, call_id, name, namespace, output_index) {
+                    (Some(item_id), Some(call_id), Some(name), namespace, Some(output_index)) => {
+                        (item_id, call_id, name, namespace, output_index)
+                    }
+                    _ => {
+                        return self.fail(StreamError::new(
+                            StreamErrorCode::ProtocolMismatch,
+                            "tool call stream ended before ID and function name were available",
+                        ))
+                    }
+                };
+            if serde_json::from_str::<serde_json::Value>(&arguments).is_err() {
                 return self.fail(StreamError::new(
                     StreamErrorCode::InvalidToolArguments,
                     "streamed tool arguments are not valid JSON",
                 ));
             }
-            let response_id = self.response_id.clone();
-            let item_id = call.item_id.clone();
-            let name = call.name.clone();
-            let arguments = call.arguments.clone();
-            events.push(
-                self.event(|sequence| ResponsesStreamEvent::FunctionCallArgumentsDone {
-                    sequence_number: sequence,
-                    response_id,
-                    item_id,
-                    output_index: call.output_index,
-                    name,
-                    arguments,
-                }),
-            );
-            let item = ResponsesOutputItem::FunctionCall {
-                id: call.item_id,
-                status: ResponsesStatus::Completed,
-                call_id: call.call_id,
-                name: call.name,
-                arguments: call.arguments,
+            let item = match kind {
+                ToolKind::Custom => {
+                    let input = unwrap_custom_input(&arguments);
+                    let response_id = self.response_id.clone();
+                    let item_id_for_event = item_id.clone();
+                    let input_for_event = input.clone();
+                    events.push(self.event(|sequence| {
+                        ResponsesStreamEvent::CustomToolCallInputDelta {
+                            sequence_number: sequence,
+                            response_id,
+                            item_id: item_id_for_event,
+                            output_index,
+                            delta: input_for_event,
+                        }
+                    }));
+                    let response_id = self.response_id.clone();
+                    let item_id_for_event = item_id.clone();
+                    let input_for_event = input.clone();
+                    events.push(self.event(|sequence| {
+                        ResponsesStreamEvent::CustomToolCallInputDone {
+                            sequence_number: sequence,
+                            response_id,
+                            item_id: item_id_for_event,
+                            output_index,
+                            input: input_for_event,
+                        }
+                    }));
+                    ResponsesOutputItem::CustomToolCall {
+                        id: item_id,
+                        status: ResponsesStatus::Completed,
+                        call_id,
+                        name,
+                        namespace,
+                        input,
+                    }
+                }
+                ToolKind::ToolSearch => ResponsesOutputItem::ToolSearchCall {
+                    id: item_id,
+                    status: ResponsesStatus::Completed,
+                    call_id,
+                    execution: "client".into(),
+                    arguments: serde_json::from_str(&arguments).map_err(|_| {
+                        StreamError::new(
+                            StreamErrorCode::InvalidToolArguments,
+                            "tool_search arguments are not valid JSON",
+                        )
+                    })?,
+                },
+                ToolKind::LocalShell => ResponsesOutputItem::LocalShellCall {
+                    id: item_id,
+                    status: ResponsesStatus::Completed,
+                    call_id,
+                    action: serde_json::from_str(&arguments).map_err(|_| {
+                        StreamError::new(
+                            StreamErrorCode::InvalidToolArguments,
+                            "local shell arguments are not valid JSON",
+                        )
+                    })?,
+                },
+                ToolKind::Function => {
+                    let response_id = self.response_id.clone();
+                    let arguments_for_event = arguments.clone();
+                    events.push(self.event(|sequence| {
+                        ResponsesStreamEvent::FunctionCallArgumentsDone {
+                            sequence_number: sequence,
+                            response_id,
+                            item_id: item_id.clone(),
+                            output_index,
+                            name: name.clone(),
+                            arguments: arguments_for_event,
+                        }
+                    }));
+                    ResponsesOutputItem::FunctionCall {
+                        id: item_id,
+                        status: ResponsesStatus::Completed,
+                        call_id,
+                        name,
+                        namespace,
+                        arguments,
+                    }
+                }
             };
             self.output.push(item.clone());
             let response_id = self.response_id.clone();
             events.push(self.event(|sequence| ResponsesStreamEvent::OutputItemDone {
                 sequence_number: sequence,
                 response_id,
-                output_index: call.output_index,
+                output_index,
                 item,
             }));
         }
@@ -773,7 +1031,7 @@ impl StreamingAdapter {
             content_index: 0,
             text: text.clone(),
         }));
-        let part = output_text(&text);
+        let part = output_text_with_annotations(&text, &self.annotations);
         let response_id = self.response_id.clone();
         let item_id = self.item_id.clone();
         events.push(
@@ -867,9 +1125,13 @@ impl StreamingAdapter {
             status,
             role: "assistant".into(),
             content: if text.is_empty() {
-                Vec::new()
+                if self.annotations.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![output_text_with_annotations("", &self.annotations)]
+                }
             } else {
-                vec![output_text(text)]
+                vec![output_text_with_annotations(text, &self.annotations)]
             },
         }
     }
@@ -893,9 +1155,56 @@ impl StreamingAdapter {
     }
 }
 
+fn in_progress_tool_item(
+    id: String,
+    call_id: String,
+    name: String,
+    namespace: Option<String>,
+    kind: ToolKind,
+) -> ResponsesOutputItem {
+    match kind {
+        ToolKind::Custom => ResponsesOutputItem::CustomToolCall {
+            id,
+            status: ResponsesStatus::InProgress,
+            call_id,
+            name,
+            namespace,
+            input: String::new(),
+        },
+        ToolKind::ToolSearch => ResponsesOutputItem::ToolSearchCall {
+            id,
+            status: ResponsesStatus::InProgress,
+            call_id,
+            execution: "client".into(),
+            arguments: serde_json::Value::Null,
+        },
+        ToolKind::LocalShell => ResponsesOutputItem::LocalShellCall {
+            id,
+            status: ResponsesStatus::InProgress,
+            call_id,
+            action: serde_json::Value::Null,
+        },
+        ToolKind::Function => ResponsesOutputItem::FunctionCall {
+            id,
+            status: ResponsesStatus::InProgress,
+            call_id,
+            name,
+            namespace,
+            arguments: String::new(),
+        },
+    }
+}
+
 fn output_text(text: &str) -> ResponsesOutputContent {
+    output_text_with_annotations(text, &[])
+}
+
+fn output_text_with_annotations(
+    text: &str,
+    annotations: &[serde_json::Value],
+) -> ResponsesOutputContent {
     ResponsesOutputContent::OutputText {
         text: text.into(),
-        annotations: Vec::new(),
+        annotations: annotations.to_vec(),
     }
 }
