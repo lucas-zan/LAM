@@ -82,7 +82,7 @@ fn gateway_first_response_timeout_setting_defaults_validates_and_preserves_setti
         "GATEWAY_TIMEOUT_CONFIG_INVALID"
     );
 
-    let settings = home.path().join(".config/agent-workspace/settings.json");
+    let settings = home.path().join(".lam/config/settings.json");
     fs::write(&settings, r#"{"gatewayFirstResponseTimeoutSeconds":"bad"}"#).unwrap();
     assert_eq!(gateway_first_response_timeout_seconds(home.path()), 60);
 }
@@ -107,7 +107,7 @@ fn codex_launch_permission_setting_defaults_round_trips_and_preserves_settings()
         "pat"
     );
 
-    let settings = home.path().join(".config/agent-workspace/settings.json");
+    let settings = home.path().join(".lam/config/settings.json");
     fs::write(&settings, r#"{"codexLaunchPermissionPreset":"unknown"}"#).unwrap();
     assert_eq!(
         codex_launch_permission_preset(home.path()),
@@ -176,7 +176,7 @@ fn antigravity_port_setting_round_trips_clears_and_validates() {
 #[test]
 fn antigravity_port_setting_ignores_invalid_values_and_normalizes_non_objects() {
     let home = tempfile::tempdir().unwrap();
-    let settings = home.path().join(".config/agent-workspace/settings.json");
+    let settings = home.path().join(".lam/config/settings.json");
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
 
     for value in [r#""bad""#, "1.5", "0", "65536"] {
@@ -494,7 +494,7 @@ fn deletes_an_eligible_session_and_removes_usage_sqlite_rows() {
         )
         .unwrap();
     drop(codex_db);
-    let db = home.join(".codex/lam/usage/usage.sqlite3");
+    let db = home.join(".lam/usage/usage.sqlite3");
     let conn = rusqlite::Connection::open(&db).unwrap();
     let before: i64 = conn
         .query_row(
@@ -569,7 +569,7 @@ fn delete_preflight_and_sqlite_failure_leave_session_files_intact() {
     assert!(protected.exists());
 
     refresh_usage_index(&home).unwrap();
-    let db = home.join(".codex/lam/usage/usage.sqlite3");
+    let db = home.join(".lam/usage/usage.sqlite3");
     rusqlite::Connection::open(db)
         .unwrap()
         .execute_batch(
@@ -621,7 +621,7 @@ fn codex_state_delete_failure_restores_file_and_usage_index() {
     .unwrap_err();
     assert_eq!(error.code, "CODEX_SESSION_DB_ERROR");
     assert!(eligible.exists());
-    let usage_db = rusqlite::Connection::open(home.join(".codex/lam/usage/usage.sqlite3")).unwrap();
+    let usage_db = rusqlite::Connection::open(home.join(".lam/usage/usage.sqlite3")).unwrap();
     let source_count: i64 = usage_db
         .query_row(
             "SELECT COUNT(*) FROM source_files WHERE source_file = ?1",
@@ -1480,7 +1480,7 @@ fn resume_command_is_escaped_and_has_no_arbitrary_shell_input() {
 #[test]
 fn terminal_target_settings_preserve_existing_settings() {
     let home = temp_home("terminal-target-settings");
-    let settings_path = home.join(".config/agent-workspace/settings.json");
+    let settings_path = home.join(".lam/config/settings.json");
     fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
     fs::write(&settings_path, r#"{"hideDockIcon":true}"#).unwrap();
 
@@ -1625,7 +1625,10 @@ fn quota_skips_accounts_without_auth_material() {
     // Create a profile directory with codex signals but no auth.json / auth-f.json.
     let no_auth_home = home.join(".codex-nologin");
     fs::create_dir_all(no_auth_home.join("sessions")).unwrap();
-    write(&no_auth_home.join("config.toml"), "model = \"gpt-5-codex\"\n");
+    write(
+        &no_auth_home.join("config.toml"),
+        "model = \"gpt-5-codex\"\n",
+    );
 
     // force refresh must not spawn an app-server probe for the unauthenticated profile.
     let snapshot = get_profile_quota(&home, "nologin", true).unwrap();
@@ -1640,7 +1643,10 @@ fn quota_skips_accounts_without_auth_material() {
     // Bulk refresh includes only the authenticated profile snapshot.
     let refreshed = refresh_all_quotas(&home, None).unwrap();
     assert!(refreshed.snapshots.iter().any(|s| s.profile_id == "a"));
-    assert!(!refreshed.snapshots.iter().any(|s| s.profile_id == "nologin"));
+    assert!(!refreshed
+        .snapshots
+        .iter()
+        .any(|s| s.profile_id == "nologin"));
 }
 
 #[test]
@@ -1851,7 +1857,7 @@ fn quota_app_server_reset_credit_expiry_uses_manual_config() {
         r#"{"personal_access_token":"pat"}"#,
     );
     write(
-        &home.join(".codex/lam/reset-credit-expiry.json"),
+        &home.join(".lam/reset-credit-expiry.json"),
         r#"{"profiles":{"a":{"resetCreditExpiresAt":"2026-07-15T00:00:00Z"}}}"#,
     );
     let bin = home.join("fake-codex.sh");
@@ -1934,7 +1940,7 @@ exit 1
     assert_eq!(result.snapshot.primary_used_percent, Some(3));
     assert_eq!(result.snapshot.reset_credit_count, Some(0));
     assert!(!home
-        .join(".config/agent-workspace/quota-reset-operations/a.json")
+        .join(".lam/config/quota-reset-operations/a.json")
         .exists());
 }
 
@@ -2566,7 +2572,7 @@ fn provider_crud_never_returns_or_persists_plaintext_secret() {
     let providers = list_providers(&home).unwrap();
     assert_eq!(providers.len(), 1);
     assert!(!format!("{providers:?}").contains("sk-secret"));
-    let store = fs::read_to_string(home.join(".config/agent-workspace/providers.json")).unwrap();
+    let store = fs::read_to_string(home.join(".lam/config/providers.json")).unwrap();
     assert!(store.contains("OPENAI_ALT_API_KEY"));
     assert!(!store.contains("sk-secret"));
 

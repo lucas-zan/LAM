@@ -1764,6 +1764,8 @@ export function Settings({
   setCompactButtons,
   gatewayFirstResponseTimeoutSeconds,
   setGatewayFirstResponseTimeoutSeconds,
+  gatewayRequestTimeoutSeconds,
+  setGatewayRequestTimeoutSeconds,
   antigravityPort,
   setAntigravityPort,
 }: {
@@ -1786,6 +1788,8 @@ export function Settings({
   setCompactButtons: (compact: boolean) => void;
   gatewayFirstResponseTimeoutSeconds: number;
   setGatewayFirstResponseTimeoutSeconds: (seconds: number) => void;
+  gatewayRequestTimeoutSeconds: number;
+  setGatewayRequestTimeoutSeconds: (seconds: number) => void;
   antigravityPort: number | null;
   setAntigravityPort: (port: number | null) => void;
 }) {
@@ -1803,6 +1807,14 @@ export function Settings({
     gatewayTimeoutEdit.source === gatewayFirstResponseTimeoutSeconds
       ? gatewayTimeoutEdit.draft
       : String(gatewayFirstResponseTimeoutSeconds);
+  const [gatewayRequestTimeoutEdit, setGatewayRequestTimeoutEdit] = useState({
+    source: gatewayRequestTimeoutSeconds,
+    draft: String(gatewayRequestTimeoutSeconds),
+  });
+  const gatewayRequestTimeoutDraft =
+    gatewayRequestTimeoutEdit.source === gatewayRequestTimeoutSeconds
+      ? gatewayRequestTimeoutEdit.draft
+      : String(gatewayRequestTimeoutSeconds);
   const [antigravityPortEdit, setAntigravityPortEdit] = useState({
     source: antigravityPort,
     draft: antigravityPort === null ? '' : String(antigravityPort),
@@ -1826,6 +1838,18 @@ export function Settings({
       return;
     }
     setGatewayFirstResponseTimeoutSeconds(seconds);
+  };
+
+  const commitGatewayRequestTimeout = () => {
+    const seconds = Number(gatewayRequestTimeoutDraft);
+    if (!Number.isInteger(seconds) || seconds < 300 || seconds > 3600) {
+      setGatewayRequestTimeoutEdit({
+        source: gatewayRequestTimeoutSeconds,
+        draft: String(gatewayRequestTimeoutSeconds),
+      });
+      return;
+    }
+    setGatewayRequestTimeoutSeconds(seconds);
   };
 
   const commitAntigravityPort = () => {
@@ -2165,6 +2189,42 @@ export function Settings({
                         if (event.key === 'Enter') commitGatewayTimeout();
                       }}
                     />
+                    <span className="settingsUnit">seconds</span>
+                  </div>
+                </div>
+
+                <div className="settingsRowLayout">
+                  <div className="settingsRowInfo">
+                    <label htmlFor="gatewayRequestTimeout" className="settingsRowTitle">
+                      Gateway request timeout
+                    </label>
+                    <p className="settingsRowDesc">
+                      Maximum seconds for a single proxied request (queue + upstream + stream).
+                      A long coding task is many requests, so this only bounds one call.
+                      Valid range: 300–3600. Changes apply on the next Gateway launch; LAM will
+                      not restart it automatically.
+                    </p>
+                  </div>
+                  <div className="settingsRowControl">
+                    <input
+                      id="gatewayRequestTimeout"
+                      type="number"
+                      min={300}
+                      max={3600}
+                      step={60}
+                      value={gatewayRequestTimeoutDraft}
+                      onChange={(event) =>
+                        setGatewayRequestTimeoutEdit({
+                          source: gatewayRequestTimeoutSeconds,
+                          draft: event.target.value,
+                        })
+                      }
+                      onBlur={commitGatewayRequestTimeout}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') commitGatewayRequestTimeout();
+                      }}
+                    />
+                    <span className="settingsUnit">seconds</span>
                   </div>
                 </div>
               </div>

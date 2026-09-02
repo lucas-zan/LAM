@@ -198,3 +198,14 @@ fn approved_command_helper_executes_persisted_approval_and_prints_only_token() {
     assert_eq!(output.stdout, b"synthetic-token\n");
     assert!(output.stderr.is_empty());
 }
+
+#[test]
+#[ignore = "manual: repairs developer machine bindings after ~/.lam migration"]
+fn repair_developer_stale_codex_auth_projections() {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .expect("HOME");
+    let repaired =
+        localagentmanager_core::repair_stale_codex_auth_projections_service_v2(&home).expect("repair");
+    eprintln!("repaired profiles: {repaired:?}");
+}

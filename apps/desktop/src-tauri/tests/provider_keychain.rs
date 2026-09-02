@@ -171,6 +171,7 @@ fn provider_input(source: CredentialSource) -> ProviderInput {
             id: "model-a".into(),
             label: "A".into(),
             capabilities: None,
+            context_window: None,
         }],
         upstream_auth: UpstreamAuth::Bearer { source },
         adapter: AdapterConfig::None,
@@ -431,6 +432,9 @@ fn codex_projection_uses_approved_helper_and_reference_only() {
             codex: CodexProviderOptions::default(),
             gateway: false,
             model_catalog_path: "/tmp/keychain-direct/models.json".into(),
+            model_context_window: None,
+            model_auto_compact_token_limit: None,
+            reasoning_effort: None,
         },
     )
     .unwrap();

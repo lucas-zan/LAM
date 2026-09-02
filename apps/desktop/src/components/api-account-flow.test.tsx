@@ -325,4 +325,60 @@ describe('ApiAccountFlow', () => {
     expect(screen.queryByLabelText('API key')).toBeNull();
     expect(api.discoverProviderModelsV2).not.toHaveBeenCalled();
   });
+  it('applies context window preset and reasoning effort to planned models', async () => {
+    render(<ApiAccountFlow providers={[]} onCreated={() => {}} onCancel={() => {}} />);
+    fillConnection();
+    fireEvent.change(screen.getByLabelText('Custom model'), {
+      target: { value: 'deepseek-chat' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom model' }));
+    fireEvent.change(screen.getByLabelText('Default model'), {
+      target: { value: 'deepseek-chat' },
+    });
+
+    // Choose the 272K context window preset and a high reasoning effort.
+    fireEvent.click(screen.getByRole('button', { name: '272K' }));
+    fireEvent.change(screen.getByLabelText('Default reasoning effort'), {
+      target: { value: 'high' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Review API Account' }));
+
+    await waitFor(() => expect(api.planApiAccountV2).toHaveBeenCalledOnce());
+    const planRequest = vi.mocked(api.planApiAccountV2).mock.calls[0][0];
+    expect(planRequest.provider).toMatchObject({
+      kind: 'new',
+      provider: {
+        models: [{ id: 'deepseek-chat', label: 'deepseek-chat', contextWindow: 272_000 }],
+        codex: { reasoningEffort: 'high' },
+      },
+    });
+  });
+
+  it('applies a custom context window value when Custom is chosen', async () => {
+    render(<ApiAccountFlow providers={[]} onCreated={() => {}} onCancel={() => {}} />);
+    fillConnection();
+    fireEvent.change(screen.getByLabelText('Custom model'), {
+      target: { value: 'custom-model' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom model' }));
+    fireEvent.change(screen.getByLabelText('Default model'), {
+      target: { value: 'custom-model' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+    fireEvent.change(screen.getByLabelText('Custom context window'), {
+      target: { value: '200000' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Review API Account' }));
+
+    await waitFor(() => expect(api.planApiAccountV2).toHaveBeenCalledOnce());
+    const planRequest = vi.mocked(api.planApiAccountV2).mock.calls[0][0];
+    expect(planRequest.provider).toMatchObject({
+      kind: 'new',
+      provider: {
+        models: [{ id: 'custom-model', label: 'custom-model', contextWindow: 200_000 }],
+      },
+    });
+  });
+
 });

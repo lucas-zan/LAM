@@ -8,6 +8,7 @@ fn model(id: &str, label: &str) -> ProviderModel {
         id: id.into(),
         label: label.into(),
         capabilities: None,
+        context_window: None,
     }
 }
 

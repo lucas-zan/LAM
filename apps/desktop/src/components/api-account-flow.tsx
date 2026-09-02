@@ -36,6 +36,9 @@ export function ApiAccountFlow({
     [],
   );
   const [discovering, setDiscovering] = useState(false);
+  const [contextWindowPreset, setContextWindowPreset] = useState<'128k' | '272k' | '1m' | 'custom' | 'none'>('none');
+  const [customContextWindow, setCustomContextWindow] = useState('');
+  const [reasoningEffort, setReasoningEffort] = useState('medium');
   const discoveryGeneration = useRef(0);
 
   const existingProvider = providers.find((provider) => provider.id === existingProviderId);
@@ -101,6 +104,17 @@ export function ApiAccountFlow({
     }
   }
 
+  function effectiveContextWindow(): number | undefined {
+    if (contextWindowPreset === 'custom') {
+      const value = Number(customContextWindow.trim());
+      return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+    }
+    if (contextWindowPreset === '128k') return 128_000;
+    if (contextWindowPreset === '272k') return 272_000;
+    if (contextWindowPreset === '1m') return 1_000_000;
+    return undefined;
+  }
+
   function buildRequest(): PlanApiAccountRequestV2 {
     if (reuse) {
       if (!existingProvider) throw new Error('Select an existing Provider');
@@ -133,7 +147,11 @@ export function ApiAccountFlow({
           protocol,
           baseUrl: baseUrl.trim(),
           defaultModel: selectedModel.trim(),
-          models: selectedModelsList.map((id) => ({ id, label: id })),
+          models: selectedModelsList.map((id) => ({
+            id,
+            label: id,
+            contextWindow: effectiveContextWindow(),
+          })),
           upstreamAuth: { kind: 'bearer', credential: { kind: 'none' } },
           adapter: adapterRequired
             ? {
@@ -150,6 +168,7 @@ export function ApiAccountFlow({
             routeViaGateway: true,
             queryParams: {},
             envHttpHeaders: {},
+            reasoningEffort,
           },
         },
       },
@@ -551,6 +570,86 @@ export function ApiAccountFlow({
               />
             )}
           </label>
+
+          <div className="apiAdvancedRow">
+            <div className="apiAdvancedBlock">
+              <span className="apiAdvancedLabel">Context window</span>
+              <div className="apiPresetRow">
+                {(
+                  [
+                    ['128k', '128K'],
+                    ['272k', '272K'],
+                    ['1m', '1M'],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`apiPresetChip ${contextWindowPreset === value ? 'active' : ''}`}
+                    onClick={() => {
+                      setContextWindowPreset(value);
+                      setPlan(null);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={`apiPresetChip ${contextWindowPreset === 'custom' ? 'active' : ''}`}
+                  onClick={() => {
+                    setContextWindowPreset('custom');
+                    setPlan(null);
+                  }}
+                >
+                  Custom
+                </button>
+                <button
+                  type="button"
+                  className={`apiPresetChip ${contextWindowPreset === 'none' ? 'active' : ''}`}
+                  onClick={() => {
+                    setContextWindowPreset('none');
+                    setPlan(null);
+                  }}
+                >
+                  Auto
+                </button>
+              </div>
+              {contextWindowPreset === 'custom' ? (
+                <input
+                  type="number"
+                  aria-label="Custom context window"
+                  placeholder="e.g. 200000"
+                  min={1}
+                  value={customContextWindow}
+                  onChange={(event) => {
+                    setCustomContextWindow(event.target.value);
+                    setPlan(null);
+                  }}
+                />
+              ) : null}
+              <p className="apiHelperText">
+                Auto keeps Codex's native default; presets apply to all selected models.
+              </p>
+            </div>
+            <div className="apiAdvancedBlock">
+              <span className="apiAdvancedLabel">Default reasoning effort</span>
+              <select
+                aria-label="Default reasoning effort"
+                value={reasoningEffort}
+                onChange={(event) => {
+                  setReasoningEffort(event.target.value);
+                  setPlan(null);
+                }}
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">X-High</option>
+                <option value="max">Max</option>
+              </select>
+            </div>
+          </div>
         </div>
       </div>
 

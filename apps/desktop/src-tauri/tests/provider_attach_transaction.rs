@@ -261,11 +261,13 @@ fn provider(protocol: ProviderProtocol) -> ProviderProfileV2 {
                 id: "model-a".into(),
                 label: "A".into(),
                 capabilities: None,
+                context_window: None,
             },
             ProviderModel {
                 id: "model-b".into(),
                 label: "B".into(),
                 capabilities: None,
+                context_window: None,
             },
         ],
         upstream_auth: UpstreamAuth::Bearer {

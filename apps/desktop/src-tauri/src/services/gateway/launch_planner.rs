@@ -162,7 +162,7 @@ impl CodexLaunchPlanner {
             .iter()
             .copied()
             .chain(args.iter().copied())
-            .map(|arg| shell_arg(arg))
+            .map(shell_arg)
             .collect::<Vec<_>>()
             .join(" ");
         match route_kind {

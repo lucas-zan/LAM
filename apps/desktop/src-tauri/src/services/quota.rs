@@ -115,7 +115,9 @@ pub fn get_profile_quota(
             return Ok(cached);
         }
         let mut snapshot = unavailable_quota_snapshot(profile_id, None);
-        snapshot.alerts.push("Login needed; quota refresh skipped".into());
+        snapshot
+            .alerts
+            .push("Login needed; quota refresh skipped".into());
         return Ok(snapshot);
     }
     if force_refresh && app_server_quota_enabled() {
@@ -319,8 +321,7 @@ fn quota_fallback_warning(profile_id: &str, snapshot: &UsageQuotaSnapshot) -> St
 }
 
 fn account_has_auth_material(account: &CodexAccount) -> bool {
-    account.codex_home.join("auth.json").exists()
-        || account.codex_home.join("auth-f.json").exists()
+    account.codex_home.join("auth.json").exists() || account.codex_home.join("auth-f.json").exists()
 }
 
 fn external_api_profile_ids(home_root: &Path) -> Result<std::collections::HashSet<String>> {
@@ -1707,7 +1708,7 @@ fn apply_manual_reset_credit_expiry(
     if snapshot.reset_credit_expires_at.is_some() || snapshot.reset_credit_count.unwrap_or(0) <= 0 {
         return;
     }
-    let path = home_root.join(".codex/lam/reset-credit-expiry.json");
+    let path = super::lam_paths::LamPaths::for_home(home_root).reset_credit_expiry_path();
     let Ok(body) = fs::read_to_string(path) else {
         snapshot.reset_credit_expiry_source = Some("unknown".to_string());
         return;
@@ -2071,7 +2072,8 @@ mod tests {
     #[test]
     fn manual_reset_credit_expiry_fills_only_absent_api_expiry() {
         let temp = tempfile::TempDir::new().unwrap();
-        let path = temp.path().join(".codex/lam/reset-credit-expiry.json");
+        let path =
+            crate::services::lam_paths::LamPaths::for_home(temp.path()).reset_credit_expiry_path();
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
             path,
@@ -2110,7 +2112,8 @@ mod tests {
     #[test]
     fn invalid_manual_reset_credit_expiry_does_not_fail_refresh_metadata() {
         let temp = tempfile::TempDir::new().unwrap();
-        let path = temp.path().join(".codex/lam/reset-credit-expiry.json");
+        let path =
+            crate::services::lam_paths::LamPaths::for_home(temp.path()).reset_credit_expiry_path();
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
             path,

@@ -34,7 +34,10 @@ where
     }
 }
 
-pub fn load_or_create_system_install_identity(install_id: &str) -> Result<[u8; 32]> {
+pub fn load_or_create_system_install_identity(
+    provider_hub_root: &std::path::Path,
+    install_id: &str,
+) -> Result<[u8; 32]> {
     #[cfg(debug_assertions)]
     if let Some(value) = std::env::var_os("LAM_TEST_INSTALL_IDENTITY_KEY") {
         let bytes = hex::decode(value.to_string_lossy().as_ref()).map_err(|_| {
@@ -45,11 +48,15 @@ pub fn load_or_create_system_install_identity(install_id: &str) -> Result<[u8; 3
         })?;
         return validate_identity(bytes);
     }
-    load_or_create_install_identity(&SystemInstallIdentityStore, install_id, || {
-        let mut identity = [0_u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut identity);
-        identity
-    })
+    load_or_create_install_identity(
+        &SystemInstallIdentityStore::new(provider_hub_root.join("install-identity.json")),
+        install_id,
+        || {
+            let mut identity = [0_u8; 32];
+            rand::rngs::OsRng.fill_bytes(&mut identity);
+            identity
+        },
+    )
 }
 
 fn validate_identity(bytes: Vec<u8>) -> Result<[u8; 32]> {
@@ -61,28 +68,58 @@ fn validate_identity(bytes: Vec<u8>) -> Result<[u8; 32]> {
     })
 }
 
-pub struct SystemInstallIdentityStore;
+/// Plaintext-file install identity store backed by the unified
+/// `JsonFileStore`. Values are hex-encoded 32-byte keys keyed by install id.
+pub struct SystemInstallIdentityStore {
+    store: super::super::credential_store::JsonFileStore,
+}
+
+impl SystemInstallIdentityStore {
+    pub fn new(path: std::path::PathBuf) -> Self {
+        Self {
+            store: super::super::credential_store::JsonFileStore::new(path),
+        }
+    }
+}
 
 #[cfg(target_os = "macos")]
 impl InstallIdentityStore for SystemInstallIdentityStore {
     fn load(&self, install_id: &str) -> Result<StoredIdentity> {
-        match security_framework::passwords::get_generic_password(
-            INSTALL_IDENTITY_SERVICE,
-            install_id,
-        ) {
-            Ok(bytes) => Ok(StoredIdentity::Found(bytes)),
-            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(StoredIdentity::Missing),
-            Err(_) => Err(keychain_unavailable()),
+        match self.store.get(install_id)? {
+            Some(value) => {
+                let bytes = hex::decode(value).map_err(|_| {
+                    AppError::new(
+                        "INSTALL_IDENTITY_INVALID",
+                        "install identity is not valid hex",
+                    )
+                })?;
+                Ok(StoredIdentity::Found(bytes))
+            }
+            None => {
+                // Fall back to the legacy Keychain entry so existing installs
+                // migrate transparently on first load after upgrade. The value
+                // is persisted into the plaintext file immediately so every
+                // later load avoids the Keychain (and its authorization
+                // prompt) entirely.
+                match security_framework::passwords::get_generic_password(
+                    INSTALL_IDENTITY_SERVICE,
+                    install_id,
+                ) {
+                    Ok(bytes) => {
+                        self.store.insert(install_id, &hex::encode(&bytes))?;
+                        Ok(StoredIdentity::Found(bytes))
+                    }
+                    Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {
+                        Ok(StoredIdentity::Missing)
+                    }
+                    Err(_) => Err(keychain_unavailable()),
+                }
+            }
         }
     }
 
     fn store(&self, install_id: &str, identity: &[u8]) -> Result<()> {
-        security_framework::passwords::set_generic_password(
-            INSTALL_IDENTITY_SERVICE,
-            install_id,
-            identity,
-        )
-        .map_err(|_| keychain_unavailable())
+        self.store.insert(install_id, &hex::encode(identity))
     }
 }
 

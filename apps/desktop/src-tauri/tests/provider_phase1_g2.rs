@@ -8,7 +8,6 @@ use axum::Router;
 use localagentmanager_core::provider_api_v2::*;
 use localagentmanager_core::provider_auth_command::{approve_auth_command, AuthCommandSpec};
 use localagentmanager_core::provider_credentials::{CredentialSource, SecretValue};
-use localagentmanager_core::provider_keychain::{KeychainBackend, KeychainCredentialReference};
 use localagentmanager_core::Result;
 use std::collections::BTreeMap;
 use std::fs;
@@ -72,10 +71,12 @@ fn request(
                 ProviderModelDto {
                     id: "model-a".into(),
                     label: "Model A".into(),
+                    context_window: None,
                 },
                 ProviderModelDto {
                     id: "model-b".into(),
                     label: "Model B".into(),
+                    context_window: None,
                 },
             ],
             upstream_auth: UpstreamAuthDto::Bearer { credential },
@@ -89,6 +90,7 @@ fn request(
                 route_via_gateway: false,
                 query_params: BTreeMap::new(),
                 env_http_headers: BTreeMap::new(),
+                reasoning_effort: None,
             },
         },
     }
@@ -309,34 +311,6 @@ fn env_responses_provider_runs_create_validate_attach_rebind_stale_and_detach_wi
         .is_empty());
 }
 
-#[derive(Default)]
-struct FakeKeychain(Mutex<BTreeMap<String, String>>);
-
-impl KeychainBackend for FakeKeychain {
-    fn write(&self, reference: &KeychainCredentialReference, secret: &SecretValue) -> Result<()> {
-        self.0.lock().unwrap().insert(
-            reference.account.clone(),
-            secret.with_exposed(str::to_owned),
-        );
-        Ok(())
-    }
-
-    fn read(&self, reference: &KeychainCredentialReference) -> Result<SecretValue> {
-        self.0
-            .lock()
-            .unwrap()
-            .get(&reference.account)
-            .cloned()
-            .map(SecretValue::from_sensitive)
-            .ok_or_else(|| localagentmanager_core::AppError::new("KEYCHAIN_MISSING", "missing"))
-    }
-
-    fn delete(&self, reference: &KeychainCredentialReference) -> Result<()> {
-        self.0.lock().unwrap().remove(&reference.account);
-        Ok(())
-    }
-}
-
 #[test]
 fn keychain_and_approved_auth_command_are_attachable_direct_routes_without_secret_persistence() {
     let root = secure_root();
@@ -363,7 +337,6 @@ fn keychain_and_approved_auth_command_are_attachable_direct_routes_without_secre
             },
             secret: marker.into(),
         },
-        Arc::new(FakeKeychain::default()),
         "2026-07-13T00:01:00Z",
     )
     .unwrap();
@@ -433,10 +406,30 @@ fn keychain_and_approved_auth_command_are_attachable_direct_routes_without_secre
         .redacted_preview
         .contains("synthetic-auth-token"));
 
-    for entry in walkdir(root.path()) {
-        let bytes = fs::read(entry).unwrap();
-        assert!(!String::from_utf8_lossy(&bytes).contains(marker));
+    // Secrets must only live in the dedicated 0600 credentials file, never
+    // scattered across other LAM state.
+    let mut credentials_files = 0;
+    for path in walkdir(root.path()) {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let bytes = fs::read(&path).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        if text.contains(marker) {
+            assert_eq!(
+                file_name,
+                "provider-credentials.json",
+                "secret leaked into {}",
+                path.display()
+            );
+            credentials_files += 1;
+        }
     }
+    assert!(
+        credentials_files >= 1,
+        "provider credential must be persisted in the plaintext store"
+    );
 }
 
 #[test]

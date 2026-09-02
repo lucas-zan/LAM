@@ -23,6 +23,14 @@ pub struct ConfigProjectionSpec {
     pub codex: CodexProviderOptions,
     pub gateway: bool,
     pub model_catalog_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_context_window: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_auto_compact_token_limit: Option<i64>,
+    /// Default reasoning effort written to the top-level
+    /// `model_reasoning_effort` key. None keeps the built-in default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -107,6 +115,15 @@ pub fn apply_projection(
     set_top(&mut doc, "model", &spec.model);
     set_top(&mut doc, "model_provider", &spec.provider_id);
     set_top(&mut doc, "model_catalog_json", &spec.model_catalog_path);
+    set_top_int(&mut doc, "model_context_window", spec.model_context_window);
+    set_top_int(
+        &mut doc,
+        "model_auto_compact_token_limit",
+        spec.model_auto_compact_token_limit,
+    );
+    if let Some(effort) = &spec.reasoning_effort {
+        set_top(&mut doc, "model_reasoning_effort", effort);
+    }
     set_provider(
         &mut doc,
         &spec.provider_id,
@@ -190,6 +207,16 @@ pub fn validate_managed_projection(
         }
     }
     Ok(())
+}
+
+pub fn replace_provider_auth(
+    doc: &mut DocumentMut,
+    provider_id: &str,
+    auth: &DirectCodexAuth,
+) -> Result<Option<String>> {
+    clear_auth(doc, provider_id);
+    apply_auth(doc, provider_id, auth)?;
+    Ok(item_string(doc, provider_id, "auth"))
 }
 
 pub fn reapply_managed_projection(
@@ -287,6 +314,9 @@ fn managed_keys(spec: &ConfigProjectionSpec) -> Vec<String> {
         "model".into(),
         "model_provider".into(),
         "model_catalog_json".into(),
+        "model_context_window".into(),
+        "model_auto_compact_token_limit".into(),
+        "model_reasoning_effort".into(),
         "name".into(),
         "base_url".into(),
         "wire_api".into(),
@@ -339,6 +369,11 @@ fn ensure_provider_table(doc: &mut DocumentMut, id: &str) {
 }
 fn set_top(doc: &mut DocumentMut, key: &str, value_: &str) {
     doc[key] = value(value_);
+}
+fn set_top_int(doc: &mut DocumentMut, key: &str, value_: Option<i64>) {
+    if let Some(value_) = value_ {
+        doc[key] = value(value_);
+    }
 }
 fn set_provider(doc: &mut DocumentMut, id: &str, key: &str, item: Item) {
     doc["model_providers"][id][key] = item;
@@ -432,7 +467,13 @@ fn apply_options(doc: &mut DocumentMut, id: &str, spec: &ConfigProjectionSpec) {
 fn item_string(doc: &DocumentMut, id: &str, key: &str) -> Option<String> {
     let item = if matches!(
         key,
-        "model" | "model_provider" | "model_catalog_json" | "cli_auth_credentials_store"
+        "model"
+            | "model_provider"
+            | "model_catalog_json"
+            | "model_context_window"
+            | "model_auto_compact_token_limit"
+            | "model_reasoning_effort"
+            | "cli_auth_credentials_store"
     ) {
         doc.get(key)
     } else {
@@ -443,7 +484,13 @@ fn item_string(doc: &DocumentMut, id: &str, key: &str) -> Option<String> {
 fn restore_item(doc: &mut DocumentMut, id: &str, key: &str, previous: Option<&str>) -> Result<()> {
     let target = if matches!(
         key,
-        "model" | "model_provider" | "model_catalog_json" | "cli_auth_credentials_store"
+        "model"
+            | "model_provider"
+            | "model_catalog_json"
+            | "model_context_window"
+            | "model_auto_compact_token_limit"
+            | "model_reasoning_effort"
+            | "cli_auth_credentials_store"
     ) {
         &mut doc[key]
     } else {
@@ -469,7 +516,13 @@ fn restore_item(doc: &mut DocumentMut, id: &str, key: &str, previous: Option<&st
         None => {
             if matches!(
                 key,
-                "model" | "model_provider" | "model_catalog_json" | "cli_auth_credentials_store"
+                "model"
+                    | "model_provider"
+                    | "model_catalog_json"
+                    | "model_context_window"
+                    | "model_auto_compact_token_limit"
+                    | "model_reasoning_effort"
+                    | "cli_auth_credentials_store"
             ) {
                 doc.as_table_mut().remove(key);
             } else if let Some(t) = doc["model_providers"][id].as_table_mut() {

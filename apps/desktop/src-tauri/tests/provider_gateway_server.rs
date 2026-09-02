@@ -289,6 +289,7 @@ fn snapshot() -> GatewayBindingSnapshot {
                 id: "deepseek-chat".into(),
                 label: "Chat".into(),
                 capabilities: None,
+                context_window: None,
             }],
             upstream_auth: UpstreamAuth::Bearer {
                 source: CredentialSource::Env {

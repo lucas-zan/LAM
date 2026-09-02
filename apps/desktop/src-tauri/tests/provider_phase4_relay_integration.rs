@@ -28,6 +28,7 @@ fn add_api_account(home: &Path, name: &str, provider_suffix: &str) {
                     models: vec![ProviderModelDto {
                         id: format!("model-{provider_suffix}"),
                         label: format!("Model {provider_suffix}"),
+                        context_window: None,
                     }],
                     upstream_auth: UpstreamAuthDto::None,
                     adapter: AdapterDto::None,
@@ -40,6 +41,7 @@ fn add_api_account(home: &Path, name: &str, provider_suffix: &str) {
                         route_via_gateway: false,
                         query_params: BTreeMap::new(),
                         env_http_headers: BTreeMap::new(),
+                        reasoning_effort: None,
                     },
                 }),
             },

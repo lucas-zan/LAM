@@ -1105,7 +1105,11 @@ if [ -z "$CODEX_BIN" ]; then
   fi
 fi
 SETTINGS_HOME="${{LAM_HOME:-$HOME}}"
-PERMISSION_PRESET="$(/usr/bin/plutil -extract codexLaunchPermissionPreset raw -o - "$SETTINGS_HOME/.config/agent-workspace/settings.json" 2>/dev/null || true)"
+LAM_SETTINGS="$SETTINGS_HOME/.lam/config/settings.json"
+if [ ! -f "$LAM_SETTINGS" ]; then
+  LAM_SETTINGS="$SETTINGS_HOME/.config/agent-workspace/settings.json"
+fi
+PERMISSION_PRESET="$(/usr/bin/plutil -extract codexLaunchPermissionPreset raw -o - "$LAM_SETTINGS" 2>/dev/null || true)"
 case "$PERMISSION_PRESET" in
   approveForMe)
     set -- --approve-for-me "$@"
@@ -2081,15 +2085,13 @@ pub fn switch_to_pat_account(home_root: &Path, account_id: &str) -> Result<()> {
             let _ = fs::remove_file(&temp_auth_f);
         }
         write_result_f?;
-    } else {
-        if target_auth_f.exists() {
-            fs::remove_file(&target_auth_f).map_err(|e| {
-                AppError::new(
-                    "REMOVE_FAILED",
-                    format!("Failed to remove stale auth-f.json: {e}"),
-                )
-            })?;
-        }
+    } else if target_auth_f.exists() {
+        fs::remove_file(&target_auth_f).map_err(|e| {
+            AppError::new(
+                "REMOVE_FAILED",
+                format!("Failed to remove stale auth-f.json: {e}"),
+            )
+        })?;
     }
 
     Ok(())

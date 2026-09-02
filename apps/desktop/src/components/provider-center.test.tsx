@@ -275,7 +275,7 @@ describe('ProviderEditor', () => {
       fireEvent.change(screen.getByLabelText('Credential source'), {
         target: { value: 'keychain' },
       });
-      const secret = screen.getByLabelText('New Keychain secret');
+      const secret = screen.getByLabelText('API key');
       expect((secret as HTMLInputElement).value).toBe('');
       fireEvent.change(secret, { target: { value: 'synthetic-write-only-secret' } });
       fireEvent.click(screen.getByRole('button', { name: 'Save Provider' }));
@@ -294,6 +294,44 @@ describe('ProviderEditor', () => {
       expect(screen.queryByDisplayValue('COMPANY_TOKEN')).toBeNull();
     },
   );
+});
+
+describe('ProviderEditor context window', () => {
+  it('applies a context window preset to all models and forwards reasoning effort', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ProviderEditor
+        provider={{
+          ...provider,
+          models: [
+            { id: 'model-a', label: 'Model A' },
+            { id: 'model-b', label: 'Model B' },
+          ],
+          codex: { ...provider.codex, reasoningEffort: 'high' },
+        }}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const modelsField = screen.getByLabelText('Models') as HTMLTextAreaElement;
+    expect(modelsField.value).toBe('model-a, model-b');
+
+    fireEvent.click(screen.getByRole('button', { name: '272K' }));
+    expect(modelsField.value).toBe('model-a:272000, model-b:272000');
+
+    const effort = screen.getByLabelText('Default reasoning effort') as HTMLSelectElement;
+    expect(effort.value).toBe('high');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Provider' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    const submitted = onSave.mock.calls[0][0] as ProviderDefinitionV2;
+    expect(submitted.models).toEqual([
+      { id: 'model-a', label: 'model-a', contextWindow: 272_000 },
+      { id: 'model-b', label: 'model-b', contextWindow: 272_000 },
+    ]);
+    expect(submitted.codex.reasoningEffort).toBe('high');
+  });
 });
 
 describe('ApiAccountConnectionEditor', () => {
@@ -317,7 +355,7 @@ describe('ApiAccountConnectionEditor', () => {
 
     expect(screen.getByText('work-api')).toBeTruthy();
     expect(screen.getByText('API key configured')).toBeTruthy();
-    const key = screen.getByLabelText('New API key');
+    const key = screen.getByLabelText('API key');
     expect((key as HTMLInputElement).value).toBe('');
     fireEvent.change(screen.getByLabelText('Base URL'), {
       target: { value: 'https://new.example.test/v1/' },
@@ -335,7 +373,7 @@ describe('ApiAccountConnectionEditor', () => {
   it('sends a replacement key once, clears it, and rejects whitespace keys', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(<ApiAccountConnectionEditor connection={detail} onSave={onSave} onCancel={vi.fn()} />);
-    const key = screen.getByLabelText('New API key');
+    const key = screen.getByLabelText('API key');
     fireEvent.change(key, { target: { value: 'sk-replacement-not-real' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save API account' }));
     await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
@@ -344,7 +382,7 @@ describe('ApiAccountConnectionEditor', () => {
 
     fireEvent.change(key, { target: { value: '   ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save API account' }));
-    expect(await screen.findByText('New API key cannot be blank')).toBeTruthy();
+    expect(await screen.findByText('API key cannot be blank')).toBeTruthy();
     expect(onSave).toHaveBeenCalledTimes(1);
   });
 
@@ -420,10 +458,11 @@ describe('ApiAccountConnectionEditor', () => {
       expectedProviderStoreRevision: 7,
       baseUrl: 'https://api.example.test/v1',
       models: [
-        { id: 'model-c', label: 'Model C' },
-        { id: 'model-d', label: 'Model D' },
+        { id: 'model-c', label: 'Model C', contextWindow: undefined },
+        { id: 'model-d', label: 'Model D', contextWindow: undefined },
       ],
       selectedModel: 'model-d',
+      reasoningEffort: 'medium',
     });
   });
 
@@ -452,10 +491,11 @@ describe('ApiAccountConnectionEditor', () => {
       expectedProviderStoreRevision: 7,
       baseUrl: 'https://api.example.test/v1',
       models: [
-        { id: 'model-a', label: 'Model A' },
-        { id: 'model-c', label: 'Model C' },
+        { id: 'model-a', label: 'Model A', contextWindow: undefined },
+        { id: 'model-c', label: 'Model C', contextWindow: undefined },
       ],
       selectedModel: 'model-a',
+      reasoningEffort: 'medium',
     });
   });
 });

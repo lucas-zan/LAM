@@ -1278,6 +1278,18 @@ pub fn set_gateway_first_response_timeout_seconds(seconds: u64) -> Result<(), Ap
 }
 
 #[tauri::command]
+pub fn get_gateway_request_timeout_seconds() -> Result<u64, AppError> {
+    Ok(localagentmanager_core::gateway_request_timeout_seconds(
+        &home_root()?,
+    ))
+}
+
+#[tauri::command]
+pub fn set_gateway_request_timeout_seconds(seconds: u64) -> Result<(), AppError> {
+    localagentmanager_core::set_gateway_request_timeout_seconds(&home_root()?, seconds)
+}
+
+#[tauri::command]
 pub fn get_codex_launch_permission_preset() -> Result<CodexLaunchPermissionPreset, AppError> {
     Ok(localagentmanager_core::codex_launch_permission_preset(
         &home_root()?,

@@ -43,7 +43,7 @@ pub async fn shutdown_packaged_gateway(home_root: &Path) -> Result<()> {
     let Some(pid) = snapshot.value.process_id else {
         return Ok(());
     };
-    let identity = load_or_create_system_install_identity(&snapshot.value.install_id);
+    let identity = load_or_create_system_install_identity(&root, &snapshot.value.install_id);
     let control_path = packaged_control_path(&snapshot.value)?;
     let now = chrono::Utc::now().to_rfc3339();
     if let Ok(identity) = identity {
@@ -133,7 +133,14 @@ async fn request_control_shutdown(
     _now: &str,
     _state_repo: &GatewayStateRepository,
 ) -> bool {
-    let _ = (_control_path, _identity, _expected_revision, _pid, _now, _state_repo);
+    let _ = (
+        _control_path,
+        _identity,
+        _expected_revision,
+        _pid,
+        _now,
+        _state_repo,
+    );
     false
 }
 
@@ -475,6 +482,13 @@ pub async fn inspect_gateway_claim<I: ProcessInspector, P: GatewayIdentityProbe>
     if identity.uid != expected_uid || identity.executable != expected_executable {
         return Ok(GatewaySupervisorObservation::ProcessIdentityMismatch);
     }
+    // Orphan detection: if the gateway's parent is launchd (pid 1), the
+    // launching LAM process is gone (force-quit, crash, or overwrite install).
+    // Treat it as an identity mismatch so the supervisor terminates it and
+    // starts a fresh gateway under the current LAM.
+    if identity.parent_pid <= 1 {
+        return Ok(GatewaySupervisorObservation::ProcessIdentityMismatch);
+    }
     Ok(
         match probe
             .probe(state)
@@ -792,7 +806,7 @@ impl PackagedGatewaySupervisor {
             .value
             .bindings
             .into_iter()
-            .filter(|binding| binding_requires_gateway(binding))
+            .filter(binding_requires_gateway)
             .collect())
     }
 
@@ -810,6 +824,7 @@ impl PackagedGatewaySupervisor {
             &snapshot.value,
             executable,
             self.expected_uid,
+            &self.root,
         )
         .await;
         let action = self.transition(observation);
@@ -844,12 +859,15 @@ impl PackagedGatewaySupervisor {
         }
         let timeout =
             crate::services::types::gateway_first_response_timeout_seconds(&self.home_root);
+        let request_timeout =
+            crate::services::types::gateway_request_timeout_seconds(&self.home_root);
         match start_packaged_sidecar(
             &self.home_root,
             &self.root,
             &reservation,
             active,
             timeout,
+            request_timeout,
             &installation,
             control_path,
         ) {
@@ -904,7 +922,7 @@ fn system_binding_service(root: &Path, lock: InstallationLock) -> SystemBindingS
             1,
             StoreOptions::default(),
         ),
-        KeychainCredentialService::new(Arc::new(SystemKeychainBackend)),
+        KeychainCredentialService::system_with_plaintext(root),
     )
 }
 
@@ -922,8 +940,9 @@ async fn inspect_packaged_gateway<B: crate::services::provider_keychain::Keychai
     state: &GatewayRuntimeState,
     expected_executable: &Path,
     expected_uid: u32,
+    root: &Path,
 ) -> GatewaySupervisorObservation {
-    let identity = load_or_create_system_install_identity(&state.install_id);
+    let identity = load_or_create_system_install_identity(root, &state.install_id);
     let token = bindings.token_for_helper(&binding.profile_id, &binding.binding_id);
     let probe = match (token, identity) {
         (Ok(token), Ok(identity)) => {
@@ -958,7 +977,9 @@ fn inspect_without_gateway_probe<I: ProcessInspector>(
     match inspector.inspect(pid) {
         Ok(None) => GatewaySupervisorObservation::ProcessMissing,
         Ok(Some(identity))
-            if identity.uid != expected_uid || identity.executable != expected_executable =>
+            if identity.uid != expected_uid
+                || identity.executable != expected_executable
+                || identity.parent_pid <= 1 =>
         {
             GatewaySupervisorObservation::ProcessIdentityMismatch
         }
@@ -975,28 +996,30 @@ fn log_supervisor_transition(machine: &GatewaySupervisorMachine) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn start_packaged_sidecar(
     home_root: &Path,
     root: &Path,
     reservation: &GatewayStartReservation,
     bindings: &[super::binding::GatewayBinding],
     first_response_timeout_seconds: u64,
+    request_timeout_seconds: u64,
     installation: &VerifiedInstallation,
     control_path: &Path,
 ) -> Result<()> {
     let state = &reservation.snapshot().value;
-    let identity = load_or_create_system_install_identity(&state.install_id)?;
+    let identity = load_or_create_system_install_identity(root, &state.install_id)?;
     let control_parent = control_path.parent().ok_or_else(|| {
         AppError::new(
             "GATEWAY_CONTROL_PATH_UNSAFE",
             "Gateway control path has no parent",
         )
     })?;
-    fs::create_dir_all(&control_parent)?;
+    fs::create_dir_all(control_parent)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&control_parent, fs::Permissions::from_mode(0o700))?;
+        fs::set_permissions(control_parent, fs::Permissions::from_mode(0o700))?;
     }
     let mut command = Command::new(&installation.component("gateway")?.path);
     command
@@ -1006,6 +1029,10 @@ fn start_packaged_sidecar(
         .env(
             crate::services::provider_runtime::GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV,
             first_response_timeout_seconds.to_string(),
+        )
+        .env(
+            crate::services::provider_runtime::GATEWAY_REQUEST_TIMEOUT_ENV,
+            request_timeout_seconds.to_string(),
         )
         .stdin(Stdio::piped())
         .stdout(Stdio::null())

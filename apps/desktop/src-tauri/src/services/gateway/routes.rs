@@ -55,18 +55,10 @@ struct ReasoningHistoryEntry {
     history: ReasoningHistory,
 }
 
+#[derive(Default)]
 struct ReasoningHistoryStore {
     clock: u64,
     entries: BTreeMap<String, ReasoningHistoryEntry>,
-}
-
-impl Default for ReasoningHistoryStore {
-    fn default() -> Self {
-        Self {
-            clock: 0,
-            entries: BTreeMap::new(),
-        }
-    }
 }
 
 impl ReasoningHistoryStore {
@@ -762,6 +754,7 @@ impl GatewayRouteComposer {
         .with_upstream_metrics(response.status, response.first_byte_ms))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn streaming(
         &self,
         upstream_request: UpstreamRequest,

@@ -197,6 +197,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(portFile, String(server.add
                 id: "deepseek-chat".into(),
                 label: "DeepSeek Chat".into(),
                 capabilities: None,
+                context_window: None,
             }],
             upstream_auth: UpstreamAuth::Bearer {
                 source: CredentialSource::Env {

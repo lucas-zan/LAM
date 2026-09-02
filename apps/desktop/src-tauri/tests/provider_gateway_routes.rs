@@ -59,11 +59,13 @@ fn snapshot_at(address: SocketAddr) -> GatewayBindingSnapshot {
                     id: "deepseek-chat".into(),
                     label: "Chat".into(),
                     capabilities: None,
+                    context_window: None,
                 },
                 ProviderModel {
                     id: "deepseek-reasoner".into(),
                     label: "Reasoner".into(),
                     capabilities: None,
+                    context_window: None,
                 },
             ],
             upstream_auth: UpstreamAuth::Bearer {

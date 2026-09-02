@@ -129,7 +129,12 @@ fn nonstream_and_stream_reasoning_are_suppressed_but_preserved_for_history() {
     .unwrap();
     let encoded = serde_json::to_string(&response).unwrap();
     assert!(encoded.contains("LAM_DEEPSEEK_FINAL"));
-    assert!(!encoded.contains("LAM_DEEPSEEK_REASONING"));
+    assert!(matches!(
+        &response.output[0],
+        localagentmanager_core::adapters::nonstream::ResponsesOutputItem::Reasoning {
+            summary, ..
+        } if summary[0]["text"] == "LAM_DEEPSEEK_REASONING_REDACTED_FIXTURE"
+    ));
 
     let mut stream = StreamingAdapter::new("r", "deepseek-fixture-model", 1);
     stream.enable_reasoning_capture(MAX_REASONING_BYTES);
@@ -143,7 +148,7 @@ fn nonstream_and_stream_reasoning_are_suppressed_but_preserved_for_history() {
     );
     let encoded = serde_json::to_string(&events).unwrap();
     assert!(encoded.contains("LAM_DEEPSEEK_FINAL"));
-    assert!(!encoded.contains("LAM_DEEPSEEK_REASONING"));
+    assert!(encoded.contains("LAM_DEEPSEEK_REASONING"));
 }
 
 #[test]

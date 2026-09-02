@@ -42,6 +42,10 @@ fn main() {
 }
 
 fn run() -> localagentmanager_core::Result<i32> {
+    // One-shot legacy data migration before any provider-hub access.
+    if let Ok(home) = localagentmanager_core::resolve_home_root() {
+        let _ = localagentmanager_core::lam_paths::migrate_legacy_lam_data(&home);
+    }
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
     if arguments.len() < 3 || arguments[0] != "codex" || arguments[1] != "--profile" {
         return Err(localagentmanager_core::AppError::new(
@@ -158,11 +162,16 @@ fn run() -> localagentmanager_core::Result<i32> {
         .map(PathBuf::from)
         .map(|home| localagentmanager_core::gateway_first_response_timeout_seconds(&home))
         .unwrap_or(localagentmanager_core::DEFAULT_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS);
+    let request_timeout_seconds = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| localagentmanager_core::gateway_request_timeout_seconds(&home))
+        .unwrap_or(localagentmanager_core::DEFAULT_GATEWAY_REQUEST_TIMEOUT_SECONDS);
     let readiness: Arc<dyn GatewayReadiness> = Arc::new(PackagedReadiness::new(
         root,
         lock,
         installation.clone(),
         timeout_seconds,
+        request_timeout_seconds,
     )?);
     let launcher = CodexLauncher::new_shared(installation, readiness);
     Ok(launcher.run(launch_request)?.exit_code)
@@ -176,6 +185,7 @@ struct PackagedReadiness {
     identity_key: [u8; 32],
     control_path: PathBuf,
     first_response_timeout_seconds: u64,
+    request_timeout_seconds: u64,
     owned_child: Mutex<Option<Child>>,
 }
 
@@ -190,6 +200,7 @@ impl PackagedReadiness {
         lock: InstallationLock,
         installation: Arc<VerifiedInstallation>,
         first_response_timeout_seconds: u64,
+        request_timeout_seconds: u64,
     ) -> localagentmanager_core::Result<Self> {
         let state = GatewayStateRepository::new(VersionedFileStore::<GatewayRuntimeState>::new(
             root.join("gateway-state.json"),
@@ -212,7 +223,8 @@ impl PackagedReadiness {
                 &chrono::Utc::now().to_rfc3339(),
             )?
         };
-        let identity_key = load_or_create_system_install_identity(&snapshot.value.install_id)?;
+        let identity_key =
+            load_or_create_system_install_identity(&root, &snapshot.value.install_id)?;
         let temp_root = std::env::var_os("DARWIN_USER_TEMP_DIR")
             .or_else(|| std::env::var_os("TMPDIR"))
             .map(PathBuf::from)
@@ -229,7 +241,7 @@ impl PackagedReadiness {
                 "Gateway control path has no parent",
             )
         })?;
-        ensure_private_directory(&control_parent)?;
+        ensure_private_directory(control_parent)?;
         Ok(Self {
             root: root.clone(),
             state,
@@ -240,12 +252,13 @@ impl PackagedReadiness {
                     1,
                     StoreOptions::default(),
                 ),
-                KeychainCredentialService::new(Arc::new(SystemKeychainBackend)),
+                KeychainCredentialService::system_with_plaintext(&root),
             ),
             installation,
             identity_key,
             control_path,
             first_response_timeout_seconds,
+            request_timeout_seconds,
             owned_child: Mutex::new(None),
         })
     }
@@ -394,6 +407,10 @@ impl PackagedReadiness {
             .env(
                 localagentmanager_core::provider_runtime::GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV,
                 self.first_response_timeout_seconds.to_string(),
+            )
+            .env(
+                localagentmanager_core::provider_runtime::GATEWAY_REQUEST_TIMEOUT_ENV,
+                self.request_timeout_seconds.to_string(),
             )
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -642,10 +659,10 @@ fn install_paths() -> localagentmanager_core::Result<(PathBuf, PathBuf)> {
                 "development launcher directory is unavailable",
             )
         })?;
-        return Ok((
+        Ok((
             root.to_path_buf(),
             root.join("provider-gateway-install-manifest.json"),
-        ));
+        ))
     }
     #[cfg(not(debug_assertions))]
     let contents = executable.parent().and_then(Path::parent).ok_or_else(|| {

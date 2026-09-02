@@ -111,6 +111,32 @@ pub enum ResponsesStreamEvent {
         output_index: usize,
         item: ResponsesOutputItem,
     },
+    #[serde(rename = "response.reasoning_summary_part.added")]
+    ReasoningSummaryPartAdded {
+        sequence_number: u64,
+        response_id: String,
+        item_id: String,
+        output_index: usize,
+        summary_index: usize,
+    },
+    #[serde(rename = "response.reasoning_summary_text.delta")]
+    ReasoningSummaryTextDelta {
+        sequence_number: u64,
+        response_id: String,
+        item_id: String,
+        output_index: usize,
+        summary_index: usize,
+        delta: String,
+    },
+    #[serde(rename = "response.reasoning_summary_text.done")]
+    ReasoningSummaryTextDone {
+        sequence_number: u64,
+        response_id: String,
+        item_id: String,
+        output_index: usize,
+        summary_index: usize,
+        text: String,
+    },
     #[serde(rename = "response.completed")]
     Completed {
         sequence_number: u64,
@@ -184,6 +210,9 @@ impl ResponsesStreamEvent {
             Self::FunctionCallArgumentsDone { .. } => "response.function_call_arguments.done",
             Self::CustomToolCallInputDelta { .. } => "response.custom_tool_call_input.delta",
             Self::CustomToolCallInputDone { .. } => "response.custom_tool_call_input.done",
+            Self::ReasoningSummaryPartAdded { .. } => "response.reasoning_summary_part.added",
+            Self::ReasoningSummaryTextDelta { .. } => "response.reasoning_summary_text.delta",
+            Self::ReasoningSummaryTextDone { .. } => "response.reasoning_summary_text.done",
         }
     }
 
@@ -203,13 +232,22 @@ impl ResponsesStreamEvent {
             | Self::FunctionCallArgumentsDelta { response_id, .. }
             | Self::FunctionCallArgumentsDone { response_id, .. }
             | Self::CustomToolCallInputDelta { response_id, .. }
-            | Self::CustomToolCallInputDone { response_id, .. } => response_id,
+            | Self::CustomToolCallInputDone { response_id, .. }
+            | Self::ReasoningSummaryPartAdded { response_id, .. }
+            | Self::ReasoningSummaryTextDelta { response_id, .. }
+            | Self::ReasoningSummaryTextDone { response_id, .. } => response_id,
         }
     }
 
     pub fn text_delta(&self) -> Option<&str> {
         match self {
             Self::OutputTextDelta { delta, .. } => Some(delta),
+            _ => None,
+        }
+    }
+    pub fn reasoning_summary_text_delta(&self) -> Option<&str> {
+        match self {
+            Self::ReasoningSummaryTextDelta { delta, .. } => Some(delta),
             _ => None,
         }
     }
@@ -381,6 +419,9 @@ pub struct StreamingAdapter {
     tool_calls: BTreeMap<u32, ToolAccumulator>,
     tool_call_ids: BTreeSet<String>,
     reasoning: String,
+    reasoning_item_id: Option<String>,
+    reasoning_output_index: Option<usize>,
+    reasoning_summary_done: bool,
     annotations: Vec<serde_json::Value>,
     reasoning_limit: Option<usize>,
     response_limit: usize,
@@ -433,6 +474,9 @@ impl StreamingAdapter {
             tool_calls: BTreeMap::new(),
             tool_call_ids: BTreeSet::new(),
             reasoning: String::new(),
+            reasoning_item_id: None,
+            reasoning_output_index: None,
+            reasoning_summary_done: false,
             annotations: Vec::new(),
             reasoning_limit: None,
             response_limit: MAX_RESPONSE_BYTES,
@@ -455,6 +499,9 @@ impl StreamingAdapter {
     }
     pub fn reasoning_content(&self) -> Option<&str> {
         (!self.reasoning.is_empty()).then_some(self.reasoning.as_str())
+    }
+    pub fn reasoning_emitted(&self) -> bool {
+        self.reasoning_summary_done
     }
     pub fn tool_call_ids(&self) -> Vec<String> {
         self.output
@@ -571,6 +618,7 @@ impl StreamingAdapter {
                             ));
                         }
                         self.reasoning.push_str(&reasoning);
+                        events.extend(self.reasoning_text_delta(reasoning));
                     }
                 }
             }
@@ -637,11 +685,13 @@ impl StreamingAdapter {
                     _ => {}
                 }
                 if matches!(reason, "tool_calls" | "function_call") {
+                    events.extend(self.finish_reasoning_item());
                     if self.item_open {
                         events.extend(self.finish_text_item());
                     }
                     events.extend(self.finish_tool_items()?);
                 } else {
+                    events.extend(self.finish_reasoning_item());
                     events.extend(self.finish_text_item());
                 }
                 self.state = StreamState::AwaitingDone;
@@ -688,6 +738,7 @@ impl StreamingAdapter {
                     .values()
                     .filter(|call| call.output_index.is_some())
                     .count()
+                + usize::from(self.reasoning_output_index.is_some() && !self.reasoning_summary_done)
         });
         if let Some(call_id) = call_id.as_ref() {
             let duplicate = self
@@ -1011,6 +1062,98 @@ impl StreamingAdapter {
                 }),
             );
         }
+        events
+    }
+
+    fn reasoning_text_delta(&mut self, delta: String) -> Vec<ResponsesStreamEvent> {
+        let mut events = Vec::new();
+        if self.reasoning_item_id.is_none() {
+            self.reasoning_item_id = Some(format!("rs-{}", self.response_id));
+            self.reasoning_output_index = Some(self.output.len());
+            let item = ResponsesOutputItem::Reasoning {
+                id: self.reasoning_item_id.clone().unwrap(),
+                status: ResponsesStatus::InProgress,
+                summary: Vec::new(),
+                encrypted_content: None,
+            };
+            let response_id = self.response_id.clone();
+            let item_id = self.reasoning_item_id.clone().unwrap();
+            let output_index = self.reasoning_output_index.unwrap();
+            events.push(
+                self.event(|sequence| ResponsesStreamEvent::OutputItemAdded {
+                    sequence_number: sequence,
+                    response_id: response_id.clone(),
+                    output_index,
+                    item,
+                }),
+            );
+            events.push(
+                self.event(|sequence| ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                    sequence_number: sequence,
+                    response_id: response_id.clone(),
+                    item_id,
+                    output_index,
+                    summary_index: 0,
+                }),
+            );
+        }
+        let response_id = self.response_id.clone();
+        let item_id = self.reasoning_item_id.clone().unwrap();
+        let output_index = self.reasoning_output_index.unwrap();
+        events.push(
+            self.event(|sequence| ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                sequence_number: sequence,
+                response_id,
+                item_id,
+                output_index,
+                summary_index: 0,
+                delta,
+            }),
+        );
+        events
+    }
+
+    fn finish_reasoning_item(&mut self) -> Vec<ResponsesStreamEvent> {
+        if self.reasoning_item_id.is_none() {
+            return Vec::new();
+        }
+        if self.reasoning_summary_done {
+            return Vec::new();
+        }
+        self.reasoning_summary_done = true;
+        let mut events = Vec::new();
+        let item_id = self.reasoning_item_id.clone().unwrap();
+        let output_index = self.reasoning_output_index.unwrap();
+        let response_id = self.response_id.clone();
+        let text = self.reasoning.clone();
+        let summary = serde_json::json!({
+            "type": "summary_text",
+            "text": text,
+        });
+        events.push(
+            self.event(|sequence| ResponsesStreamEvent::ReasoningSummaryTextDone {
+                sequence_number: sequence,
+                response_id,
+                item_id: item_id.clone(),
+                output_index,
+                summary_index: 0,
+                text: text.clone(),
+            }),
+        );
+        let item = ResponsesOutputItem::Reasoning {
+            id: item_id,
+            status: ResponsesStatus::Completed,
+            summary: vec![summary],
+            encrypted_content: None,
+        };
+        self.output.push(item.clone());
+        let response_id = self.response_id.clone();
+        events.push(self.event(|sequence| ResponsesStreamEvent::OutputItemDone {
+            sequence_number: sequence,
+            response_id,
+            output_index,
+            item,
+        }));
         events
     }
 

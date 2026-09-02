@@ -5,7 +5,9 @@ pub mod account;
 pub mod adapters;
 pub mod antigravity;
 pub mod codex_api_key_auth;
+pub mod credential_store;
 pub mod gateway;
+pub mod lam_paths;
 pub mod provider;
 pub mod provider_api_v2;
 pub mod provider_attach_transaction;
@@ -52,10 +54,12 @@ pub use session::*;
 pub use storage::*;
 pub use types::{
     antigravity_port, codex_launch_permission_preset, gateway_first_response_timeout_seconds,
-    get_auth_mode, selected_terminal_target_id, set_antigravity_port, set_auth_mode,
-    set_codex_launch_permission_preset, set_gateway_first_response_timeout_seconds,
+    gateway_request_timeout_seconds, get_auth_mode, selected_terminal_target_id,
+    set_antigravity_port, set_auth_mode, set_codex_launch_permission_preset,
+    set_gateway_first_response_timeout_seconds, set_gateway_request_timeout_seconds,
     set_selected_terminal_target_id, CodexLaunchPermissionPreset,
-    DEFAULT_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS, MAX_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS,
-    MIN_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS,
+    DEFAULT_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS, DEFAULT_GATEWAY_REQUEST_TIMEOUT_SECONDS,
+    MAX_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS, MAX_GATEWAY_REQUEST_TIMEOUT_SECONDS,
+    MIN_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS, MIN_GATEWAY_REQUEST_TIMEOUT_SECONDS,
 };
 pub use usage::*;

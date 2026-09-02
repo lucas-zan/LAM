@@ -415,10 +415,8 @@ impl SecureUpstreamClient {
             };
             let addresses = match addresses {
                 Ok(addresses) if addresses.is_empty() => {
-                    let err = AppError::new(
-                        "UPSTREAM_DNS_FAILED",
-                        "upstream DNS returned no addresses",
-                    );
+                    let err =
+                        AppError::new("UPSTREAM_DNS_FAILED", "upstream DNS returned no addresses");
                     if attempts <= self.config.connect_retries {
                         let delay = self.config.connect_retry_delay.min(remaining);
                         tokio::select! {
@@ -430,7 +428,10 @@ impl SecureUpstreamClient {
                     return Err(err);
                 }
                 Ok(addresses) => addresses,
-                Err(error) if error.code == "UPSTREAM_DNS_FAILED" && attempts <= self.config.connect_retries => {
+                Err(error)
+                    if error.code == "UPSTREAM_DNS_FAILED"
+                        && attempts <= self.config.connect_retries =>
+                {
                     let delay = self.config.connect_retry_delay.min(remaining);
                     tokio::select! {
                         _ = request.cancellation.cancelled() => return Err(cancelled()),

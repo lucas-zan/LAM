@@ -757,6 +757,16 @@ export async function setGatewayFirstResponseTimeoutSeconds(seconds: number): Pr
   return invoke<void>('set_gateway_first_response_timeout_seconds', { seconds });
 }
 
+export async function getGatewayRequestTimeoutSeconds(): Promise<number> {
+  if (!inTauri()) return 20 * 60;
+  return invoke<number>('get_gateway_request_timeout_seconds');
+}
+
+export async function setGatewayRequestTimeoutSeconds(seconds: number): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>('set_gateway_request_timeout_seconds', { seconds });
+}
+
 export async function getCodexLaunchPermissionPreset(): Promise<CodexLaunchPermissionPreset> {
   if (!inTauri()) return 'askForApproval';
   return invoke<CodexLaunchPermissionPreset>('get_codex_launch_permission_preset');

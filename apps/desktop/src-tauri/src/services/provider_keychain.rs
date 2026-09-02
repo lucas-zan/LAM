@@ -172,8 +172,26 @@ pub fn codex_auth_for_keychain(
     })
 }
 
+/// Extracts the `credential/<id>` portion of a keychain account
+/// (`credential/<uuid>/v<version>`) for use as the plaintext file key.
+pub fn plaintext_credential_key(account: &str) -> Option<String> {
+    let trimmed = account.strip_prefix("credential/")?;
+    let id = trimmed.split('/').next()?;
+    if id.is_empty() {
+        None
+    } else {
+        Some(id.to_string())
+    }
+}
+
 pub struct KeychainCredentialService<B: KeychainBackend> {
     backend: Arc<B>,
+    /// Optional plaintext credential file. When set, provider credentials
+    /// (`lam.remote-provider`) are read/written through this file instead of
+    /// the macOS Keychain, avoiding repeated authorization prompts under
+    /// ad-hoc signing. Non-provider keychain entries (install identity, etc.)
+    /// always use the Keychain backend.
+    plaintext_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,13 +267,37 @@ impl<B: KeychainBackend> Clone for KeychainCredentialService<B> {
     fn clone(&self) -> Self {
         Self {
             backend: self.backend.clone(),
+            plaintext_path: self.plaintext_path.clone(),
         }
     }
 }
 
 impl<B: KeychainBackend> KeychainCredentialService<B> {
     pub fn new(backend: Arc<B>) -> Self {
-        Self { backend }
+        Self {
+            backend,
+            plaintext_path: None,
+        }
+    }
+
+    /// Creates a service that routes `lam.remote-provider` credentials through
+    /// a plaintext file at `plaintext_path` (with Keychain fallback on first
+    /// read so existing secrets migrate automatically).
+    pub fn new_with_plaintext(backend: Arc<B>, plaintext_path: std::path::PathBuf) -> Self {
+        Self {
+            backend,
+            plaintext_path: Some(plaintext_path),
+        }
+    }
+
+    fn plaintext_store(&self) -> Option<super::credential_store::JsonFileStore> {
+        self.plaintext_path
+            .as_ref()
+            .map(|path| super::credential_store::JsonFileStore::new(path.clone()))
+    }
+
+    fn uses_plaintext(&self, reference: &KeychainCredentialReference) -> bool {
+        self.plaintext_path.is_some() && reference.service == REMOTE_PROVIDER_KEYCHAIN_SERVICE
     }
 
     pub fn write_exact(
@@ -270,6 +312,12 @@ impl<B: KeychainBackend> KeychainCredentialService<B> {
         )?;
         if secret.with_exposed(|value| value.trim().is_empty()) {
             return Err(AppError::new("PROVIDER_SECRET_EMPTY", "secret is empty"));
+        }
+        if self.uses_plaintext(reference) {
+            let store = self.plaintext_store().expect("plaintext store exists");
+            let key = plaintext_credential_key(&reference.account).ok_or_else(invalid_reference)?;
+            let value = secret.with_exposed(str::to_owned);
+            return store.insert(&key, &value);
         }
         self.backend
             .write(reference, &secret)
@@ -286,10 +334,29 @@ impl<B: KeychainBackend> KeychainCredentialService<B> {
             &reference.account,
             reference.version,
         )?;
-        let secret = self
-            .backend
-            .read(reference)
-            .map_err(sanitize_keychain_error)?;
+        let secret = if self.uses_plaintext(reference) {
+            let store = self.plaintext_store().expect("plaintext store exists");
+            let key = plaintext_credential_key(&reference.account).ok_or_else(invalid_reference)?;
+            match store.get(&key)? {
+                Some(value) => SecretValue::from_sensitive(value),
+                None => {
+                    // First read after migration: fall back to Keychain and
+                    // persist into the plaintext file so subsequent reads
+                    // never touch the Keychain again.
+                    let secret = self
+                        .backend
+                        .read(reference)
+                        .map_err(sanitize_keychain_error)?;
+                    let value = secret.with_exposed(str::to_owned);
+                    store.insert(&key, &value)?;
+                    secret
+                }
+            }
+        } else {
+            self.backend
+                .read(reference)
+                .map_err(sanitize_keychain_error)?
+        };
         if secret.with_exposed(|value| value.trim().is_empty()) {
             return Err(AppError::new(
                 "PROVIDER_SECRET_EMPTY",
@@ -305,6 +372,11 @@ impl<B: KeychainBackend> KeychainCredentialService<B> {
             &reference.account,
             reference.version,
         )?;
+        if self.uses_plaintext(reference) {
+            let store = self.plaintext_store().expect("plaintext store exists");
+            let key = plaintext_credential_key(&reference.account).ok_or_else(invalid_reference)?;
+            return store.remove(&key);
+        }
         match self.backend.delete(reference) {
             Ok(()) => Ok(()),
             Err(error) if error.code == "KEYCHAIN_ITEM_NOT_FOUND" => Ok(()),
@@ -373,6 +445,20 @@ impl<B: KeychainBackend> KeychainCredentialService<B> {
             provider_store_revision,
             cleanup_pending,
         })
+    }
+}
+
+impl KeychainCredentialService<SystemKeychainBackend> {
+    /// Creates a service backed by the system Keychain with provider
+    /// credentials routed through the canonical plaintext file under
+    /// `provider_hub_root`. This is the single construction entry point for
+    /// provider credential storage; callers must not assemble the plaintext
+    /// path themselves.
+    pub fn system_with_plaintext(provider_hub_root: &std::path::Path) -> Self {
+        Self::new_with_plaintext(
+            Arc::new(SystemKeychainBackend),
+            provider_hub_root.join("provider-credentials.json"),
+        )
     }
 }
 

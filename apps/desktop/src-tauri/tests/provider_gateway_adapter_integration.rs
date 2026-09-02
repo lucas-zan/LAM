@@ -46,6 +46,10 @@ fn pinned_codex_followup_proves_reasoning_metadata_is_not_representable_without_
     assert_eq!(fixture["body"]["reasoning"], serde_json::Value::Null);
 
     let route = fs::read_to_string(root.join("src/services/gateway/routes.rs")).unwrap();
-    assert!(route.contains("ADAPTER_REASONING_HISTORY_UNREPRESENTABLE"));
+    // Reasoning metadata from a follow-up is represented through the stateful
+    // ReasoningHistory store; the adapter surfaces a stable error code when
+    // history is required but unavailable.
+    assert!(route.contains("ReasoningHistoryRequired"));
+    assert!(route.contains("ADAPTER_INVALID_REQUEST"));
     assert!(!route.contains("selected_model.contains"));
 }

@@ -28,6 +28,7 @@ interface AppState {
   codexLaunchPermissionPreset: CodexLaunchPermissionPreset;
   compactButtons: boolean;
   gatewayFirstResponseTimeoutSeconds: number;
+  gatewayRequestTimeoutSeconds: number;
   antigravityPort: number | null;
 
   setRoute: (route: Route) => void;
@@ -44,6 +45,7 @@ interface AppState {
   setCodexLaunchPermissionPreset: (preset: CodexLaunchPermissionPreset) => Promise<void>;
   setCompactButtons: (compact: boolean) => void;
   setGatewayFirstResponseTimeoutSeconds: (seconds: number) => Promise<void>;
+  setGatewayRequestTimeoutSeconds: (seconds: number) => Promise<void>;
   setAntigravityPort: (port: number | null) => Promise<void>;
   loadSettings: () => Promise<void>;
   refreshTerminalTargets: () => Promise<void>;
@@ -71,6 +73,7 @@ export const useAppStore = create<AppState>()(
       return saved === null ? true : saved === 'true';
     })(),
     gatewayFirstResponseTimeoutSeconds: 60,
+    gatewayRequestTimeoutSeconds: 20 * 60,
     antigravityPort: null,
 
     setRoute: (route) => set({ route }),
@@ -121,6 +124,14 @@ export const useAppStore = create<AppState>()(
         set({ error: err instanceof Error ? err.message : 'Failed to save Gateway timeout' });
       }
     },
+    setGatewayRequestTimeoutSeconds: async (seconds) => {
+      try {
+        await api.setGatewayRequestTimeoutSeconds(seconds);
+        set({ gatewayRequestTimeoutSeconds: seconds });
+      } catch (err) {
+        set({ error: err instanceof Error ? err.message : 'Failed to save Gateway request timeout' });
+      }
+    },
     setAntigravityPort: async (port) => {
       try {
         await api.setAntigravityPort(port);
@@ -137,6 +148,7 @@ export const useAppStore = create<AppState>()(
           terminalTargetId,
           codexLaunchPermissionPreset,
           gatewayFirstResponseTimeoutSeconds,
+          gatewayRequestTimeoutSeconds,
           antigravityPort,
         ] = await Promise.all([
           api.getHideDockIcon(),
@@ -144,6 +156,7 @@ export const useAppStore = create<AppState>()(
           api.getSelectedTerminalTarget(),
           api.getCodexLaunchPermissionPreset(),
           api.getGatewayFirstResponseTimeoutSeconds(),
+          api.getGatewayRequestTimeoutSeconds(),
           api.getAntigravityPort(),
         ]);
         set({
@@ -152,6 +165,7 @@ export const useAppStore = create<AppState>()(
           terminalTargetId,
           codexLaunchPermissionPreset,
           gatewayFirstResponseTimeoutSeconds,
+          gatewayRequestTimeoutSeconds,
           antigravityPort,
         });
       } catch (err) {

@@ -134,6 +134,9 @@ fn cache_reuses_then_refreshes_secret_and_helper_writes_only_token_line() {
             codex: CodexProviderOptions::default(),
             gateway: false,
             model_catalog_path: "/tmp/direct-helper/models.json".into(),
+            model_context_window: None,
+            model_auto_compact_token_limit: None,
+            reasoning_effort: None,
         },
     )
     .unwrap();

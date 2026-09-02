@@ -253,6 +253,7 @@ async fn claim_inspection_checks_uid_and_executable_before_gateway_probe() {
         &FakeInspector(Ok(Some(GatewayProcessIdentity {
             executable: expected.into(),
             uid: 502,
+            parent_pid: 1,
         }))),
         &FakeProbe(GatewayIdentityProbeResult::Healthy),
         &state,
@@ -270,6 +271,7 @@ async fn claim_inspection_checks_uid_and_executable_before_gateway_probe() {
         &FakeInspector(Ok(Some(GatewayProcessIdentity {
             executable: PathBuf::from("/tmp/unrelated"),
             uid: 501,
+            parent_pid: 1,
         }))),
         &FakeProbe(GatewayIdentityProbeResult::Healthy),
         &state,
@@ -287,6 +289,7 @@ async fn claim_inspection_checks_uid_and_executable_before_gateway_probe() {
         &FakeInspector(Ok(Some(GatewayProcessIdentity {
             executable: expected.into(),
             uid: 501,
+            parent_pid: 2,
         }))),
         &FakeProbe(GatewayIdentityProbeResult::Unavailable),
         &state,
@@ -345,6 +348,7 @@ fn reconciliation_terminates_only_after_authenticated_mismatch_reaches_threshold
         identity: Some(GatewayProcessIdentity {
             executable: PathBuf::from("/trusted/lam-provider-gateway"),
             uid: 501,
+            parent_pid: 2,
         }),
         termination_succeeds: true,
         terminated: Mutex::new(Vec::new()),
@@ -416,6 +420,7 @@ fn reused_pid_claim_is_cleared_without_signaling_the_foreign_process() {
         identity: Some(GatewayProcessIdentity {
             executable: PathBuf::from("/tmp/unrelated"),
             uid: 502,
+            parent_pid: 1,
         }),
         termination_succeeds: true,
         terminated: Mutex::new(Vec::new()),
@@ -456,6 +461,7 @@ fn recovery_timeout_keeps_the_claim_and_never_authorizes_start() {
         identity: Some(GatewayProcessIdentity {
             executable: PathBuf::from("/trusted/lam-provider-gateway"),
             uid: 501,
+            parent_pid: 2,
         }),
         termination_succeeds: false,
         terminated: Mutex::new(Vec::new()),
@@ -497,6 +503,7 @@ fn stale_claim_does_not_bypass_an_occupied_stable_port() {
         identity: Some(GatewayProcessIdentity {
             executable: PathBuf::from("/tmp/unrelated"),
             uid: 502,
+            parent_pid: 1,
         }),
         termination_succeeds: true,
         terminated: Mutex::new(Vec::new()),
@@ -618,4 +625,42 @@ fn production_supervisor_no_longer_uses_pid_existence_as_health() {
     assert!(!source.contains("drop(listener)"));
     assert!(!source.contains("is_some_and(process_exists)"));
     assert!(!source.contains("fn process_exists("));
+}
+
+#[tokio::test]
+async fn orphaned_gateway_with_parent_pid_one_is_treated_as_identity_mismatch() {
+    let state = runtime_state(Some(42));
+    let expected = PathBuf::from("/trusted/lam-provider-gateway");
+    let orphaned = inspect_gateway_claim(
+        &FakeInspector(Ok(Some(GatewayProcessIdentity {
+            executable: expected.clone(),
+            uid: 501,
+            parent_pid: 1,
+        }))),
+        &FakeProbe(GatewayIdentityProbeResult::Healthy),
+        &state,
+        &expected,
+        501,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        orphaned,
+        GatewaySupervisorObservation::ProcessIdentityMismatch
+    );
+
+    let alive = inspect_gateway_claim(
+        &FakeInspector(Ok(Some(GatewayProcessIdentity {
+            executable: expected.clone(),
+            uid: 501,
+            parent_pid: 2,
+        }))),
+        &FakeProbe(GatewayIdentityProbeResult::Healthy),
+        &state,
+        &expected,
+        501,
+    )
+    .await
+    .unwrap();
+    assert_eq!(alive, GatewaySupervisorObservation::IdentityHealthy);
 }

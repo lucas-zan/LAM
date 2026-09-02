@@ -17,7 +17,7 @@ import {
   IconTrash,
   IconInfo,
 } from './components/icons';
-import { ApiAccountConnectionEditor, ProviderCenter } from './components/provider-center';
+import { ApiAccountConnectionEditor, ProviderCenter, ProviderEditor } from './components/provider-center';
 import { ApiAccountFlow } from './components/api-account-flow';
 import { ThemeToggle } from './components/theme-toggle';
 import { UIButton } from './components/ui-button';
@@ -38,6 +38,7 @@ import type {
   AntigravityQuotaResponse,
   CodexAccount,
   SessionPageCursor,
+  ProviderProfileViewV2,
 } from './lib/types';
 import * as Views from './routes/views';
 
@@ -147,6 +148,8 @@ export function App() {
     setCompactButtons,
     gatewayFirstResponseTimeoutSeconds,
     setGatewayFirstResponseTimeoutSeconds,
+    gatewayRequestTimeoutSeconds,
+    setGatewayRequestTimeoutSeconds,
     antigravityPort,
     setAntigravityPort,
   } = useAppStore();
@@ -214,6 +217,8 @@ export function App() {
     updateApiAccountConnection,
     clearApiAccountConnection,
     refreshProviderModels,
+    saveProvider,
+    rotateKeychainCredential,
   } = useProviderStore();
 
   const selectedAccount = useAccountStore((s) => s.selectedAccount());
@@ -248,6 +253,7 @@ export function App() {
   const [modelSwitchValue, setModelSwitchValue] = useState('');
   const [modelSwitchPlan, setModelSwitchPlan] = useState<ProfileAttachPlanViewV2 | null>(null);
   const [editingApiAccountId, setEditingApiAccountId] = useState<string | null>(null);
+  const [editingGatewayProvider, setEditingGatewayProvider] = useState<ProviderProfileViewV2 | null>(null);
   const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
   const [antigravityQuota, setAntigravityQuota] = useState<AntigravityQuotaResponse | null>(null);
   const [refreshingAntigravity, setRefreshingAntigravity] = useState(false);
@@ -288,6 +294,19 @@ export function App() {
   }
 
   function openApiAccountEditor(account: CodexAccount) {
+    // Gateway-routed providers (e.g. Chat Completions accounts created through
+    // the API account flow) are edited through the Provider editor, which can
+    // rotate the stored credential. Only native Responses API accounts use the
+    // dedicated API Account editor.
+    const provider = resolveAccountProvider(account, providers, bindings);
+    const binding = bindings.find((item) => item.profileId === account.id);
+    const gatewayRouted =
+      binding?.routeKind === 'gateway' ||
+      (provider?.protocol ?? 'responses') === 'chat_completions';
+    if (gatewayRouted && provider) {
+      setEditingGatewayProvider(provider);
+      return;
+    }
     clearApiAccountConnection();
     setEditingApiAccountId(account.id);
     void loadApiAccountConnection(account.id).catch(() => setEditingApiAccountId(null));
@@ -1081,6 +1100,8 @@ export function App() {
             setCompactButtons={setCompactButtons}
             gatewayFirstResponseTimeoutSeconds={gatewayFirstResponseTimeoutSeconds}
             setGatewayFirstResponseTimeoutSeconds={setGatewayFirstResponseTimeoutSeconds}
+            gatewayRequestTimeoutSeconds={gatewayRequestTimeoutSeconds}
+            setGatewayRequestTimeoutSeconds={setGatewayRequestTimeoutSeconds}
             antigravityPort={antigravityPort}
             setAntigravityPort={setAntigravityPort}
           />
@@ -1179,6 +1200,43 @@ export function App() {
           ) : (
             <div className="emptyBox">Loading API account…</div>
           )}
+        </Shell.Modal>
+      ) : null}
+
+      {editingGatewayProvider ? (
+        <Shell.Modal
+          title="Edit API Account"
+          close={() => setEditingGatewayProvider(null)}
+          wide
+        >
+          <ProviderEditor
+            provider={editingGatewayProvider}
+            simpleCredentials
+            onRefreshModels={async () => {
+              const refreshed = await refreshProviderModels(editingGatewayProvider.id);
+              return refreshed.models;
+            }}
+            onSave={async (definition, keychainSecret, authCommand) => {
+              try {
+                await saveProvider(definition, true);
+                if (keychainSecret) {
+                  const expectedCredential =
+                    definition.upstreamAuth.kind === 'none'
+                      ? { kind: 'none' as const }
+                      : definition.upstreamAuth.credential;
+                  await rotateKeychainCredential(
+                    definition.id,
+                    expectedCredential,
+                    keychainSecret,
+                  );
+                }
+                setEditingGatewayProvider(null);
+              } catch (error) {
+                useAppStore.getState().setError(formatError(error));
+              }
+            }}
+            onCancel={() => setEditingGatewayProvider(null)}
+          />
         </Shell.Modal>
       ) : null}
 

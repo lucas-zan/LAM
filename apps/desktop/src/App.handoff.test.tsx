@@ -73,6 +73,8 @@ vi.mock('./lib/api', () => ({
   setHideDockIcon: vi.fn(),
   getGatewayFirstResponseTimeoutSeconds: vi.fn(() => Promise.resolve(60)),
   setGatewayFirstResponseTimeoutSeconds: vi.fn(),
+  getGatewayRequestTimeoutSeconds: vi.fn(() => Promise.resolve(20 * 60)),
+  setGatewayRequestTimeoutSeconds: vi.fn(),
   getAntigravityPort: vi.fn(() => Promise.resolve(null)),
   setAntigravityPort: vi.fn(),
   listTerminalTargets: vi.fn(() =>
@@ -1578,7 +1580,29 @@ describe('App handoff modal', () => {
     await waitFor(() =>
       expect(api.setGatewayFirstResponseTimeoutSeconds).toHaveBeenCalledWith(120),
     );
-    expect(await screen.findByText(/next gateway launch/i)).toBeTruthy();
+    expect(await screen.findByLabelText(/gateway first response timeout/i)).toBeTruthy();
+  });
+
+  it('loads and saves the Gateway request timeout from settings', async () => {
+    vi.mocked(api.getAuthMode).mockResolvedValue('pat');
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    vi.mocked(api.getGatewayRequestTimeoutSeconds).mockResolvedValue(1200);
+    useAppStore.setState({ route: 'settings' });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
+
+    const input = (await screen.findByLabelText(
+      /gateway request timeout/i,
+    )) as HTMLInputElement;
+    expect(input.value).toBe('1200');
+    fireEvent.change(input, { target: { value: '1800' } });
+    fireEvent.blur(input);
+
+    await waitFor(() =>
+      expect(api.setGatewayRequestTimeoutSeconds).toHaveBeenCalledWith(1800),
+    );
+    expect(await screen.findByLabelText(/gateway request timeout/i)).toBeTruthy();
   });
 
   it('loads, validates, saves, and clears the Antigravity port setting', async () => {
@@ -1692,5 +1716,77 @@ describe('App handoff modal', () => {
     expect(
       (useUsageStore.getState() as unknown as { _intervalId?: number | null })._intervalId,
     ).toBeUndefined();
+  });
+
+  it('routes gateway-routed account View&Edit to the Provider editor', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([]);
+    vi.mocked(api.listAccounts).mockResolvedValue([
+      {
+        id: 'gw',
+        displayName: 'gw',
+        codexHome: '/tmp/.codex-gw',
+        wrapperPath: null,
+        hasAuth: true,
+        hasConfig: true,
+        hasHistory: false,
+        sessionCount: 0,
+        latestSessionModifiedAt: 0,
+        managed: true,
+        isRelay: false,
+        relaySource: null,
+        relayIdentity: null,
+        providerId: 'account-gw',
+        model: 'deepseek/deepseek-v4-flash',
+        authMode: 'config',
+      },
+    ]);
+    const gatewayProvider: ProviderProfileViewV2 = {
+      ...externalApiProvider,
+      id: 'account-gw',
+      name: 'gw API',
+      protocol: 'chat_completions',
+      upstreamAuth: {
+        kind: 'bearer',
+        credential: { kind: 'keychain', service: 'lam.remote-provider', account: 'cred/x/v1', version: 1 },
+      },
+      adapter: {
+        kind: 'local',
+        adapterId: 'responses_to_chat_completions',
+        upstreamPath: '/chat/completions',
+      },
+    };
+    vi.mocked(api.listProvidersV2).mockResolvedValue({
+      revision: 4,
+      providers: [gatewayProvider],
+    });
+    vi.mocked(api.listProfileProviderBindingsV2).mockResolvedValue([
+      {
+        profileId: 'gw',
+        providerId: 'account-gw',
+        selectedModel: 'deepseek/deepseek-v4-flash',
+        routeKind: 'gateway',
+        revision: 1,
+        providerRevision: 4,
+      },
+    ]);
+    vi.mocked(api.getApiAccountConnectionV2).mockRejectedValue(
+      new Error('must not be called for gateway accounts'),
+    );
+
+    render(<App />);
+    const card = (await screen.findByText('gw')).closest('article');
+    fireEvent.click(await within(card!).findByRole('button', { name: 'More options' }));
+    fireEvent.click(
+      await within(card!).findByRole('button', {
+        name: 'View&Edit',
+      }),
+    );
+
+    // Gateway accounts open the simplified Provider editor, never the API Account editor.
+    expect(screen.getByRole('heading', { name: 'Edit API Account' })).toBeTruthy();
+    expect(screen.getByLabelText('API key')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Fetch models' })).toBeTruthy();
+    expect(api.getApiAccountConnectionV2).not.toHaveBeenCalled();
+    expect(screen.queryByRole('heading', { name: 'API Account Configuration' })).toBeNull();
   });
 });

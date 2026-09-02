@@ -25,6 +25,7 @@ impl FakeProcessControl {
             identity: Ok(Some(GatewayProcessIdentity {
                 executable: PathBuf::from(path),
                 uid,
+                parent_pid: 1,
             })),
             termination: Ok(true),
             terminated: Mutex::new(Vec::new()),

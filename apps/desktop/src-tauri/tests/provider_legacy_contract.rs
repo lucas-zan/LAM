@@ -93,7 +93,7 @@ where
 fn provider_home(relative: Option<&str>) -> TempDir {
     let home = tempfile::tempdir().unwrap();
     if let Some(relative) = relative {
-        let store_dir = home.path().join(".config/agent-workspace");
+        let store_dir = home.path().join(".lam/config");
         fs::create_dir_all(&store_dir).unwrap();
         fs::copy(fixture_path(relative), store_dir.join("providers.json")).unwrap();
     }
@@ -181,7 +181,7 @@ fn legacy_provider_store_reads_are_frozen_and_side_effect_free() {
         ),
     ] {
         let home = provider_home(Some(relative));
-        let path = home.path().join(".config/agent-workspace/providers.json");
+        let path = home.path().join(".lam/config/providers.json");
         let before = fs::read(&path).unwrap();
         let modified_before = fs::metadata(&path).unwrap().modified().unwrap();
 
@@ -201,9 +201,7 @@ fn legacy_provider_store_reads_are_frozen_and_side_effect_free() {
     assert!(list_providers(empty.path()).unwrap().is_empty());
 
     let missing = provider_home(None);
-    let missing_path = missing
-        .path()
-        .join(".config/agent-workspace/providers.json");
+    let missing_path = missing.path().join(".lam/config/providers.json");
     assert!(list_providers(missing.path()).unwrap().is_empty());
     assert!(
         !missing_path.exists(),

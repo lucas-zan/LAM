@@ -217,6 +217,22 @@ pub fn convert_nonstream_response_with_tools(
     }
     let (status, incomplete_details) = finish_status(choice.finish_reason.as_deref())?;
     let mut output = Vec::new();
+    if let Some(reasoning) = choice
+        .message
+        .reasoning_content
+        .as_deref()
+        .filter(|r| !r.is_empty())
+    {
+        output.push(ResponsesOutputItem::Reasoning {
+            id: context.next_id("rs"),
+            status: status.clone(),
+            summary: vec![serde_json::json!({
+                "type": "summary_text",
+                "text": reasoning,
+            })],
+            encrypted_content: None,
+        });
+    }
     if !is_tool_finish_reason(choice.finish_reason.as_deref())
         || choice.message.content.is_some()
         || !choice.message.annotations.is_empty()

@@ -523,7 +523,7 @@ struct UsageCostEstimate {
 }
 
 pub fn usage_db_path(home_root: &Path) -> PathBuf {
-    home_root.join(".codex/lam/usage/usage.sqlite3")
+    crate::services::lam_paths::LamPaths::for_home(home_root).usage_db_path()
 }
 
 pub fn refresh_usage_index(home_root: &Path) -> Result<UsageRefreshResult> {
@@ -3978,7 +3978,7 @@ pub fn reset_usage_index(home_root: &Path) -> Result<()> {
     let _guard = REFRESH_LOCK
         .lock()
         .map_err(|_| AppError::new("USAGE_REFRESH_LOCK", "usage refresh lock is poisoned"))?;
-    let usage_dir = home_root.join(".codex/lam/usage");
+    let usage_dir = crate::services::lam_paths::LamPaths::for_home(home_root).usage_root();
     if usage_dir.exists() {
         fs::remove_dir_all(usage_dir)?;
     }
@@ -5436,23 +5436,36 @@ mod tests {
         refresh_usage_index(temp.path()).unwrap();
         assert_eq!(
             usage_db_path(temp.path()),
-            temp.path().join(".codex/lam/usage/usage.sqlite3")
+            crate::services::lam_paths::LamPaths::for_home(temp.path()).usage_db_path()
         );
         assert!(usage_db_path(temp.path()).exists());
-        let root_entries = fs::read_dir(temp.path().join(".codex")).unwrap();
-        for entry in root_entries {
-            let path = entry.unwrap().path();
-            assert_ne!(
-                path.file_name().and_then(|v| v.to_str()),
-                Some("usage.sqlite3")
-            );
+        // The usage database must never live under the Codex home directory,
+        // so Codex session scanning cannot mistake it for conversation data.
+        let codex_root = temp.path().join(".codex");
+        if codex_root.exists() {
+            for entry in fs::read_dir(&codex_root).unwrap() {
+                let path = entry.unwrap().path();
+                assert_ne!(
+                    path.file_name().and_then(|v| v.to_str()),
+                    Some("usage.sqlite3")
+                );
+            }
         }
+        let lam_usage = crate::services::lam_paths::LamPaths::for_home(temp.path()).usage_root();
+        assert_eq!(
+            fs::read_dir(&lam_usage).unwrap().count(),
+            1,
+            "usage root contains exactly the sqlite database"
+        );
+        assert!(lam_usage.join("usage.sqlite3").exists());
     }
 
     #[test]
     fn discovery_ignores_lam_usage_directory() {
         let temp = TempDir::new().unwrap();
-        let lam_path = temp.path().join(".codex/lam/usage/fake.jsonl");
+        let lam_path = crate::services::lam_paths::LamPaths::for_home(temp.path())
+            .usage_root()
+            .join("fake.jsonl");
         fs::create_dir_all(lam_path.parent().unwrap()).unwrap();
         fs::write(lam_path, fixture(100, 50)).unwrap();
         let result = refresh_usage_index(temp.path()).unwrap();
@@ -5627,7 +5640,9 @@ mod tests {
 
         reset_usage_index(temp.path()).unwrap();
 
-        assert!(!temp.path().join(".codex/lam/usage").exists());
+        assert!(!crate::services::lam_paths::LamPaths::for_home(temp.path())
+            .usage_root()
+            .exists());
         for dir in ["sessions", "logs", "cache"] {
             assert!(temp.path().join(format!(".codex/{dir}/keep.txt")).exists());
         }
@@ -5909,7 +5924,7 @@ mod tests {
         let summary = get_usage_summary(&home, summary_request("all")).unwrap();
         assert_eq!(
             usage_db_path(&home),
-            home.join(".codex/lam/usage/usage.sqlite3")
+            crate::services::lam_paths::LamPaths::for_home(&home).usage_db_path()
         );
         assert!(usage_db_path(&home).exists());
         assert!(summary.total_calls >= result.inserted_or_updated_events);

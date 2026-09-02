@@ -59,7 +59,7 @@ fn gateway_token(args: &[String]) -> Result<String> {
                 max_bytes: 16 * 1024 * 1024,
             },
         ),
-        KeychainCredentialService::new(Arc::new(SystemKeychainBackend)),
+        KeychainCredentialService::system_with_plaintext(&root),
     );
     service.token_for_helper(&args[4], &args[6])
 }
@@ -127,27 +127,24 @@ fn load_install_identity(root: &Path) -> Result<[u8; 32]> {
             "Gateway install identity state is unavailable",
         ));
     }
-    load_system_install_identity(&state.value.install_id)
+    load_system_install_identity(root, &state.value.install_id)
 }
 
 #[cfg(target_os = "macos")]
-fn load_system_install_identity(install_id: &str) -> Result<[u8; 32]> {
-    let bytes = security_framework::passwords::get_generic_password(
-        "dev.localagentmanager.desktop.provider-hub",
+fn load_system_install_identity(root: &Path, install_id: &str) -> Result<[u8; 32]> {
+    use localagentmanager_core::gateway::identity::{
+        load_or_create_install_identity, SystemInstallIdentityStore,
+    };
+    load_or_create_install_identity(
+        &SystemInstallIdentityStore::new(root.join("install-identity.json")),
         install_id,
+        || {
+            let mut identity = [0_u8; 32];
+            use rand::RngCore;
+            rand::rngs::OsRng.fill_bytes(&mut identity);
+            identity
+        },
     )
-    .map_err(|_| {
-        AppError::new(
-            "KEYCHAIN_UNAVAILABLE",
-            "install identity Keychain operation failed [REDACTED]",
-        )
-    })?;
-    bytes.try_into().map_err(|_| {
-        AppError::new(
-            "GATEWAY_IDENTITY_KEY_INVALID",
-            "install identity key has an invalid length",
-        )
-    })
 }
 
 #[cfg(not(target_os = "macos"))]

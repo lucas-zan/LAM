@@ -48,7 +48,7 @@ pub(crate) fn timestamp_yyyymmdd_hhmmss() -> String {
 }
 
 pub(crate) fn config_root(home_root: &Path) -> PathBuf {
-    home_root.join(".config/agent-workspace")
+    super::lam_paths::LamPaths::for_home(home_root).config_root()
 }
 
 pub(crate) fn auth_metadata_dir(home_root: &Path) -> PathBuf {
@@ -260,6 +260,13 @@ pub const DEFAULT_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS: u64 = 60;
 pub const MIN_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS: u64 = 10;
 pub const MAX_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECONDS: u64 = 600;
 
+/// Per-request hard deadline for a single Gateway proxied call (queue wait +
+/// upstream handling + streaming). Defaults to 20 minutes; a long coding task
+/// spans many independent requests, so this only bounds a single call.
+pub const DEFAULT_GATEWAY_REQUEST_TIMEOUT_SECONDS: u64 = 20 * 60;
+pub const MIN_GATEWAY_REQUEST_TIMEOUT_SECONDS: u64 = 5 * 60;
+pub const MAX_GATEWAY_REQUEST_TIMEOUT_SECONDS: u64 = 60 * 60;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum CodexLaunchPermissionPreset {
@@ -346,6 +353,53 @@ pub fn set_gateway_first_response_timeout_seconds(home_root: &Path, seconds: u64
     if let Some(object) = settings.as_object_mut() {
         object.insert(
             "gatewayFirstResponseTimeoutSeconds".into(),
+            serde_json::Value::from(seconds),
+        );
+    }
+    write_file_private(&settings_path, &settings.to_string())
+}
+
+pub fn gateway_request_timeout_seconds(home_root: &Path) -> u64 {
+    let settings_path = settings_file_path(home_root);
+    let Ok(content) = fs::read_to_string(settings_path) else {
+        return DEFAULT_GATEWAY_REQUEST_TIMEOUT_SECONDS;
+    };
+    let Ok(settings) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return DEFAULT_GATEWAY_REQUEST_TIMEOUT_SECONDS;
+    };
+    settings
+        .get("gatewayRequestTimeoutSeconds")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|value| {
+            (MIN_GATEWAY_REQUEST_TIMEOUT_SECONDS..=MAX_GATEWAY_REQUEST_TIMEOUT_SECONDS)
+                .contains(value)
+        })
+        .unwrap_or(DEFAULT_GATEWAY_REQUEST_TIMEOUT_SECONDS)
+}
+
+pub fn set_gateway_request_timeout_seconds(home_root: &Path, seconds: u64) -> Result<()> {
+    if !(MIN_GATEWAY_REQUEST_TIMEOUT_SECONDS..=MAX_GATEWAY_REQUEST_TIMEOUT_SECONDS)
+        .contains(&seconds)
+    {
+        return Err(AppError::new(
+            "GATEWAY_TIMEOUT_CONFIG_INVALID",
+            "Gateway request timeout must be between 300 and 3600 seconds",
+        ));
+    }
+    let settings_path = settings_file_path(home_root);
+    let config_dir = config_root(home_root);
+    fs::create_dir_all(&config_dir)?;
+    let mut settings = if settings_path.exists() {
+        fs::read_to_string(&settings_path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .unwrap_or_else(|| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    if let Some(object) = settings.as_object_mut() {
+        object.insert(
+            "gatewayRequestTimeoutSeconds".into(),
             serde_json::Value::from(seconds),
         );
     }

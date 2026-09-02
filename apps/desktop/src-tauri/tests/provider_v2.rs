@@ -22,6 +22,7 @@ fn responses_input(id: &str) -> ProviderInput {
             id: "model-a".into(),
             label: "Model A".into(),
             capabilities: None,
+            context_window: None,
         }],
         upstream_auth: UpstreamAuth::Bearer {
             source: CredentialSource::Env {

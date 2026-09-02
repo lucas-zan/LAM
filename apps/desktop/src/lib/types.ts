@@ -606,7 +606,7 @@ export type ProviderDefinitionV2 = {
   protocol: ProviderProtocolV2;
   baseUrl: string;
   defaultModel: string;
-  models: Array<{ id: string; label: string }>;
+  models: Array<{ id: string; label: string; contextWindow?: number }>;
   upstreamAuth: UpstreamAuthV2;
   adapter: AdapterV2;
   compatibilityProfile?: string;
@@ -618,6 +618,7 @@ export type ProviderDefinitionV2 = {
     routeViaGateway?: boolean;
     queryParams: Record<string, string>;
     envHttpHeaders: Record<string, string>;
+    reasoningEffort?: string;
   };
 };
 
@@ -643,7 +644,7 @@ export type DiscoverProviderModelsRequestV2 = {
 };
 
 export type DiscoverProviderModelsViewV2 = {
-  models: Array<{ id: string; label: string }>;
+  models: Array<{ id: string; label: string; contextWindow?: number }>;
 };
 
 export type ApproveAuthCommandRequestV2 = {
@@ -672,7 +673,7 @@ export type ProviderProfileViewV2 = {
   protocol: ProviderProtocolV2;
   baseUrl: string;
   defaultModel: string;
-  models: Array<{ id: string; label: string }>;
+  models: Array<{ id: string; label: string; contextWindow?: number }>;
   upstreamAuth: UpstreamAuthV2;
   adapter: AdapterV2;
   compatibilityProfile?: string;
@@ -776,6 +777,7 @@ export type ApiAccountConnectionViewV2 = {
   providerStoreRevision: number;
   apiKeyConfigured: boolean;
   models: ProviderModelV2[];
+  reasoningEffort?: string;
 };
 
 export type UpdateApiAccountConnectionRequestV2 = {
@@ -785,6 +787,7 @@ export type UpdateApiAccountConnectionRequestV2 = {
   apiKey?: string;
   models?: ProviderModelV2[];
   selectedModel?: string;
+  reasoningEffort?: string;
 };
 
 export type ProfileAttachPlanViewV2 = {

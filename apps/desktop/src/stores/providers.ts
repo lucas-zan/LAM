@@ -264,17 +264,10 @@ export const useProviderStore = create<ProviderState>()((set, get) => ({
   },
 
   refreshProviderModels: async (providerId) => {
-    try {
-      const provider = await api.refreshProviderModelsV2({
-        providerId,
-        expectedRevision: requiredProviderStoreRevision(get()),
-      });
-      useAppStore.getState().setStatus(`Fetched ${provider.models.length} models`);
-      return provider;
-    } catch (error) {
-      useAppStore.getState().setError(formatError(error));
-      throw error;
-    }
+    return api.refreshProviderModelsV2({
+      providerId,
+      expectedRevision: requiredProviderStoreRevision(get()),
+    });
   },
 
   previewAttach: async (req) => {

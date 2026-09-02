@@ -187,3 +187,43 @@ describe('ProviderCenter integrated flow', () => {
     expect(api.createProviderWithKeychainV2).not.toHaveBeenCalled();
   });
 });
+
+  it('round-trips model context windows through the Provider editor', async () => {
+    const withWindow: ProviderProfileViewV2 = {
+      ...provider,
+      models: [
+        { id: 'model-a', label: 'Model A', contextWindow: 272_000 },
+        { id: 'model-b', label: 'Model B' },
+      ],
+    };
+    useProviderStore.setState({
+      providers: [withWindow],
+      providerStoreRevision: 4,
+    });
+    vi.mocked(api.listProvidersV2).mockResolvedValue({
+      revision: 4,
+      providers: [withWindow],
+    });
+    vi.mocked(api.updateProviderV2).mockResolvedValue({ ...withWindow, storeRevision: 5 });
+
+    render(<ProviderCenter profiles={['profile-a']} onAddExternalApi={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const modelsField = screen.getByLabelText('Models') as HTMLTextAreaElement;
+    expect(modelsField.value).toBe('model-a:272000, model-b');
+
+    fireEvent.change(modelsField, { target: { value: 'model-a:300000, model-b' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Provider' }));
+
+    await waitFor(() =>
+      expect(api.updateProviderV2).toHaveBeenCalledWith({
+        expectedRevision: 4,
+        provider: expect.objectContaining({
+          models: [
+            { id: 'model-a', label: 'model-a', contextWindow: 300_000 },
+            { id: 'model-b', label: 'model-b', contextWindow: undefined },
+          ],
+        }),
+      }),
+    );
+  });

@@ -54,6 +54,8 @@ pub struct ProviderModel {
     pub id: String,
     pub label: String,
     pub capabilities: Option<CapabilityDeclaration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -77,6 +79,10 @@ pub struct CodexProviderOptions {
     pub route_via_gateway: bool,
     pub query_params: BTreeMap<String, String>,
     pub env_http_headers: BTreeMap<String, String>,
+    /// Default reasoning effort written to the Codex config top level
+    /// (`model_reasoning_effort`). None keeps the built-in default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -291,6 +297,7 @@ pub fn migrate_legacy_provider_array(bytes: &[u8], now: &str) -> Result<LegacyPr
             id: item.default_model.clone(),
             label: item.default_model.clone(),
             capabilities: None,
+            context_window: None,
         };
         providers.push(build_provider(
             ProviderInput {

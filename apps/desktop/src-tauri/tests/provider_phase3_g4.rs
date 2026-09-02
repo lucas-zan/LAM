@@ -169,6 +169,7 @@ async fn deepseek_attach_real_gateway_codex_requests_and_detach() {
                 id: "deepseek-chat".into(),
                 label: "DeepSeek Chat".into(),
                 capabilities: None,
+                context_window: None,
             }],
             upstream_auth: UpstreamAuth::Bearer {
                 source: CredentialSource::Env {

@@ -17,6 +17,7 @@ fn provider(protocol: ProviderProtocol) -> ProviderProfileV2 {
             id: "model-a".into(),
             label: "A".into(),
             capabilities: None,
+            context_window: None,
         }],
         upstream_auth: UpstreamAuth::Bearer {
             source: CredentialSource::Env {
@@ -264,5 +265,56 @@ fn issued_plan_expires_and_rejects_replay_tamper_and_stale_state() {
             .unwrap_err()
             .code,
         "ATTACH_PLAN_EXPIRED"
+    );
+}
+
+#[test]
+fn attach_plan_projects_model_context_window_and_compact_threshold() {
+    let mut source = provider(ProviderProtocol::ChatCompletions);
+    source.models[0].context_window = Some(272_000);
+    let route = plan_provider_route(RoutePlanInput {
+        provider: source,
+        selected_model: "model-a".into(),
+        adapters: AdapterCatalog::standard(),
+    });
+    let plan = plan_profile_attach(route, context());
+    assert_eq!(plan.config_projection.model_context_window, Some(272_000));
+    // 90% native Codex default threshold.
+    assert_eq!(
+        plan.config_projection.model_auto_compact_token_limit,
+        Some(244_800)
+    );
+}
+
+#[test]
+fn attach_plan_omits_context_window_for_unknown_models() {
+    let source = provider(ProviderProtocol::ChatCompletions);
+    // No declared window and the slug is not in the bundled Codex catalog.
+    let route = plan_provider_route(RoutePlanInput {
+        provider: source,
+        selected_model: "model-a".into(),
+        adapters: AdapterCatalog::standard(),
+    });
+    let plan = plan_profile_attach(route, context());
+    assert_eq!(plan.config_projection.model_context_window, None);
+    assert_eq!(plan.config_projection.model_auto_compact_token_limit, None);
+}
+
+#[test]
+fn attach_plan_uses_bundled_catalog_window_for_official_model_slugs() {
+    let mut source = provider(ProviderProtocol::ChatCompletions);
+    source.models[0].id = "gpt-5.6-sol".into();
+    source.models[0].label = "GPT 5.6 Sol".into();
+    source.models[0].context_window = None;
+    let route = plan_provider_route(RoutePlanInput {
+        provider: source,
+        selected_model: "gpt-5.6-sol".into(),
+        adapters: AdapterCatalog::standard(),
+    });
+    let plan = plan_profile_attach(route, context());
+    assert_eq!(plan.config_projection.model_context_window, Some(272_000));
+    assert_eq!(
+        plan.config_projection.model_auto_compact_token_limit,
+        Some(244_800)
     );
 }

@@ -514,7 +514,7 @@ fn remove_session_index_entries(codex_home: &Path, session_ids: &[String]) -> Re
             serde_json::from_str::<Value>(line)
                 .ok()
                 .and_then(|value| value.get("id").and_then(Value::as_str).map(str::to_string))
-                .map_or(true, |id| !ids.contains(id.as_str()))
+                .is_none_or(|id| !ids.contains(id.as_str()))
         })
         .collect::<Vec<_>>();
     let updated = if retained.is_empty() {
@@ -705,6 +705,47 @@ fn compare_session_files(left: &SessionFile, right: &SessionFile) -> Ordering {
         .then_with(|| left.path.cmp(&right.path))
 }
 
+fn normalize_cwd(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let raw = if let Some(rest) = trimmed.strip_prefix("file://") {
+        rest.strip_prefix("localhost").unwrap_or(rest)
+    } else {
+        trimmed
+    };
+    // percent-decode URI escapes (e.g. %20 -> space), keep other chars intact.
+    let mut out = String::with_capacity(raw.len());
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                out.push((h << 4 | l) as char);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn build_session_with_protection(
     account: &CodexAccount,
     thread_names: &HashMap<String, String>,
@@ -768,7 +809,8 @@ fn build_session_with_protection(
                 "workingDirectory",
                 "current_dir",
             ],
-        ),
+        )
+        .and_then(|value| normalize_cwd(&value)),
         summary: extract_json_string(
             &snippet,
             &["summary", "title", "text", "content", "message"],
@@ -868,4 +910,31 @@ fn parse_json_string_value(input: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod cwd_normalize_tests {
+    use super::normalize_cwd;
+
+    #[test]
+    fn file_uri_is_converted_to_plain_path() {
+        assert_eq!(
+            normalize_cwd("file:///Users/zhanhd/Projects/My%20App"),
+            Some("/Users/zhanhd/Projects/My App".to_string())
+        );
+        assert_eq!(
+            normalize_cwd("file://localhost/Users/zhanhd/a"),
+            Some("/Users/zhanhd/a".to_string())
+        );
+    }
+
+    #[test]
+    fn plain_paths_pass_through() {
+        assert_eq!(
+            normalize_cwd("/Users/zhanhd/code"),
+            Some("/Users/zhanhd/code".to_string())
+        );
+        assert_eq!(normalize_cwd(""), None);
+        assert_eq!(normalize_cwd("   "), None);
+    }
 }

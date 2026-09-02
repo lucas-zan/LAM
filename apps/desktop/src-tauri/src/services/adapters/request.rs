@@ -194,7 +194,8 @@ pub fn translate_responses_request_with_history_and_context(
             content: instructions.clone(),
         });
     }
-    messages.extend(translate_items(&source.input, policy, history, &context)?);
+    let translated = translate_items(&source.input, policy, history, &context)?;
+    messages.extend(hoist_system_messages(translated));
     Ok(TranslatedChatRequest {
         request: ChatCompletionRequest {
             model: bound_model.to_owned(),
@@ -285,32 +286,38 @@ fn validate_request(
     validate_role_order(&source.input)
 }
 
-fn validate_role_order(items: &[ResponsesInputItem]) -> Result<(), AdapterRequestError> {
-    let mut dialogue_started = false;
-    for (index, item) in items.iter().enumerate() {
-        if matches!(
-            item,
-            ResponsesInputItem::AdditionalTools { .. } | ResponsesInputItem::Reasoning { .. }
-        ) {
-            continue;
-        }
-        let ResponsesInputItem::Message { role, .. } = item else {
-            dialogue_started = true;
-            continue;
+/// System/developer messages may appear anywhere in Codex's Responses
+/// history (Codex re-injects turn-level developer context at arbitrary
+/// positions). Chat Completions compatibility expects them at the front,
+/// so they are normalized (deduplicated + hoisted) during translation
+/// instead of being rejected here.
+fn validate_role_order(_items: &[ResponsesInputItem]) -> Result<(), AdapterRequestError> {
+    Ok(())
+}
+
+fn hoist_system_messages(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    let mut system = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut rest = Vec::with_capacity(messages.len());
+    for message in messages {
+        let content = match &message {
+            ChatMessage::System { content } => Some(content.as_str()),
+            ChatMessage::Developer { content } => Some(content.as_str()),
+            _ => None,
         };
-        if matches!(role, ResponsesRole::System | ResponsesRole::Developer) {
-            if dialogue_started {
-                return Err(AdapterRequestError::new(
-                    AdapterRequestErrorCode::InvalidRoleOrder,
-                    format!("$.input[{index}].role"),
-                    "system and developer messages must precede dialogue history",
-                ));
+        match content {
+            Some(content) => {
+                // All system/developer messages (leading or mid-dialogue) are
+                // hoisted to the front in their original relative order;
+                // identical repeats are deduplicated by content.
+                if seen.insert(content.to_owned()) {
+                    system.push(message);
+                }
             }
-        } else {
-            dialogue_started = true;
+            None => rest.push(message),
         }
     }
-    Ok(())
+    system.into_iter().chain(rest).collect()
 }
 
 fn translate_items(
@@ -1157,6 +1164,7 @@ fn append_namespace_tools(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_function_tool(
     translated: &mut Vec<ChatTool>,
     context: &mut ToolTranslationContext,

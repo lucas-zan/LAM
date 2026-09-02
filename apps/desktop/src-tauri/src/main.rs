@@ -39,6 +39,7 @@ fn main() {
         })
         .setup(|app| {
             let home = localagentmanager_core::resolve_home_root()?;
+            let _ = localagentmanager_core::lam_paths::migrate_legacy_lam_data(&home);
             localagentmanager_core::recover_provider_transactions_service_v2(
                 &home,
                 chrono::Utc::now().timestamp_millis().max(0) as u64,
@@ -48,6 +49,7 @@ fn main() {
                 chrono::Utc::now().timestamp_millis().max(0) as u64,
             )?;
             localagentmanager_core::repair_managed_wrappers(&home)?;
+            let _ = localagentmanager_core::repair_stale_codex_auth_projections_service_v2(&home);
             let supervisor_home = home.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(error) =
@@ -172,6 +174,8 @@ fn main() {
             commands::set_auth_mode,
             commands::get_gateway_first_response_timeout_seconds,
             commands::set_gateway_first_response_timeout_seconds,
+            commands::get_gateway_request_timeout_seconds,
+            commands::set_gateway_request_timeout_seconds,
             commands::get_codex_launch_permission_preset,
             commands::set_codex_launch_permission_preset,
             commands::get_antigravity_port,

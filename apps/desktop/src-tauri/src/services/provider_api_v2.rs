@@ -11,9 +11,10 @@ use super::provider_capability::{
     EffectiveCapabilities,
 };
 use super::provider_config_editor::{
-    config_hash, detach_projection, replace_config_file, validate_managed_projection,
-    ConfigManagedProjection,
+    config_hash, detach_projection, replace_config_file, replace_provider_auth,
+    validate_managed_projection, ConfigManagedProjection,
 };
+use super::provider_credentials::DirectCodexAuth;
 use super::provider_credentials::{
     resolve_credential, CredentialSource, ProcessEnvironment, SecretValue, UpstreamAuth,
 };
@@ -85,7 +86,8 @@ impl ProviderCredentialResolver for ProductionCredentialResolver<'_> {
             CredentialSource::Env { .. } => resolve_credential(source, &ProcessEnvironment),
             CredentialSource::Keychain { .. } => {
                 let reference = KeychainCredentialReference::try_from(source)?;
-                let service = KeychainCredentialService::new(Arc::new(SystemKeychainBackend));
+                let stores = provider_hub_stores(self.home_root)?;
+                let service = KeychainCredentialService::system_with_plaintext(&stores.root);
                 service.with_secret(&reference, |value| {
                     SecretValue::from_sensitive(value.into())
                 })
@@ -99,8 +101,10 @@ impl ProviderCredentialResolver for ProductionCredentialResolver<'_> {
                         "auth command install identity is unavailable",
                     ));
                 }
-                let identity_key =
-                    load_or_create_provider_install_identity(&state.value.install_id)?;
+                let identity_key = load_or_create_provider_install_identity(
+                    &stores.root,
+                    &state.value.install_id,
+                )?;
                 let repository = AuthCommandApprovalRepository::new(VersionedFileStore::<
                     AuthCommandApprovalCollection,
                 >::new(
@@ -225,6 +229,8 @@ pub enum AdapterDto {
 pub struct ProviderModelDto {
     pub id: String,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -244,6 +250,8 @@ pub struct CodexOptionsDto {
     pub query_params: BTreeMap<String, String>,
     #[serde(default)]
     pub env_http_headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -314,6 +322,7 @@ impl ProviderDefinitionDto {
                     id: model.id.clone(),
                     label: model.label.clone(),
                     capabilities: None,
+                    context_window: model.context_window,
                 })
                 .collect(),
             upstream_auth: self.upstream_auth.to_domain()?,
@@ -336,6 +345,7 @@ impl ProviderDefinitionDto {
                 route_via_gateway: self.codex.route_via_gateway,
                 query_params: self.codex.query_params.clone(),
                 env_http_headers: self.codex.env_http_headers.clone(),
+                reasoning_effort: self.codex.reasoning_effort.clone(),
             },
         })
     }
@@ -529,6 +539,7 @@ impl ProviderProfileView {
                 .map(|model| ProviderModelDto {
                     id: model.id.clone(),
                     label: model.label.clone(),
+                    context_window: model.context_window,
                 })
                 .collect(),
             upstream_auth,
@@ -551,6 +562,7 @@ impl ProviderProfileView {
                 route_via_gateway: provider.codex.route_via_gateway,
                 query_params: provider.codex.query_params.clone(),
                 env_http_headers: provider.codex.env_http_headers.clone(),
+                reasoning_effort: provider.codex.reasoning_effort.clone(),
             },
             store_revision,
             used_by,
@@ -661,6 +673,7 @@ impl LegacyCreateProviderRequest {
                     models: vec![ProviderModelDto {
                         id: self.default_model.clone(),
                         label: self.default_model,
+                        context_window: None,
                     }],
                     upstream_auth,
                     adapter: AdapterDto::None,
@@ -814,6 +827,8 @@ pub struct ApiAccountConnectionViewV2 {
     pub provider_store_revision: u64,
     pub api_key_configured: bool,
     pub models: Vec<ProviderModelDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, Eq)]
@@ -828,6 +843,8 @@ pub struct UpdateApiAccountConnectionRequestV2 {
     pub models: Option<Vec<ProviderModelDto>>,
     #[serde(default)]
     pub selected_model: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 impl std::fmt::Debug for UpdateApiAccountConnectionRequestV2 {
@@ -843,6 +860,7 @@ impl std::fmt::Debug for UpdateApiAccountConnectionRequestV2 {
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .field("models", &self.models)
             .field("selected_model", &self.selected_model)
+            .field("reasoning_effort", &self.reasoning_effort)
             .finish()
     }
 }
@@ -989,11 +1007,39 @@ impl StructuredErrorView {
             _ => Vec::new(),
         };
         Self {
-            code: error.code,
-            message: "Operation failed; sensitive diagnostics are redacted".into(),
+            code: error.code.clone(),
+            message: user_safe_error_message(&error),
             recoverable: error.recoverable,
             recovery_actions,
         }
+    }
+}
+
+fn user_safe_error_message(error: &AppError) -> String {
+    match error.code.as_str() {
+        "PROVIDER_DIRECT_ROUTE_REQUIRED" | "PROVIDER_MODEL_FETCH_UNSUPPORTED" => {
+            "Model fetch is not supported for this connection type.".into()
+        }
+        "PROVIDER_CREDENTIAL_MISSING" => {
+            "API key is missing. Enter your API key under Connection, save, then try again.".into()
+        }
+        "STORE_REVISION_CONFLICT" => {
+            "Configuration changed elsewhere. Close and reopen this editor, then try again.".into()
+        }
+        "PROVIDER_MODEL_DISCOVERY_UNAVAILABLE" => {
+            "Could not reach the models endpoint. Check Base URL and network.".into()
+        }
+        "PROVIDER_MODEL_DISCOVERY_HTTP_ERROR"
+        | "PROVIDER_MODEL_DISCOVERY_JSON_INVALID"
+        | "PROVIDER_MODEL_DISCOVERY_SCHEMA_INVALID"
+        | "PROVIDER_MODEL_DISCOVERY_EMPTY"
+        | "PROVIDER_MODEL_DISCOVERY_RESPONSE_INVALID"
+        | "PROVIDER_MODEL_DISCOVERY_RESPONSE_LIMIT"
+        | "PROVIDER_MODEL_DISCOVERY_MODEL_LIMIT" => error.message.clone(),
+        "PROVIDER_AUTH_UNSUPPORTED" => {
+            "Model fetch requires bearer authentication with a configured API key.".into()
+        }
+        _ => "Operation failed; sensitive diagnostics are redacted".into(),
     }
 }
 
@@ -1131,7 +1177,7 @@ pub fn recover_provider_transactions_at_root_service_v2(
     let stores = provider_hub_stores_at_root(root)?;
     let gateway = GatewayBindingService::new(
         stores.gateway_bindings,
-        KeychainCredentialService::new(Arc::new(SystemKeychainBackend)),
+        KeychainCredentialService::system_with_plaintext(&stores.root),
     );
     let coordinator = AttachTransactionCoordinator::new(
         stores.lock,
@@ -1221,6 +1267,140 @@ pub fn migrate_native_responses_bindings_with_keychain_service_v2<B: KeychainBac
     migrated_profiles.sort();
     migrated_profiles.dedup();
     Ok(NativeResponsesMigrationReportV2 { migrated_profiles })
+}
+
+/// Rewrites Codex `lam-auth-helper` auth projections when the Provider Hub
+/// root changed (for example after `~/.lam` migration).
+pub fn repair_stale_codex_auth_projections_service_v2(home_root: &Path) -> Result<Vec<String>> {
+    let state_root =
+        super::provider_runtime::ProviderHubPaths::for_home(home_root).ensure_canonical_root()?;
+    let stores = provider_hub_stores(home_root)?;
+    let mut snapshot = stores.bindings.load_or_default()?;
+    let mut repaired = Vec::new();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    for binding in snapshot.value.bindings.iter_mut() {
+        let path = PathBuf::from(&binding.config_projection.config_path);
+        let source = match fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(_) => continue,
+        };
+        let provider_table_id = binding
+            .config_projection
+            .managed_values
+            .get("model_provider")
+            .map(|value| value.trim_matches('"').to_owned())
+            .unwrap_or_else(|| binding.provider_id.clone());
+        let Some((command, mut args)) =
+            codex_auth_command_from_config(&source, &provider_table_id)
+        else {
+            continue;
+        };
+        if !codex_auth_projection_stale(&command, &args, &state_root) {
+            continue;
+        }
+        if validate_managed_projection(&source, &provider_table_id, &binding.config_projection.managed_values).is_err() {
+            continue;
+        }
+        if let Some(index) = auth_state_root_arg_index(&args) {
+            args[index] = state_root.to_string_lossy().into_owned();
+        } else {
+            continue;
+        }
+        let mut document = match source.parse::<DocumentMut>() {
+            Ok(document) => document,
+            Err(_) => continue,
+        };
+        let auth_managed = match replace_provider_auth(
+            &mut document,
+            &provider_table_id,
+            &DirectCodexAuth::AuthCommand {
+                approval_id: String::new(),
+                command,
+                args,
+            },
+        ) {
+            Ok(Some(auth)) => auth,
+            _ => continue,
+        };
+        let after = document.to_string();
+        if after.parse::<toml::Value>().is_err() {
+            continue;
+        }
+        let after_hash = config_hash(after.as_bytes());
+        if let Err(error) =
+            replace_config_file(&path, &binding.config_projection.applied_hash, &after)
+        {
+            eprintln!(
+                "repair_stale_codex_auth_projections: {}: {}",
+                binding.profile_id, error.code
+            );
+            continue;
+        }
+        binding.config_projection.applied_hash = after_hash;
+        binding
+            .config_projection
+            .managed_values
+            .insert("auth".into(), auth_managed);
+        binding.revision += 1;
+        binding.updated_at = now.clone();
+        repaired.push(binding.profile_id.clone());
+    }
+
+    if !repaired.is_empty() {
+        snapshot.revision += 1;
+        stores
+            .bindings
+            .compare_and_swap(snapshot.revision - 1, &snapshot.value)?;
+    }
+    Ok(repaired)
+}
+
+fn codex_auth_command_from_config(source: &str, provider_table_id: &str) -> Option<(String, Vec<String>)> {
+    let document = source.parse::<DocumentMut>().ok()?;
+    let auth = document
+        .get("model_providers")?
+        .get(provider_table_id)?
+        .get("auth")?;
+    let command = auth.get("command")?.as_str()?.to_owned();
+    let args = auth
+        .get("args")?
+        .as_array()?
+        .iter()
+        .filter_map(|value| value.as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    Some((command, args))
+}
+
+fn codex_auth_projection_stale(command: &str, args: &[String], expected_state_root: &Path) -> bool {
+    if !Path::new(command).is_file() {
+        return true;
+    }
+    let mode = args.first().map(String::as_str);
+    if mode == Some("keychain-token") {
+        return false;
+    }
+    if mode != Some("gateway-token") && mode != Some("approved-command-token") {
+        return true;
+    }
+    let Some(index) = auth_state_root_arg_index(args) else {
+        return true;
+    };
+    !paths_refer_to_same_location(Path::new(&args[index]), expected_state_root)
+}
+
+fn auth_state_root_arg_index(args: &[String]) -> Option<usize> {
+    if args.len() != 7 || args[1] != "--state-root" {
+        return None;
+    }
+    Some(2)
+}
+
+fn paths_refer_to_same_location(left: &Path, right: &Path) -> bool {
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
 }
 
 fn migrate_native_model_catalog_config(
@@ -1904,35 +2084,31 @@ pub fn approve_auth_command_system_service_v2(
             &chrono::Utc::now().to_rfc3339(),
         )?
     };
-    let identity_key = load_or_create_provider_install_identity(&state.value.install_id)?;
+    let identity_key = load_or_create_provider_install_identity(
+        &provider_hub_stores(home_root)?.root,
+        &state.value.install_id,
+    )?;
     approve_auth_command_service_v2_with_key(home_root, request, &identity_key)
 }
 
 #[cfg(target_os = "macos")]
-fn load_or_create_provider_install_identity(install_id: &str) -> Result<[u8; 32]> {
-    use rand::RngCore;
-    use security_framework::passwords::{get_generic_password, set_generic_password};
-    const SERVICE: &str = "dev.localagentmanager.desktop.provider-hub";
-    let bytes = match get_generic_password(SERVICE, install_id) {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            let mut bytes = [0_u8; 32];
-            rand::rngs::OsRng.fill_bytes(&mut bytes);
-            set_generic_password(SERVICE, install_id, &bytes).map_err(|_| {
-                AppError::new(
-                    "KEYCHAIN_UNAVAILABLE",
-                    "install identity Keychain operation failed [REDACTED]",
-                )
-            })?;
-            bytes.to_vec()
-        }
+fn load_or_create_provider_install_identity(
+    provider_hub_root: &std::path::Path,
+    install_id: &str,
+) -> Result<[u8; 32]> {
+    use crate::services::gateway::identity::{
+        load_or_create_install_identity, SystemInstallIdentityStore,
     };
-    bytes.try_into().map_err(|_| {
-        AppError::new(
-            "GATEWAY_IDENTITY_KEY_INVALID",
-            "install identity key has an invalid length",
-        )
-    })
+    use rand::RngCore;
+    load_or_create_install_identity(
+        &SystemInstallIdentityStore::new(provider_hub_root.join("install-identity.json")),
+        install_id,
+        || {
+            let mut identity = [0_u8; 32];
+            rand::rngs::OsRng.fill_bytes(&mut identity);
+            identity
+        },
+    )
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1963,18 +2139,26 @@ pub fn update_provider_service_v2(
     now: &str,
 ) -> Result<ProviderProfileView> {
     let stores = provider_hub_stores(home_root)?;
-    if stores
+    let attached = stores
         .bindings
         .load_or_default()?
         .value
         .bindings
         .iter()
-        .any(|binding| binding.provider_id == request.provider.id)
-    {
-        return Err(AppError::new(
-            "PROVIDER_HAS_BINDINGS_REBIND_REQUIRED",
-            "attached Provider changes require an explicit rebind plan",
-        ));
+        .any(|binding| binding.provider_id == request.provider.id);
+    if attached {
+        // Attached Providers may only be updated in non-destructive ways:
+        // context window declarations and the default reasoning effort. Any
+        // other change (base URL, auth, adapter, model set) requires an
+        // explicit detach/attach cycle.
+        let previous_snapshot = stores.providers.load_or_default()?;
+        let previous = previous_snapshot
+            .value
+            .providers
+            .iter()
+            .find(|item| item.id == request.provider.id)
+            .ok_or_else(|| AppError::new("PROVIDER_NOT_FOUND", &request.provider.id))?;
+        validate_attached_provider_update(previous, &request.provider)?;
     }
     let snapshot = ProviderRepository::new(stores.providers).update(
         request.expected_revision,
@@ -1996,6 +2180,9 @@ pub fn update_provider_service_v2(
         .filter(|binding| binding.provider_id == provider.id)
         .map(|binding| binding.profile_id.clone())
         .collect();
+    if attached {
+        reproject_attached_settings(home_root, provider, now)?;
+    }
     let mut view = ProviderProfileView::from_domain(provider, snapshot.revision, used_by);
     apply_provider_readiness(
         &mut view,
@@ -2007,6 +2194,132 @@ pub fn update_provider_service_v2(
         super::provider_runtime::resolve_auth_helper_executable().is_ok(),
     );
     Ok(view)
+}
+
+/// After a non-destructive attached-Provider update, write the resolved
+/// `model_context_window`/`model_auto_compact_token_limit` and
+/// `model_reasoning_effort` into every bound account's config.toml and keep
+/// the binding's projection hashes in sync.
+fn reproject_attached_settings(
+    home_root: &Path,
+    provider: &ProviderProfileV2,
+    now: &str,
+) -> Result<()> {
+    use super::provider_planner::{plan_provider_route, RoutePlanInput};
+    let stores = provider_hub_stores(home_root)?;
+    let mut binding_snapshot = stores.bindings.load_or_default()?;
+    let mut changed = false;
+    for binding in binding_snapshot
+        .value
+        .bindings
+        .iter_mut()
+        .filter(|binding| binding.provider_id == provider.id)
+    {
+        let route = plan_provider_route(RoutePlanInput {
+            provider: provider.clone(),
+            selected_model: binding.selected_model.clone(),
+            adapters: super::provider_planner::AdapterCatalog::standard(),
+        });
+        let context_window = super::provider_planner::resolve_model_context_window(&route);
+        let source = fs::read_to_string(&binding.config_projection.config_path).map_err(|_| {
+            AppError::new(
+                "CODEX_CONFIG_MISSING",
+                "managed Codex config is unavailable",
+            )
+        })?;
+        validate_managed_projection(
+            &source,
+            &binding.provider_id,
+            &binding.config_projection.managed_values,
+        )?;
+        let mut document = source
+            .parse::<DocumentMut>()
+            .map_err(|error| AppError::new("CODEX_CONFIG_INVALID", error.to_string()))?;
+        match context_window {
+            Some(window) => {
+                document["model_context_window"] = value(window);
+                document["model_auto_compact_token_limit"] =
+                    value(super::provider_planner::compact_threshold(window));
+            }
+            None => {
+                document.as_table_mut().remove("model_context_window");
+                document
+                    .as_table_mut()
+                    .remove("model_auto_compact_token_limit");
+            }
+        }
+        match &provider.codex.reasoning_effort {
+            Some(effort) => {
+                document["model_reasoning_effort"] = value(effort.as_str());
+            }
+            None => {
+                document.as_table_mut().remove("model_reasoning_effort");
+            }
+        }
+        let after = document.to_string();
+        after
+            .parse::<toml::Value>()
+            .map_err(|error| AppError::new("CODEX_CONFIG_INVALID", error.to_string()))?;
+        fs::write(&binding.config_projection.config_path, after.as_bytes()).map_err(|error| {
+            AppError::new(
+                "CODEX_CONFIG_WRITE_FAILED",
+                format!("could not write Codex config: {error}"),
+            )
+        })?;
+        // Keep the applied hash in sync so future attach/detach operations
+        // see a consistent projection. The three settings keys are *not*
+        // added to `managed_values`: they remain user-adjustable in the
+        // config file (manual edits do not count as drift) and are only
+        // re-written by this reprojection path.
+        binding.config_projection.applied_hash =
+            super::provider_config_editor::config_hash(after.as_bytes());
+        binding.revision += 1;
+        binding.updated_at = now.into();
+        changed = true;
+    }
+    if changed {
+        binding_snapshot.revision += 1;
+        stores
+            .bindings
+            .compare_and_swap(binding_snapshot.revision - 1, &binding_snapshot.value)?;
+    }
+    Ok(())
+}
+
+/// Allow only non-destructive updates for attached Providers: per-model
+/// `context_window` declarations and the provider-level `reasoning_effort`.
+/// These are re-projected into each bound account's config.toml without
+/// requiring a detach/attach cycle.
+fn validate_attached_provider_update(
+    previous: &ProviderProfileV2,
+    next: &ProviderDefinitionDto,
+) -> Result<()> {
+    let next_domain = next.to_domain()?;
+    let fields_changed = previous.name != next_domain.name
+        || previous.protocol != next_domain.protocol
+        || previous.base_url != next_domain.base_url
+        || previous.default_model != next_domain.default_model
+        || previous.upstream_auth != next_domain.upstream_auth
+        || previous.adapter != next_domain.adapter
+        || previous.compatibility_profile != next_domain.compatibility_profile
+        || previous.models.len() != next_domain.models.len()
+        || previous
+            .models
+            .iter()
+            .zip(next_domain.models.iter())
+            .any(|(left, right)| {
+                // `context_window` is explicitly allowed to change.
+                left.id != right.id
+                    || left.label != right.label
+                    || left.capabilities != right.capabilities
+            });
+    if fields_changed {
+        return Err(AppError::new(
+            "PROVIDER_HAS_BINDINGS_REBIND_REQUIRED",
+            "attached Provider changes require an explicit rebind plan",
+        ));
+    }
+    Ok(())
 }
 
 pub fn delete_provider_service_v2(
@@ -2052,7 +2365,8 @@ pub fn delete_provider_service_v2(
     };
     if let Some(source) = source {
         if let Ok(reference) = KeychainCredentialReference::try_from(&source) {
-            KeychainCredentialService::new(Arc::new(SystemKeychainBackend)).revoke(&reference)?;
+            let stores = provider_hub_stores(home_root)?;
+            KeychainCredentialService::system_with_plaintext(&stores.root).revoke(&reference)?;
         }
     }
 
@@ -2320,6 +2634,7 @@ pub fn refresh_provider_models_service_v2_with_resolver(
             id: model.id,
             label: model.label,
             capabilities: None,
+            context_window: None,
         })
         .collect::<Vec<_>>();
     let default_model = if models
@@ -2513,16 +2828,21 @@ fn probe_provider_upstream_service_v2(
     })
 }
 
+fn provider_supports_live_model_fetch(provider: &ProviderProfileV2) -> bool {
+    match provider.protocol {
+        ProviderProtocol::ChatCompletions => true,
+        ProviderProtocol::Responses => matches!(provider.adapter, AdapterConfig::None),
+    }
+}
+
 fn fetch_provider_models(
     provider: &ProviderProfileV2,
     resolver: &dyn ProviderCredentialResolver,
 ) -> Result<Vec<super::provider_model_discovery::DiscoveredProviderModelV2>> {
-    if provider.protocol != ProviderProtocol::Responses
-        || !matches!(provider.adapter, AdapterConfig::None)
-    {
+    if !provider_supports_live_model_fetch(provider) {
         return Err(AppError::new(
-            "PROVIDER_DIRECT_ROUTE_REQUIRED",
-            "model refresh is available only for direct Responses Providers",
+            "PROVIDER_MODEL_FETCH_UNSUPPORTED",
+            "model fetch is not supported for this provider type",
         ));
     }
     let token = match &provider.upstream_auth {
@@ -2600,16 +2920,15 @@ pub fn list_binding_views_service_v2(home_root: &Path) -> Result<Vec<ProfileProv
         .collect())
 }
 
-pub fn rotate_provider_credential_service_v2<B: KeychainBackend>(
+pub fn rotate_provider_credential_service_v2(
     home_root: &Path,
     request: RotateProviderCredentialRequestV2,
-    backend: Arc<B>,
     now: &str,
 ) -> Result<CredentialRotationViewV2> {
     let stores = provider_hub_stores(home_root)?;
     let repository = ProviderRepository::new(stores.providers);
     let expected_source = request.expected_credential.to_domain()?;
-    let outcome = KeychainCredentialService::new(backend).rotate_provider(
+    let outcome = KeychainCredentialService::system_with_plaintext(&stores.root).rotate_provider(
         &repository,
         request.expected_revision,
         &request.provider_id,
@@ -2643,10 +2962,9 @@ pub fn rotate_provider_credential_service_v2<B: KeychainBackend>(
     })
 }
 
-pub fn create_provider_with_keychain_service_v2<B: KeychainBackend>(
+pub fn create_provider_with_keychain_service_v2(
     home_root: &Path,
     mut request: CreateProviderWithKeychainRequestV2,
-    backend: Arc<B>,
     now: &str,
 ) -> Result<ProviderProfileView> {
     let credential = match &mut request.provider.upstream_auth {
@@ -2663,7 +2981,8 @@ pub fn create_provider_with_keychain_service_v2<B: KeychainBackend>(
         }
     };
     let reference = KeychainCredentialReference::new(&uuid::Uuid::new_v4().to_string(), 1)?;
-    let service = KeychainCredentialService::new(backend);
+    let stores = provider_hub_stores(home_root)?;
+    let service = KeychainCredentialService::system_with_plaintext(&stores.root);
     service.write_exact(
         &reference,
         super::provider_credentials::SecretValue::from_sensitive(request.secret),
@@ -2699,12 +3018,7 @@ pub fn create_provider_with_keychain_system_service_v2(
     request: CreateProviderWithKeychainRequestV2,
     now: &str,
 ) -> Result<ProviderProfileView> {
-    create_provider_with_keychain_service_v2(
-        home_root,
-        request,
-        Arc::new(SystemKeychainBackend),
-        now,
-    )
+    create_provider_with_keychain_service_v2(home_root, request, now)
 }
 
 pub fn plan_api_account_service_v2(
@@ -3122,6 +3436,7 @@ pub fn execute_api_account_service_v2_with_fault(
             id: model.id.clone(),
             label: model.label.clone(),
             capabilities: None,
+            context_window: model.context_window,
         })
         .collect::<Vec<_>>();
     if let Err(error) =
@@ -3341,8 +3656,10 @@ fn api_account_connection_view(
             .map(|model| ProviderModelDto {
                 id: model.id.clone(),
                 label: model.label.clone(),
+                context_window: model.context_window,
             })
             .collect(),
+        reasoning_effort: context.provider.codex.reasoning_effort.clone(),
     })
 }
 
@@ -3406,6 +3723,9 @@ fn provider_input_for_update(
     request: &UpdateApiAccountConnectionRequestV2,
 ) -> Result<ProviderInput> {
     let mut input = provider_input_with_url(provider, &request.base_url);
+    if let Some(effort) = &request.reasoning_effort {
+        input.codex.reasoning_effort = Some(effort.clone());
+    }
     if let Some(models) = &request.models {
         let selected = request
             .selected_model
@@ -3425,6 +3745,7 @@ fn provider_input_for_update(
                 id: model.id.clone(),
                 label: model.label.clone(),
                 capabilities: None,
+                context_window: model.context_window,
             })
             .collect();
     }
@@ -3851,7 +4172,8 @@ fn delete_exclusive_provider(home_root: &Path, provider_id: &str) -> Result<()> 
     };
     if let Some(source) = source {
         if let Ok(reference) = KeychainCredentialReference::try_from(&source) {
-            KeychainCredentialService::new(Arc::new(SystemKeychainBackend)).revoke(&reference)?;
+            let stores = provider_hub_stores(home_root)?;
+            KeychainCredentialService::system_with_plaintext(&stores.root).revoke(&reference)?;
         }
     }
     Ok(())
@@ -3999,7 +4321,7 @@ pub fn rotate_provider_credential_system_service_v2(
     request: RotateProviderCredentialRequestV2,
     now: &str,
 ) -> Result<CredentialRotationViewV2> {
-    rotate_provider_credential_service_v2(home_root, request, Arc::new(SystemKeychainBackend), now)
+    rotate_provider_credential_service_v2(home_root, request, now)
 }
 
 pub fn plan_attach_service_v2(
@@ -4172,7 +4494,7 @@ pub fn execute_attach_service_v2(
     ensure_gateway_state_for_plan(&stores.gateway_state, &plan)?;
     let gateway = GatewayBindingService::new(
         stores.gateway_bindings,
-        KeychainCredentialService::new(Arc::new(SystemKeychainBackend)),
+        KeychainCredentialService::system_with_plaintext(&stores.root),
     );
     let coordinator = AttachTransactionCoordinator::new(
         stores.lock,
@@ -4243,7 +4565,7 @@ pub fn execute_detach_service_v2(
     let stores = provider_hub_stores(home_root)?;
     let gateway = GatewayBindingService::new(
         stores.gateway_bindings,
-        KeychainCredentialService::new(Arc::new(SystemKeychainBackend)),
+        KeychainCredentialService::system_with_plaintext(&stores.root),
     );
     let coordinator = AttachTransactionCoordinator::new(
         stores.lock,
@@ -4400,6 +4722,7 @@ mod strict_codex_readiness_tests {
                     id: "model-a".into(),
                     label: "Model A".into(),
                     capabilities: None,
+                    context_window: None,
                 }],
                 upstream_auth: UpstreamAuth::None,
                 adapter: AdapterConfig::None,
@@ -4417,5 +4740,28 @@ mod strict_codex_readiness_tests {
         };
 
         assert!(provider_readiness_blockers(&provider, &resolver, false).is_empty());
+    }
+
+    #[test]
+    fn codex_auth_projection_stale_detects_missing_migrated_state_root() {
+        let stale_root =
+            "/Users/test/Library/Application Support/dev.localagentmanager.desktop/provider-hub";
+        let canonical_root = "/Users/test/.lam/provider-hub";
+        let config = format!(
+            r#"
+model_provider = "account-cmd"
+
+[model_providers.account-cmd.auth]
+command = "/Applications/LAM.app/Contents/MacOS/lam-auth-helper"
+args = ["gateway-token", "--state-root", "{stale_root}", "--profile", "cmd", "--binding", "binding-id"]
+"#
+        );
+        let (command, args) =
+            super::codex_auth_command_from_config(&config, "account-cmd").expect("auth command");
+        assert!(super::codex_auth_projection_stale(
+            &command,
+            &args,
+            std::path::Path::new(canonical_root),
+        ));
     }
 }

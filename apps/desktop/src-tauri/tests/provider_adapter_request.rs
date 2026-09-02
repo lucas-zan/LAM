@@ -77,12 +77,11 @@ fn empty_model_mismatch_stateful_and_invalid_role_order_are_rejected() {
           {"type":"message","role":"system","content":[{"type":"input_text","text":"late"}]}
         ]
     }));
-    assert_eq!(
-        translate_responses_request(&invalid_order, "m", &generic())
-            .unwrap_err()
-            .code,
-        AdapterRequestErrorCode::InvalidRoleOrder
-    );
+    let translated = translate_responses_request(&invalid_order, "m", &generic()).unwrap();
+    // Mid-dialogue system is no longer rejected; it is hoisted before the
+    // dialogue and the user message order is preserved.
+    assert!(matches!(translated.messages[0], ChatMessage::System { .. }));
+    assert!(matches!(translated.messages[1], ChatMessage::User { .. }));
 }
 
 #[test]
@@ -426,4 +425,79 @@ fn invalid_or_non_user_image_content_is_rejected_at_the_content_path() {
             "role={role}"
         );
     }
+}
+
+#[test]
+fn mid_dialogue_developer_in_multi_turn_history_is_translated_and_hoisted() {
+    let source = request(serde_json::json!({
+        "model":"m", "stream":true, "store":false,
+        "instructions":"system instruction",
+        "input":[
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"first dev"}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"turn 1"}]},
+            {"type":"message","role":"assistant","content":[{"type":"output_text","text":"reply 1"}]},
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"second dev"}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"turn 2"}]},
+            {"type":"message","role":"assistant","content":[{"type":"output_text","text":"reply 2"}]},
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"third dev"}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"turn 3"}]}
+        ]
+    }));
+
+    let translated = translate_responses_request(&source, "m", &generic()).unwrap();
+    // instructions -> System first, then all developer messages in original
+    // relative order, then the untouched dialogue.
+    assert!(matches!(
+        &translated.messages[0],
+        ChatMessage::System { content } if content == "system instruction"
+    ));
+    let developer_contents: Vec<&str> = translated
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            ChatMessage::Developer { content } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        developer_contents,
+        vec!["first dev", "second dev", "third dev"]
+    );
+
+    let dialogue: Vec<&str> = translated
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            ChatMessage::User { content } => Some(match content {
+                ChatUserContent::Text(text) => text.as_str(),
+                ChatUserContent::Parts(_) => "<parts>",
+            }),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dialogue, vec!["turn 1", "turn 2", "turn 3"]);
+}
+
+#[test]
+fn repeated_mid_dialogue_developer_is_deduplicated_when_hoisted() {
+    let source = request(serde_json::json!({
+        "model":"m", "stream":true, "store":false,
+        "input":[
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"context"}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"again"}]},
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"context"}]}
+        ]
+    }));
+
+    let translated = translate_responses_request(&source, "m", &generic()).unwrap();
+    let developer_count = translated
+        .messages
+        .iter()
+        .filter(|message| matches!(message, ChatMessage::Developer { .. }))
+        .count();
+    assert_eq!(developer_count, 1);
+    assert!(
+        matches!(&translated.messages[0], ChatMessage::Developer { content } if content == "context")
+    );
 }

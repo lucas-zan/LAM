@@ -7,6 +7,10 @@ export function formatError(err: unknown): string {
   return String(err);
 }
 
+export function formatProviderError(err: unknown): string {
+  return formatError(err);
+}
+
 export function sessionDisplayName(session: CodexSession): string {
   return session.threadName?.trim() || session.summary?.trim() || session.id;
 }

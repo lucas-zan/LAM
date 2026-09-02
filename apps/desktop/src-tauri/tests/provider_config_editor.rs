@@ -15,6 +15,9 @@ fn spec() -> ConfigProjectionSpec {
         codex: CodexProviderOptions::default(),
         gateway: false,
         model_catalog_path: "/tmp/company/models.json".into(),
+        model_context_window: None,
+        model_auto_compact_token_limit: None,
+        reasoning_effort: None,
     }
 }
 
@@ -213,4 +216,69 @@ fn native_api_key_projection_uses_codex_login_without_an_auth_helper() {
     let detached = detach_projection(&applied.contents, &applied.projection).unwrap();
     assert!(!detached.contains("cli_auth_credentials_store"));
     assert!(!detached.contains("requires_openai_auth"));
+}
+
+#[test]
+fn projection_writes_managed_context_window_and_restores_on_detach() {
+    let mut value = spec();
+    value.model_context_window = Some(272_000);
+    value.model_auto_compact_token_limit = Some(244_800);
+    let applied =
+        apply_projection("model=\"old\"\n", &config_hash(b"model=\"old\"\n"), &value).unwrap();
+    assert!(applied.contents.contains("model_context_window = 272000"));
+    assert!(applied
+        .contents
+        .contains("model_auto_compact_token_limit = 244800"));
+
+    // Managed keys are tracked so drift is rejected.
+    let drifted = applied.contents.replace("272000", "99999");
+    assert_eq!(
+        detach_projection(&drifted, &applied.projection)
+            .unwrap_err()
+            .code,
+        "CODEX_CONFIG_OWNERSHIP_CONFLICT"
+    );
+
+    // Detach restores the previous values (absent -> keys removed).
+    let detached = detach_projection(&applied.contents, &applied.projection).unwrap();
+    assert!(!detached.contains("model_context_window"));
+    assert!(!detached.contains("model_auto_compact_token_limit"));
+    // The original top-level model value is restored.
+    assert!(detached.contains("model= \"old\""));
+}
+
+#[test]
+fn projection_omits_context_window_when_unset() {
+    let applied = apply_projection("", &config_hash(b""), &spec()).unwrap();
+    assert!(!applied.contents.contains("model_context_window"));
+    assert!(!applied.contents.contains("model_auto_compact_token_limit"));
+}
+
+#[test]
+fn projection_writes_reasoning_effort_and_restores_on_detach() {
+    let mut value = spec();
+    value.reasoning_effort = Some("high".into());
+    let applied = apply_projection("", &config_hash(b""), &value).unwrap();
+    assert!(applied
+        .contents
+        .contains("model_reasoning_effort = \"high\""));
+
+    // Drift detection covers the managed key.
+    let drifted = applied.contents.replace("high", "low");
+    assert_eq!(
+        detach_projection(&drifted, &applied.projection)
+            .unwrap_err()
+            .code,
+        "CODEX_CONFIG_OWNERSHIP_CONFLICT"
+    );
+
+    // Detach restores the previous value (absent -> key removed).
+    let detached = detach_projection(&applied.contents, &applied.projection).unwrap();
+    assert!(!detached.contains("model_reasoning_effort"));
+}
+
+#[test]
+fn projection_omits_reasoning_effort_when_unset() {
+    let applied = apply_projection("", &config_hash(b""), &spec()).unwrap();
+    assert!(!applied.contents.contains("model_reasoning_effort"));
 }

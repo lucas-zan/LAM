@@ -1,14 +1,11 @@
 use localagentmanager_core::provider_api_v2::*;
 use localagentmanager_core::provider_credentials::{CredentialSource, SecretValue};
-use localagentmanager_core::provider_keychain::{KeychainBackend, KeychainCredentialReference};
 use localagentmanager_core::Result;
 use serde_json::json;
-use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{mpsc, mpsc::Receiver};
-use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -398,33 +395,6 @@ fn service_v2_commands_are_registered_and_keep_legacy_commands() {
     assert!(main.contains("commands::attach_provider_to_profile,"));
 }
 
-#[derive(Default)]
-struct ApiFakeKeychain(Mutex<BTreeMap<String, String>>);
-impl KeychainBackend for ApiFakeKeychain {
-    fn write(&self, reference: &KeychainCredentialReference, secret: &SecretValue) -> Result<()> {
-        self.0.lock().unwrap().insert(
-            reference.account.clone(),
-            secret.with_exposed(str::to_owned),
-        );
-        Ok(())
-    }
-    fn read(&self, reference: &KeychainCredentialReference) -> Result<SecretValue> {
-        self.0
-            .lock()
-            .unwrap()
-            .get(&reference.account)
-            .cloned()
-            .map(SecretValue::from_sensitive)
-            .ok_or_else(|| {
-                localagentmanager_core::AppError::new("KEYCHAIN_ITEM_NOT_FOUND", "missing")
-            })
-    }
-    fn delete(&self, reference: &KeychainCredentialReference) -> Result<()> {
-        self.0.lock().unwrap().remove(&reference.account);
-        Ok(())
-    }
-}
-
 #[test]
 fn service_keychain_rotation_request_returns_reference_only_view() {
     let root = tempfile::tempdir().unwrap();
@@ -437,7 +407,6 @@ fn service_keychain_rotation_request_returns_reference_only_view() {
         },
     };
     create_provider_service_v2(root.path(), request, "2026-07-13T00:00:00Z").unwrap();
-    let backend = Arc::new(ApiFakeKeychain::default());
     let marker = "LAM_TEST_SECRET_ROTATE_sk-rpg110";
     let rotation = RotateProviderCredentialRequestV2 {
         expected_revision: 1,
@@ -448,13 +417,9 @@ fn service_keychain_rotation_request_returns_reference_only_view() {
         secret: marker.into(),
     };
     assert!(!format!("{rotation:?}").contains(marker));
-    let result = rotate_provider_credential_service_v2(
-        root.path(),
-        rotation,
-        backend,
-        "2026-07-13T00:01:00Z",
-    )
-    .unwrap();
+    let result =
+        rotate_provider_credential_service_v2(root.path(), rotation, "2026-07-13T00:01:00Z")
+            .unwrap();
     let json = serde_json::to_string(&result).unwrap();
     assert!(!json.contains(marker));
     assert!(json.contains("lam.remote-provider"));
@@ -465,7 +430,6 @@ fn service_keychain_create_writes_secret_before_metadata_and_compensates_on_conf
     let root = tempfile::tempdir().unwrap();
     #[cfg(unix)]
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    let backend = Arc::new(ApiFakeKeychain::default());
     let marker = "LAM_TEST_SECRET_CREATE_sk-rpg112";
     let mut create = service_request(0);
     create.provider.upstream_auth = UpstreamAuthDto::Bearer {
@@ -477,13 +441,9 @@ fn service_keychain_create_writes_secret_before_metadata_and_compensates_on_conf
         secret: marker.into(),
     };
     assert!(!format!("{request:?}").contains(marker));
-    let view = create_provider_with_keychain_service_v2(
-        root.path(),
-        request,
-        backend.clone(),
-        "2026-07-13T00:00:00Z",
-    )
-    .unwrap();
+    let view =
+        create_provider_with_keychain_service_v2(root.path(), request, "2026-07-13T00:00:00Z")
+            .unwrap();
     assert!(matches!(
         view.upstream_auth,
         UpstreamAuthDto::Bearer {
@@ -491,7 +451,6 @@ fn service_keychain_create_writes_secret_before_metadata_and_compensates_on_conf
         }
     ));
     assert!(!serde_json::to_string(&view).unwrap().contains(marker));
-    assert_eq!(backend.0.lock().unwrap().len(), 1);
 
     let mut conflicting = service_request(0);
     conflicting.provider.id = "conflict".into();
@@ -505,12 +464,10 @@ fn service_keychain_create_writes_secret_before_metadata_and_compensates_on_conf
             provider: conflicting.provider,
             secret: "compensate-me".into(),
         },
-        backend.clone(),
         "2026-07-13T00:01:00Z",
     )
     .unwrap_err();
     assert_eq!(error.code, "STORE_REVISION_CONFLICT");
-    assert_eq!(backend.0.lock().unwrap().len(), 1);
 }
 
 #[test]
@@ -613,6 +570,57 @@ fn service_fetches_models_with_stored_credential_without_overwriting_saved_selec
 }
 
 #[test]
+fn service_fetches_models_for_chat_completions_providers() {
+    let (base_url, requests, handle) =
+        model_server(r#"{"object":"list","data":[{"id":"model-x"},{"id":"model-y"}]}"#);
+    let root = tempfile::tempdir().unwrap();
+    let mut request = service_request(0);
+    request.provider.base_url = base_url;
+    request.provider.protocol = ProviderProtocolDto::ChatCompletions;
+    request.provider.adapter = AdapterDto::Local {
+        adapter_id: "responses_to_chat_completions".into(),
+        upstream_path: "/chat/completions".into(),
+    };
+    request.provider.upstream_auth = UpstreamAuthDto::Bearer {
+        credential: CredentialReferenceDto::Env {
+            env_key: "SYNTHETIC_MODEL_TOKEN".into(),
+        },
+    };
+    create_provider_service_v2(root.path(), request, "2026-07-14T00:00:00Z").unwrap();
+
+    let view = refresh_provider_models_service_v2_with_resolver(
+        root.path(),
+        RefreshProviderModelsRequestV2 {
+            provider_id: "service-provider".into(),
+            expected_revision: 1,
+        },
+        &ReadyResolver,
+    )
+    .unwrap();
+    let wire = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+    handle.join().unwrap();
+    assert!(wire.contains("authorization: Bearer synthetic-ready"));
+    assert_eq!(
+        view.models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>(),
+        ["model-x", "model-y"]
+    );
+}
+
+#[test]
+fn structured_error_view_exposes_safe_model_fetch_messages() {
+    let view = StructuredErrorView::from_error(localagentmanager_core::AppError::new(
+        "PROVIDER_CREDENTIAL_MISSING",
+        "internal detail should not leak",
+    ));
+    assert_eq!(view.code, "PROVIDER_CREDENTIAL_MISSING");
+    assert!(view.message.contains("API key is missing"));
+    assert!(!view.message.contains("internal detail"));
+}
+
+#[test]
 fn service_upstream_test_rejects_nonstandard_codex_catalog_shape() {
     let (base_url, requests, handle) = model_server(r#"{"models":[{"slug":"model-a"}]}"#);
     let root = tempfile::tempdir().unwrap();
@@ -677,4 +685,72 @@ fn provider_list_builder_is_snapshot_typed_and_keeps_readiness_io_outside() {
     assert!(!builder.contains("ProductionCredentialResolver"));
     assert!(!builder.contains("fs::read"));
     assert!(!builder.contains("apply_provider_readiness("));
+}
+
+#[test]
+fn attached_provider_allows_context_window_and_reasoning_updates_only() {
+    let root = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    create_provider_service_v2(root.path(), service_request(0), "2026-07-13T00:00:00Z").unwrap();
+
+    // Attach the provider to a profile.
+    let config = root.path().join(".codex-test-attach/config.toml");
+    if let Some(parent) = config.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    fs::write(&config, "model = \"model-a\"\n").unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&config, fs::Permissions::from_mode(0o600)).unwrap();
+    let mut state = ProviderApiV2State::default();
+    let plan = plan_attach_service_v2_with_resolver(
+        root.path(),
+        &config,
+        PlanAttachRequestV2 {
+            profile_id: "profile-a".into(),
+            provider_id: "service-provider".into(),
+            selected_model: "model-a".into(),
+        },
+        &mut state,
+        1_000,
+        &ReadyResolver,
+        true,
+    )
+    .unwrap();
+    execute_attach_service_v2(
+        root.path(),
+        ExecuteAttachRequestV2 {
+            plan_id: plan.plan_id,
+            fingerprint: plan.fingerprint,
+        },
+        &mut state,
+        1_001,
+    )
+    .unwrap();
+    assert!(fs::read_to_string(&config).unwrap().contains("model-a"));
+
+    // Destructive changes are still rejected while attached.
+    let mut destructive = service_request(1);
+    destructive.provider.base_url = "https://evil.example.test/v1".into();
+    assert_eq!(
+        update_provider_service_v2(root.path(), destructive, "2026-07-13T00:02:00Z")
+            .unwrap_err()
+            .code,
+        "PROVIDER_HAS_BINDINGS_REBIND_REQUIRED"
+    );
+
+    // Non-destructive changes are allowed and re-projected into config.toml.
+    let mut update = service_request(1);
+    update.provider.models[0].context_window = Some(272_000);
+    update.provider.codex.reasoning_effort = Some("high".into());
+    let view = match update_provider_service_v2(root.path(), update, "2026-07-13T00:03:00Z") {
+        Ok(view) => view,
+        Err(e) => panic!("non-destructive update failed: {} {}", e.code, e.message),
+    };
+    assert_eq!(view.models[0].context_window, Some(272_000));
+
+    let config_body = fs::read_to_string(&config).unwrap();
+    assert!(config_body.contains("model_context_window = 272000"));
+    assert!(config_body.contains("model_auto_compact_token_limit = 244800"));
+    assert!(config_body.contains("model_reasoning_effort = \"high\""));
 }

@@ -76,6 +76,7 @@ fn provider(id: &str, model: &str) -> localagentmanager_core::provider_v2::Provi
                 id: model.into(),
                 label: "Reasoner".into(),
                 capabilities: None,
+                context_window: None,
             }],
             upstream_auth: UpstreamAuth::Bearer {
                 source: CredentialSource::Env {

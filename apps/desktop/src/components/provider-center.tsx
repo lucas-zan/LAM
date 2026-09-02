@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
+import * as api from '../lib/api';
 import type {
   ApiAccountConnectionViewV2,
   CredentialReferenceV2,
@@ -9,16 +10,15 @@ import type {
   UpstreamAuthV2,
   UpdateApiAccountConnectionRequestV2,
 } from '../lib/types';
-import { sameModelIdSet } from '../lib/provider-models';
 import { UIButton } from './ui-button';
 import { Modal } from './shell';
 import { ProviderBindingDialog } from './provider-binding-dialog';
+import { ProviderModelPicker } from './provider-model-picker';
 import { useProviderStore } from '../stores/providers';
 
 type CredentialKind = CredentialReferenceV2['kind'];
 type AuthKind = UpstreamAuthV2['kind'];
 type AuthCommandDraft = { executable: string; args: string[] };
-type ModelApplyMode = 'replace' | 'customize';
 
 function credentialLabel(auth: UpstreamAuthV2): string {
   if (auth.kind === 'none') return 'None';
@@ -153,7 +153,25 @@ function parseModels(value: string) {
         .map((model) => model.trim())
         .filter(Boolean),
     ),
-  ].map((id) => ({ id, label: id }));
+  ].map((entry) => {
+    const separator = entry.indexOf(':');
+    if (separator < 1) return { id: entry, label: entry };
+    const id = entry.slice(0, separator).trim();
+    const windowValue = Number(entry.slice(separator + 1).trim());
+    return {
+      id,
+      label: id,
+      contextWindow: Number.isSafeInteger(windowValue) && windowValue > 0 ? windowValue : undefined,
+    };
+  });
+}
+
+function formatModels(models: Array<{ id: string; contextWindow?: number }>) {
+  return models
+    .map((model) =>
+      model.contextWindow ? `${model.id}:${model.contextWindow}` : model.id,
+    )
+    .join(', ');
 }
 
 function parsePairs(value: string): Record<string, string> {
@@ -175,6 +193,8 @@ export function ProviderEditor({
   provider,
   onSave,
   onCancel,
+  simpleCredentials = false,
+  onRefreshModels,
 }: {
   provider: ProviderProfileViewV2 | null;
   onSave: (
@@ -183,6 +203,9 @@ export function ProviderEditor({
     authCommand: AuthCommandDraft | null,
   ) => Promise<void>;
   onCancel: () => void;
+  /** Account edit flow: API key + URL only, hide credential plumbing. */
+  simpleCredentials?: boolean;
+  onRefreshModels?: () => Promise<ProviderModelV2[]>;
 }) {
   const initialCredential = credentialFromView(provider);
   const initialAuth = provider?.upstreamAuth.kind ?? 'bearer';
@@ -199,7 +222,7 @@ export function ProviderEditor({
   );
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? 'https://proxy.example.test/v1');
   const [modelsText, setModelsText] = useState(
-    provider?.models.map((model) => model.id).join(', ') ?? 'gpt-5-codex',
+    provider?.models ? formatModels(provider.models) : 'gpt-5-codex',
   );
   const [defaultModel, setDefaultModel] = useState(provider?.defaultModel ?? 'gpt-5-codex');
   const [authKind, setAuthKind] = useState<AuthKind>(initialAuth);
@@ -237,9 +260,71 @@ export function ProviderEditor({
   );
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [advancedAuthOpen, setAdvancedAuthOpen] = useState(false);
+  const [contextWindowPreset, setContextWindowPreset] = useState<
+    '128k' | '272k' | '1m' | 'custom' | 'none'
+  >(() => {
+    const window = provider?.models.find((model) => model.contextWindow)?.contextWindow;
+    if (window === 128_000) return '128k';
+    if (window === 272_000) return '272k';
+    if (window === 1_000_000) return '1m';
+    return window ? 'custom' : 'none';
+  });
+  const [customContextWindow, setCustomContextWindow] = useState(
+    String(provider?.models.find((model) => model.contextWindow)?.contextWindow ?? ''),
+  );
+  const [reasoningEffort, setReasoningEffort] = useState(
+    provider?.codex.reasoningEffort ?? 'medium',
+  );
 
   const editing = Boolean(provider);
   const parsedModels = useMemo(() => parseModels(modelsText), [modelsText]);
+  const showDirectApiKey =
+    simpleCredentials || (authKind === 'bearer' && credentialKind === 'keychain');
+  const showAdvancedAuth = !simpleCredentials && (!showDirectApiKey || advancedAuthOpen);
+
+  async function refreshModelsForPicker(): Promise<ProviderModelV2[]> {
+    let normalizedUrl: string;
+    try {
+      const url = new URL(baseUrl.trim());
+      if (url.protocol !== 'https:' || url.username || url.password) throw new Error('invalid');
+      normalizedUrl = url.toString().replace(/\/$/, '');
+    } catch {
+      throw new Error('Enter a valid HTTPS Provider URL');
+    }
+    if (showDirectApiKey && keychainSecret.trim()) {
+      const result = await api.discoverProviderModelsV2({
+        baseUrl: normalizedUrl,
+        apiKey: keychainSecret.trim(),
+      });
+      return result.models;
+    }
+    if (!onRefreshModels) {
+      throw new Error('Model fetch is unavailable for this connection');
+    }
+    return onRefreshModels();
+  }
+
+  function applyContextWindowPreset(
+    preset: '128k' | '272k' | '1m' | 'custom' | 'none',
+    customValue: string,
+  ) {
+    setContextWindowPreset(preset);
+    let window: number | undefined;
+    if (preset === '128k') window = 128_000;
+    else if (preset === '272k') window = 272_000;
+    else if (preset === '1m') window = 1_000_000;
+    else if (preset === 'custom') {
+      const value = Number(customValue.trim());
+      window = Number.isSafeInteger(value) && value > 0 ? value : undefined;
+    }
+    const current = parseModels(modelsText);
+    setModelsText(
+      current
+        .map((model) => (window ? `${model.id}:${window}` : model.id))
+        .join(', '),
+    );
+  }
 
   function selectedCredential(): CredentialReferenceV2 {
     if (credentialKind === 'env') return { kind: 'env', envKey: envKey.trim() };
@@ -283,7 +368,7 @@ export function ProviderEditor({
       return;
     }
     if (authKind !== 'none' && credentialKind === 'keychain' && !editing && !keychainSecret) {
-      setError('New Keychain secret is required');
+      setError('API key is required');
       return;
     }
     if (authKind === 'header' && !headerName.trim()) {
@@ -342,6 +427,7 @@ export function ProviderEditor({
         routeViaGateway: provider?.codex.routeViaGateway ?? false,
         queryParams: parsePairs(queryParams),
         envHttpHeaders: parsePairs(envHeaders),
+        reasoningEffort,
       },
     };
 
@@ -370,173 +456,355 @@ export function ProviderEditor({
 
   return (
     <form noValidate onSubmit={submit}>
-      <div className="formGrid">
-        <label>
-          Provider id
-          <input value={id} disabled={editing} onChange={(event) => setId(event.target.value)} />
-        </label>
-        <label>
-          Name
-          <input value={name} onChange={(event) => setName(event.target.value)} />
-        </label>
-        <label>
-          Protocol
-          <select
-            aria-label="Protocol"
-            value={protocol}
-            onChange={(event) =>
-              setProtocol(event.target.value as ProviderDefinitionV2['protocol'])
-            }
-          >
-            <option value="responses">Responses (direct)</option>
-            <option value="chat_completions">Chat Completions (Gateway)</option>
-          </select>
-        </label>
-        {protocol === 'chat_completions' ? (
-          <>
+      <div className="editorFormStack">
+        <div className="apiFormSection">
+          <div className="apiFormSectionHeader">
+            <h3 className="apiFormSectionTitle">
+              <span className="apiStepBadge" aria-hidden>
+                1
+              </span>
+              <span>Identity & protocol</span>
+            </h3>
+            <p>Provider id, display name, and wire protocol.</p>
+          </div>
+          <div className="formGrid">
             <label>
-              Upstream path
-              <input
-                value={upstreamPath}
-                onChange={(event) => setUpstreamPath(event.target.value)}
-              />
+              Provider id
+              <input value={id} disabled={editing} onChange={(event) => setId(event.target.value)} />
             </label>
             <label>
-              Compatibility profile
+              Name
+              <input value={name} onChange={(event) => setName(event.target.value)} />
+            </label>
+            <label>
+              Protocol
               <select
-                value={compatibilityProfile}
-                onChange={(event) => setCompatibilityProfile(event.target.value)}
+                aria-label="Protocol"
+                value={protocol}
+                onChange={(event) =>
+                  setProtocol(event.target.value as ProviderDefinitionV2['protocol'])
+                }
               >
-                <option value="openai_chat_completions">OpenAI-compatible</option>
-                <option value="deepseek_chat_completions">DeepSeek</option>
+                <option value="responses">Responses (direct)</option>
+                <option value="chat_completions">Chat Completions (Gateway)</option>
               </select>
             </label>
-          </>
-        ) : null}
-        <label>
-          Base URL
-          <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
-        </label>
-        <label>
-          Models
-          <textarea
-            value={modelsText}
-            onChange={(event) => setModelsText(event.target.value)}
-            placeholder="model-a, model-b"
-          />
-        </label>
-        <label>
-          Default model
-          <input value={defaultModel} onChange={(event) => setDefaultModel(event.target.value)} />
-        </label>
-        <label>
-          Authentication
-          <select
-            value={authKind}
-            onChange={(event) => setAuthKind(event.target.value as AuthKind)}
-          >
-            <option value="bearer">Bearer</option>
-            <option value="header">Custom header</option>
-            <option value="none">None</option>
-          </select>
-        </label>
-        {authKind === 'header' ? (
-          <label>
-            Header name
-            <input value={headerName} onChange={(event) => setHeaderName(event.target.value)} />
-          </label>
-        ) : null}
-        {authKind !== 'none' ? (
-          <label>
-            Credential source
-            <select
-              value={credentialKind}
-              onChange={(event) => setCredentialKind(event.target.value as CredentialKind)}
-            >
-              <option value="env">Environment</option>
-              <option value="keychain">Keychain</option>
-              <option value="auth_command">Approved auth command</option>
-              <option value="none">Missing / configure later</option>
-            </select>
-          </label>
-        ) : null}
-        {authKind !== 'none' && credentialKind === 'env' ? (
-          <label>
-            Environment variable
-            <input value={envKey} onChange={(event) => setEnvKey(event.target.value)} />
-          </label>
-        ) : null}
-        {authKind !== 'none' && credentialKind === 'auth_command' ? (
-          <>
-            {approvalId ? (
-              <div className="notice providerBlockers" role="status">
-                Existing approved command: {approvalId}
-              </div>
+            {protocol === 'chat_completions' ? (
+              <>
+                <label>
+                  Upstream path
+                  <input
+                    value={upstreamPath}
+                    onChange={(event) => setUpstreamPath(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Compatibility profile
+                  <select
+                    value={compatibilityProfile}
+                    onChange={(event) => setCompatibilityProfile(event.target.value)}
+                  >
+                    <option value="openai_chat_completions">OpenAI-compatible</option>
+                    <option value="deepseek_chat_completions">DeepSeek</option>
+                  </select>
+                </label>
+              </>
             ) : null}
+          </div>
+        </div>
+
+        <div className="apiFormSection">
+          <div className="apiFormSectionHeader">
+            <h3 className="apiFormSectionTitle">
+              <span className="apiStepBadge" aria-hidden>
+                2
+              </span>
+              <span>Connection</span>
+            </h3>
+            <p>Upstream endpoint URL{showDirectApiKey ? ' and API key' : ''}.</p>
+          </div>
+          <div className="formGrid formGrid--single">
             <label>
-              Auth command executable
-              <input
-                value={authCommandExecutable}
-                onChange={(event) => setAuthCommandExecutable(event.target.value)}
-                placeholder="/absolute/path/to/token-helper"
-              />
+              Base URL
+              <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
             </label>
-            <label>
-              Arguments (one per line)
-              <textarea
-                value={authCommandArgs}
-                onChange={(event) => setAuthCommandArgs(event.target.value)}
-                placeholder="--audience\ncodex"
-              />
-            </label>
-          </>
-        ) : null}
-        {authKind !== 'none' && credentialKind === 'keychain' ? (
-          <label>
-            New Keychain secret
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={keychainSecret}
-              onChange={(event) => setKeychainSecret(event.target.value)}
+            {showDirectApiKey ? (
+              <label>
+                API key
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  aria-label="API key"
+                  value={keychainSecret}
+                  placeholder={editing ? 'Leave empty to keep the current key' : undefined}
+                  onChange={(event) => setKeychainSecret(event.target.value)}
+                />
+              </label>
+            ) : null}
+          </div>
+          {showDirectApiKey && !simpleCredentials ? (
+            <button
+              type="button"
+              className="apiAdvancedToggle"
+              aria-expanded={advancedAuthOpen}
+              onClick={() => setAdvancedAuthOpen((open) => !open)}
+            >
+              <span>Other authentication options</span>
+              <span aria-hidden>{advancedAuthOpen ? '−' : '+'}</span>
+            </button>
+          ) : null}
+          {showAdvancedAuth ? (
+            <div className="apiAdvancedPanel">
+              <div className="formGrid">
+                <label>
+                  Authentication
+                  <select
+                    value={authKind}
+                    onChange={(event) => setAuthKind(event.target.value as AuthKind)}
+                  >
+                    <option value="bearer">Bearer</option>
+                    <option value="header">Custom header</option>
+                    <option value="none">None</option>
+                  </select>
+                </label>
+                {authKind === 'header' ? (
+                  <label>
+                    Header name
+                    <input
+                      value={headerName}
+                      onChange={(event) => setHeaderName(event.target.value)}
+                    />
+                  </label>
+                ) : null}
+                {authKind !== 'none' ? (
+                  <label>
+                    Credential source
+                    <select
+                      value={credentialKind}
+                      onChange={(event) =>
+                        setCredentialKind(event.target.value as CredentialKind)
+                      }
+                    >
+                      <option value="env">Environment</option>
+                      <option value="keychain">Keychain</option>
+                      <option value="auth_command">Approved auth command</option>
+                      <option value="none">Missing / configure later</option>
+                    </select>
+                  </label>
+                ) : null}
+                {authKind !== 'none' && credentialKind === 'env' ? (
+                  <label>
+                    Environment variable
+                    <input value={envKey} onChange={(event) => setEnvKey(event.target.value)} />
+                  </label>
+                ) : null}
+                {authKind !== 'none' && credentialKind === 'auth_command' ? (
+                  <>
+                    {approvalId ? (
+                      <div className="notice providerBlockers formGridSpanAll" role="status">
+                        Existing approved command: {approvalId}
+                      </div>
+                    ) : null}
+                    <label>
+                      Auth command executable
+                      <input
+                        value={authCommandExecutable}
+                        onChange={(event) => setAuthCommandExecutable(event.target.value)}
+                        placeholder="/absolute/path/to/token-helper"
+                      />
+                    </label>
+                    <label className="formGridSpanAll">
+                      Arguments (one per line)
+                      <textarea
+                        value={authCommandArgs}
+                        onChange={(event) => setAuthCommandArgs(event.target.value)}
+                        placeholder="--audience\ncodex"
+                      />
+                    </label>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="apiFormSection">
+          <div className="apiFormSectionHeader">
+            <h3 className="apiFormSectionTitle">
+              <span className="apiStepBadge" aria-hidden>
+                3
+              </span>
+              <span>Models</span>
+            </h3>
+            <p>
+              {onRefreshModels
+                ? 'Fetch live models and manage the saved allowlist.'
+                : 'Allowed models, default selection, and context settings.'}
+            </p>
+          </div>
+          {onRefreshModels ? (
+            <ProviderModelPicker
+              savedModels={parsedModels}
+              selectedModelId={defaultModel}
+              onRefreshModels={refreshModelsForPicker}
+              onApply={(models, selected) => {
+                setModelsText(formatModels(models));
+                setDefaultModel(selected);
+              }}
             />
-          </label>
+          ) : (
+            <div className="formGrid">
+              <label className="formGridSpanAll">
+                Models
+                <textarea
+                  value={modelsText}
+                  onChange={(event) => setModelsText(event.target.value)}
+                  placeholder="model-a:272000, model-b"
+                />
+              </label>
+              <label>
+                Default model
+                <input
+                  value={defaultModel}
+                  onChange={(event) => setDefaultModel(event.target.value)}
+                />
+              </label>
+            </div>
+          )}
+          <div className="apiAdvancedRow apiAdvancedRow--nested">
+            <div className="apiAdvancedBlock">
+              <span className="apiAdvancedLabel">Context window</span>
+              <div className="apiPresetRow">
+                {(
+                  [
+                    ['128k', '128K'],
+                    ['272k', '272K'],
+                    ['1m', '1M'],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`apiPresetChip ${contextWindowPreset === value ? 'active' : ''}`}
+                    onClick={() => applyContextWindowPreset(value, customContextWindow)}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={`apiPresetChip ${contextWindowPreset === 'custom' ? 'active' : ''}`}
+                  onClick={() => applyContextWindowPreset('custom', customContextWindow)}
+                >
+                  Custom
+                </button>
+                <button
+                  type="button"
+                  className={`apiPresetChip ${contextWindowPreset === 'none' ? 'active' : ''}`}
+                  onClick={() => applyContextWindowPreset('none', customContextWindow)}
+                >
+                  Auto
+                </button>
+              </div>
+              {contextWindowPreset === 'custom' ? (
+                <input
+                  type="number"
+                  aria-label="Custom context window"
+                  placeholder="e.g. 200000"
+                  min={1}
+                  value={customContextWindow}
+                  onChange={(event) => {
+                    setCustomContextWindow(event.target.value);
+                    applyContextWindowPreset('custom', event.target.value);
+                  }}
+                />
+              ) : null}
+              <p className="statusHint">
+                Applies to all models as model:window. Auto keeps Codex's native default.
+              </p>
+            </div>
+            <div className="apiAdvancedBlock">
+              <span className="apiAdvancedLabel">Default reasoning effort</span>
+              <select
+                aria-label="Default reasoning effort"
+                value={reasoningEffort}
+                onChange={(event) => setReasoningEffort(event.target.value)}
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">X-High</option>
+                <option value="max">Max</option>
+              </select>
+              <p className="statusHint">Written to model_reasoning_effort in the account config.</p>
+            </div>
+          </div>
+        </div>
+
+        {!simpleCredentials ? (
+        <div className="apiFormSection">
+          <div className="apiFormSectionHeader">
+            <h3 className="apiFormSectionTitle">
+              <span className="apiStepBadge" aria-hidden>
+                4
+              </span>
+              <span>Advanced options</span>
+            </h3>
+            <p>Timeouts, retries, and optional HTTP overrides. Leave blank unless your provider requires them.</p>
+          </div>
+          <div className="formGrid">
+            <label>
+              Stream idle timeout (ms)
+              <input
+                type="number"
+                min="1"
+                value={streamIdleTimeout}
+                onChange={(event) => setStreamIdleTimeout(event.target.value)}
+              />
+            </label>
+            <label>
+              Request retries
+              <input
+                type="number"
+                min="0"
+                value={requestRetries}
+                onChange={(event) => setRequestRetries(event.target.value)}
+              />
+            </label>
+            <label>
+              Stream retries
+              <input
+                type="number"
+                min="0"
+                value={streamRetries}
+                onChange={(event) => setStreamRetries(event.target.value)}
+              />
+            </label>
+            <label className="formGridSpanAll">
+              Query params (key=value)
+              <textarea
+                value={queryParams}
+                onChange={(event) => setQueryParams(event.target.value)}
+                placeholder={'api-version=2024-10-01\nregion=us-east-1'}
+              />
+              <span className="statusHint">
+                Optional URL query parameters appended to every upstream request. One per line.
+              </span>
+            </label>
+            <label className="formGridSpanAll">
+              Environment headers (header=ENV_KEY)
+              <textarea
+                value={envHeaders}
+                onChange={(event) => setEnvHeaders(event.target.value)}
+                placeholder={'X-Custom-Header=MY_ENV_VAR'}
+              />
+              <span className="statusHint">
+                Map HTTP header names to environment variables. Do not put API keys here.
+              </span>
+            </label>
+          </div>
+        </div>
         ) : null}
-        <label>
-          Stream idle timeout (ms)
-          <input
-            type="number"
-            min="1"
-            value={streamIdleTimeout}
-            onChange={(event) => setStreamIdleTimeout(event.target.value)}
-          />
-        </label>
-        <label>
-          Request retries
-          <input
-            type="number"
-            min="0"
-            value={requestRetries}
-            onChange={(event) => setRequestRetries(event.target.value)}
-          />
-        </label>
-        <label>
-          Stream retries
-          <input
-            type="number"
-            min="0"
-            value={streamRetries}
-            onChange={(event) => setStreamRetries(event.target.value)}
-          />
-        </label>
-        <label>
-          Query params (key=value)
-          <textarea value={queryParams} onChange={(event) => setQueryParams(event.target.value)} />
-        </label>
-        <label>
-          Environment headers (header=ENV_KEY)
-          <textarea value={envHeaders} onChange={(event) => setEnvHeaders(event.target.value)} />
-        </label>
       </div>
       {error ? (
         <div className="notice" role="alert">
@@ -570,34 +838,23 @@ export function ApiAccountConnectionEditor({
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [applyingModels, setApplyingModels] = useState(false);
-  const [refreshingModels, setRefreshingModels] = useState(false);
-  const [fetchedModels, setFetchedModels] = useState<ProviderModelV2[]>([]);
-  const [applyMode, setApplyMode] = useState<ModelApplyMode | null>(null);
-  const [draftModelIds, setDraftModelIds] = useState<string[]>([]);
-  const [draftSelectedModel, setDraftSelectedModel] = useState('');
   const [error, setError] = useState('');
-
-  const fetchedMatchesSaved =
-    fetchedModels.length > 0 && sameModelIdSet(fetchedModels, connection.models);
-
-  const checklistModels = useMemo(() => {
-    const byId = new Map<string, ProviderModelV2>();
-    for (const model of connection.models) byId.set(model.id, model);
-    for (const model of fetchedModels) byId.set(model.id, model);
-    return [...byId.values()];
-  }, [connection.models, fetchedModels]);
-
-  const candidateModels = useMemo(() => {
-    if (applyMode === 'replace') return fetchedModels;
-    if (applyMode === 'customize') {
-      return checklistModels.filter((model) => draftModelIds.includes(model.id));
-    }
-    return [];
-  }, [applyMode, checklistModels, draftModelIds, fetchedModels]);
-
-  const needsDefaultPick =
-    candidateModels.length > 0 &&
-    !candidateModels.some((model) => model.id === draftSelectedModel);
+  const [contextWindowPreset, setContextWindowPreset] = useState<
+    '128k' | '272k' | '1m' | 'custom' | 'none'
+  >(() => {
+    const first = connection.models.find((model) => model.contextWindow);
+    const window = first?.contextWindow;
+    if (window === 128_000) return '128k';
+    if (window === 272_000) return '272k';
+    if (window === 1_000_000) return '1m';
+    return window ? 'custom' : 'none';
+  });
+  const [customContextWindow, setCustomContextWindow] = useState(
+    String(connection.models.find((model) => model.contextWindow)?.contextWindow ?? ''),
+  );
+  const [reasoningEffort, setReasoningEffort] = useState(
+    connection.reasoningEffort ?? 'medium',
+  );
 
   function normalizeBaseUrl(): string | null {
     try {
@@ -609,35 +866,42 @@ export function ApiAccountConnectionEditor({
     }
   }
 
-  function beginReplaceAll() {
-    setApplyMode('replace');
-    setDraftModelIds(fetchedModels.map((model) => model.id));
-    setDraftSelectedModel(
-      fetchedModels.some((model) => model.id === connection.selectedModel)
-        ? connection.selectedModel
-        : '',
-    );
-    setError('');
-  }
-
-  function beginCustomize() {
-    setApplyMode('customize');
-    setDraftModelIds(connection.models.map((model) => model.id));
-    setDraftSelectedModel(
-      connection.models.some((model) => model.id === connection.selectedModel)
-        ? connection.selectedModel
-        : '',
-    );
-    setError('');
-  }
-
-  function toggleDraftModel(modelId: string) {
-    setDraftModelIds((current) => {
-      const removing = current.includes(modelId);
-      const next = removing ? current.filter((id) => id !== modelId) : [...current, modelId];
-      if (removing && draftSelectedModel === modelId) setDraftSelectedModel('');
-      return next;
-    });
+  async function applyModelsFromPicker(models: ProviderModelV2[], selectedModel: string) {
+    const normalizedUrl = normalizeBaseUrl();
+    if (!normalizedUrl) {
+      throw new Error('Enter a valid HTTPS Provider URL');
+    }
+    setApplyingModels(true);
+    try {
+      const windowValue =
+        contextWindowPreset === 'custom'
+          ? Number(customContextWindow.trim())
+          : contextWindowPreset === '128k'
+            ? 128_000
+            : contextWindowPreset === '272k'
+              ? 272_000
+              : contextWindowPreset === '1m'
+                ? 1_000_000
+                : undefined;
+      const appliedWindow =
+        windowValue !== undefined && Number.isSafeInteger(windowValue) && windowValue > 0
+          ? windowValue
+          : undefined;
+      await onSave({
+        profileId: connection.profileId,
+        expectedProviderStoreRevision: connection.providerStoreRevision,
+        baseUrl: normalizedUrl,
+        models: models.map((model) => ({
+          id: model.id,
+          label: model.label,
+          contextWindow: appliedWindow ?? model.contextWindow,
+        })),
+        selectedModel,
+        reasoningEffort,
+      });
+    } finally {
+      setApplyingModels(false);
+    }
   }
 
   async function submit(event: FormEvent) {
@@ -649,7 +913,7 @@ export function ApiAccountConnectionEditor({
       return;
     }
     if (apiKey.length > 0 && !apiKey.trim()) {
-      setError('New API key cannot be blank');
+      setError('API key cannot be blank');
       return;
     }
     setSaving(true);
@@ -668,198 +932,167 @@ export function ApiAccountConnectionEditor({
     }
   }
 
-  async function applyModels() {
-    setError('');
-    const normalizedUrl = normalizeBaseUrl();
-    if (!normalizedUrl) {
-      setError('Enter a valid HTTPS Provider URL');
-      return;
+  async function refreshModelsForPicker(): Promise<ProviderModelV2[]> {
+    const url = normalizeBaseUrl();
+    if (!url) {
+      throw new Error('Enter a valid HTTPS Provider URL');
     }
-    if (!candidateModels.length) {
-      setError('Select at least one model before applying');
-      return;
+    if (apiKey.trim()) {
+      const result = await api.discoverProviderModelsV2({ baseUrl: url, apiKey: apiKey.trim() });
+      return result.models;
     }
-    if (needsDefaultPick || !draftSelectedModel.trim()) {
-      setError('Choose a default model from the new allowlist');
-      return;
-    }
-    if (!candidateModels.some((model) => model.id === draftSelectedModel)) {
-      setError('Default model must be present in the selected models');
-      return;
-    }
-    setApplyingModels(true);
-    try {
-      await onSave({
-        profileId: connection.profileId,
-        expectedProviderStoreRevision: connection.providerStoreRevision,
-        baseUrl: normalizedUrl,
-        models: candidateModels.map((model) => ({ id: model.id, label: model.label })),
-        selectedModel: draftSelectedModel.trim(),
-      });
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not apply models');
-    } finally {
-      setApplyingModels(false);
-    }
+    return onRefreshModels();
   }
 
   return (
     <form noValidate onSubmit={submit}>
-      <div className="kv apiAccountConnectionSummary">
-        <span>Account</span>
-        <strong>{connection.profileId}</strong>
-        <span>Protocol</span>
-        <strong>Responses</strong>
-        <span>Model</span>
-        <strong>{connection.selectedModel}</strong>
-        <span>Credential</span>
-        <strong>{connection.apiKeyConfigured ? 'API key configured' : 'API key missing'}</strong>
-      </div>
-      <div className="formGrid">
-        <label>
-          Base URL
-          <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
-        </label>
-        <label>
-          New API key
-          <input
-            type="password"
-            autoComplete="new-password"
-            value={apiKey}
-            placeholder="Leave empty to keep the current key"
-            onChange={(event) => setApiKey(event.target.value)}
+      <div className="editorFormStack">
+        <div className="apiFormSection">
+          <div className="apiFormSectionHeader">
+            <h3 className="apiFormSectionTitle">
+              <span className="apiStepBadge" aria-hidden>
+                1
+              </span>
+              <span>Account overview</span>
+            </h3>
+            <p>Current account identity and credential status.</p>
+          </div>
+          <div className="kv apiAccountConnectionSummary">
+            <span>Account</span>
+            <strong>{connection.profileId}</strong>
+            <span>Protocol</span>
+            <strong>Responses</strong>
+            <span>Model</span>
+            <strong>{connection.selectedModel}</strong>
+            <span>Credential</span>
+            <strong>{connection.apiKeyConfigured ? 'API key configured' : 'API key missing'}</strong>
+          </div>
+        </div>
+
+        <div className="apiFormSection">
+          <div className="apiFormSectionHeader">
+            <h3 className="apiFormSectionTitle">
+              <span className="apiStepBadge" aria-hidden>
+                2
+              </span>
+              <span>Connection</span>
+            </h3>
+            <p>Update the endpoint URL or rotate the API key.</p>
+          </div>
+          <div className="formGrid formGrid--single">
+            <label>
+              Base URL
+              <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
+            </label>
+            <label>
+              API key
+              <input
+                type="password"
+                autoComplete="new-password"
+                aria-label="API key"
+                value={apiKey}
+                placeholder="Leave empty to keep the current key"
+                onChange={(event) => setApiKey(event.target.value)}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="apiFormSection">
+          <div className="apiFormSectionHeader">
+            <h3 className="apiFormSectionTitle">
+              <span className="apiStepBadge" aria-hidden>
+                3
+              </span>
+              <span>Models</span>
+            </h3>
+            <p>Fetch live models and manage the saved allowlist.</p>
+          </div>
+          <ProviderModelPicker
+            savedModels={connection.models}
+            selectedModelId={connection.selectedModel}
+            onRefreshModels={refreshModelsForPicker}
+            applying={applyingModels}
+            onApply={applyModelsFromPicker}
           />
-        </label>
-      </div>
-      <div className="apiAccountModels">
-        <div className="panelHead">
-          <div>
-            <strong>Selected models</strong>
-            <p className="statusHint">Only these saved models are shown by Codex /model.</p>
+        </div>
+
+        <div className="apiFormSection">
+          <div className="apiFormSectionHeader">
+            <h3 className="apiFormSectionTitle">
+              <span className="apiStepBadge" aria-hidden>
+                4
+              </span>
+              <span>Advanced options</span>
+            </h3>
+            <p>Context window and reasoning effort applied when saving models.</p>
           </div>
-          <UIButton
-            type="button"
-            size="sm"
-            disabled={refreshingModels}
-            onClick={async () => {
-              setRefreshingModels(true);
-              setError('');
-              setApplyMode(null);
-              setDraftModelIds([]);
-              setDraftSelectedModel('');
-              try {
-                const models = await onRefreshModels();
-                setFetchedModels(models);
-                if (!models.length) setError('No models were returned');
-              } catch (reason) {
-                setFetchedModels([]);
-                setError(reason instanceof Error ? reason.message : 'Could not refresh models');
-              } finally {
-                setRefreshingModels(false);
-              }
-            }}
-          >
-            {refreshingModels ? 'Fetching…' : 'Fetch models'}
-          </UIButton>
-        </div>
-        <div className="apiSelectedTagsRow">
-          {connection.models.map((model) => (
-            <span className="apiSelectedTag" key={model.id}>
-              {model.label}
-            </span>
-          ))}
-        </div>
-        {fetchedModels.length ? (
-          <div className="apiFetchedModels">
-            <strong>Fetched models</strong>
-            <p className="statusHint">Live result from the standard /models endpoint.</p>
-            <div className="apiModelChecklistViewport">
-              <div className="apiSelectedTagsRow">
-                {fetchedModels.map((model) => (
-                  <span className="apiSelectedTag" key={model.id}>
-                    {model.label}
-                  </span>
+          <div className="apiAdvancedRow apiAdvancedRow--nested">
+            <div className="apiAdvancedBlock">
+              <span className="apiAdvancedLabel">Context window</span>
+              <div className="apiPresetRow">
+                {(
+                  [
+                    ['128k', '128K'],
+                    ['272k', '272K'],
+                    ['1m', '1M'],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`apiPresetChip ${contextWindowPreset === value ? 'active' : ''}`}
+                    onClick={() => setContextWindowPreset(value)}
+                  >
+                    {label}
+                  </button>
                 ))}
-              </div>
-            </div>
-            {fetchedMatchesSaved ? (
-              <p className="statusHint" role="status">
-                Fetched models match the current allowlist.
-              </p>
-            ) : (
-              <div className="apiModelApplyActions">
-                <UIButton type="button" size="sm" onClick={beginReplaceAll}>
-                  Replace all
-                </UIButton>
-                <UIButton type="button" size="sm" onClick={beginCustomize}>
-                  Customize selection
-                </UIButton>
-              </div>
-            )}
-          </div>
-        ) : null}
-        {applyMode && !fetchedMatchesSaved ? (
-          <div className="apiModelApplyPanel">
-            {applyMode === 'customize' ? (
-              <fieldset className="apiModelFieldset">
-                <legend>Select active models</legend>
-                <div className="apiModelChecklistViewport">
-                  <div className="apiModelChecklist">
-                    {checklistModels.map((model) => {
-                      const active = draftModelIds.includes(model.id);
-                      return (
-                        <label
-                          key={model.id}
-                          className={`apiModelCheckItem ${active ? 'active' : ''}`}
-                        >
-                          <input
-                            type="checkbox"
-                            aria-label={`Select model ${model.id}`}
-                            checked={active}
-                            onChange={() => toggleDraftModel(model.id)}
-                          />
-                          <span>{model.label}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              </fieldset>
-            ) : (
-              <p className="statusHint">
-                Replace the saved allowlist with all {fetchedModels.length} fetched models.
-              </p>
-            )}
-            {candidateModels.length && (needsDefaultPick || draftSelectedModel) ? (
-              <label>
-                Default model
-                <select
-                  aria-label="Default model for allowlist"
-                  value={needsDefaultPick ? '' : draftSelectedModel}
-                  onChange={(event) => setDraftSelectedModel(event.target.value)}
+                <button
+                  type="button"
+                  className={`apiPresetChip ${contextWindowPreset === 'custom' ? 'active' : ''}`}
+                  onClick={() => setContextWindowPreset('custom')}
                 >
-                  {needsDefaultPick ? <option value="">Select a default model</option> : null}
-                  {candidateModels.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <div className="apiModelApplyActions">
-              <UIButton
-                type="button"
-                variant="primary"
-                size="sm"
-                disabled={applyingModels || !candidateModels.length || needsDefaultPick}
-                onClick={() => void applyModels()}
+                  Custom
+                </button>
+                <button
+                  type="button"
+                  className={`apiPresetChip ${contextWindowPreset === 'none' ? 'active' : ''}`}
+                  onClick={() => setContextWindowPreset('none')}
+                >
+                  Auto
+                </button>
+              </div>
+              {contextWindowPreset === 'custom' ? (
+                <input
+                  type="number"
+                  aria-label="Custom context window"
+                  placeholder="e.g. 200000"
+                  min={1}
+                  value={customContextWindow}
+                  onChange={(event) => setCustomContextWindow(event.target.value)}
+                />
+              ) : null}
+              <p className="statusHint">
+                Applied when you save models. Auto keeps Codex's native default.
+              </p>
+            </div>
+            <div className="apiAdvancedBlock">
+              <span className="apiAdvancedLabel">Default reasoning effort</span>
+              <select
+                aria-label="Default reasoning effort"
+                value={reasoningEffort}
+                onChange={(event) => setReasoningEffort(event.target.value)}
               >
-                {applyingModels ? 'Applying…' : 'Apply models'}
-              </UIButton>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">X-High</option>
+                <option value="max">Max</option>
+              </select>
+              <p className="statusHint">Written to model_reasoning_effort in the account config.</p>
             </div>
           </div>
-        ) : null}
+        </div>
       </div>
       {error ? (
         <div className="notice" role="alert">

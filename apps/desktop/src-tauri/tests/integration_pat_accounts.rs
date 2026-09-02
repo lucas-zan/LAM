@@ -682,7 +682,7 @@ fn test_delete_account_removes_profile_wrapper_note_and_cache() {
         .iter()
         .all(|account| account.id != "delete-me"));
     let notes: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(home.join(".config/agent-workspace/account-notes.json")).unwrap(),
+        &std::fs::read_to_string(home.join(".lam/config/account-notes.json")).unwrap(),
     )
     .unwrap();
     assert!(notes["accounts"].get("delete-me").is_none());

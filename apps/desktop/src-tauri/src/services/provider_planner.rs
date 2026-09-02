@@ -1,4 +1,5 @@
 use super::error::{AppError, Result};
+use super::gateway::catalog::CodexModelDefaultsCatalog;
 use super::provider_binding::ProfileProviderBinding;
 use super::provider_binding::RouteKind;
 use super::provider_config_editor::ConfigProjectionSpec;
@@ -266,6 +267,7 @@ pub fn plan_profile_attach(
     } else {
         route.provider.name.clone()
     };
+    let context_window = resolve_model_context_window(&route);
     let config_projection = ConfigProjectionSpec {
         provider_id: route.provider_id.clone(),
         model: route.selected_model.clone(),
@@ -278,6 +280,9 @@ pub fn plan_profile_attach(
             .with_file_name(super::gateway::catalog::CODEX_MODEL_CATALOG_FILE)
             .to_string_lossy()
             .into_owned(),
+        model_context_window: context_window,
+        model_auto_compact_token_limit: context_window.map(compact_threshold),
+        reasoning_effort: route.provider.codex.reasoning_effort.clone(),
     };
     #[derive(Serialize)]
     struct Fingerprint<'a> {
@@ -423,4 +428,28 @@ fn validate_entry(
         ));
     }
     Ok(())
+}
+
+/// Resolve the effective context window for the selected model:
+/// an explicit Provider model declaration wins, otherwise the bundled
+/// Codex catalog is consulted for matching official model slugs.
+pub fn resolve_model_context_window(route: &ProviderRoutePlan) -> Option<i64> {
+    let declared = route
+        .provider
+        .models
+        .iter()
+        .find(|model| model.id == route.selected_model)
+        .and_then(|model| model.context_window)
+        .filter(|window| *window > 0);
+    if declared.is_some() {
+        return declared;
+    }
+    let builtin = CodexModelDefaultsCatalog::builtin().ok()?;
+    builtin.context_window_for(&route.selected_model)
+}
+
+/// Codex applies auto-compaction at 90% of the effective window when no
+/// explicit threshold is configured.
+pub fn compact_threshold(window: i64) -> i64 {
+    (window as f64 * 0.9).round() as i64
 }

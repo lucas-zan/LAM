@@ -15,10 +15,10 @@ use localagentmanager_core::gateway::upstream::{
     KeychainAndEnvironmentCredentialResolver, NetworkTargetPolicy, ProductionNetworkTargetPolicy,
     SecureUpstreamClient, UpstreamClientConfig,
 };
-use localagentmanager_core::provider_keychain::{KeychainCredentialService, SystemKeychainBackend};
+use localagentmanager_core::provider_keychain::KeychainCredentialService;
 use localagentmanager_core::provider_runtime::{
-    gateway_first_response_timeout_from_env, CODEX_MODEL_CATALOG_ENV,
-    GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV,
+    gateway_first_response_timeout_from_env, gateway_request_timeout_from_env,
+    CODEX_MODEL_CATALOG_ENV, GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV, GATEWAY_REQUEST_TIMEOUT_ENV,
 };
 use localagentmanager_core::storage::{InstallationLock, StoreOptions, VersionedFileStore};
 #[cfg(debug_assertions)]
@@ -90,7 +90,7 @@ async fn run() -> localagentmanager_core::Result<()> {
                 max_bytes: 16 * 1024 * 1024,
             },
         ),
-        KeychainCredentialService::new(Arc::new(SystemKeychainBackend)),
+        KeychainCredentialService::system_with_plaintext(&root),
     ));
     let upstream = Arc::new(SecureUpstreamClient::new(
         UpstreamClientConfig {
@@ -99,7 +99,9 @@ async fn run() -> localagentmanager_core::Result<()> {
                 std::env::var_os(GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV).as_deref(),
             )?,
             stream_idle_timeout: Duration::from_secs(60),
-            total_timeout: Duration::from_secs(15 * 60),
+            total_timeout: gateway_request_timeout_from_env(
+                std::env::var_os(GATEWAY_REQUEST_TIMEOUT_ENV).as_deref(),
+            )?,
             max_response_bytes: 32 * 1024 * 1024,
             max_inflight: 16,
             connect_retries: 2,
@@ -108,7 +110,7 @@ async fn run() -> localagentmanager_core::Result<()> {
         },
         network_target_policy()?,
         Arc::new(KeychainAndEnvironmentCredentialResolver::new(
-            KeychainCredentialService::new(Arc::new(SystemKeychainBackend)),
+            KeychainCredentialService::system_with_plaintext(&root),
         )),
     )?);
     let builtin_model_defaults = CodexModelDefaultsCatalog::builtin()?;
@@ -145,7 +147,9 @@ async fn run() -> localagentmanager_core::Result<()> {
             max_inflight_per_binding: 4,
             max_queue: 64,
             max_queue_per_binding: 8,
-            request_timeout: Duration::from_secs(15 * 60),
+            request_timeout: gateway_request_timeout_from_env(
+                std::env::var_os(GATEWAY_REQUEST_TIMEOUT_ENV).as_deref(),
+            )?,
         },
         listener,
         binding_service.clone(),
@@ -172,12 +176,23 @@ async fn run() -> localagentmanager_core::Result<()> {
         Duration::from_secs(2),
         Duration::from_secs(30),
     )?;
+    // Orphan protection: remember who launched us and stop when they are gone.
+    // This covers LAM being force-killed / overwritten during an install while
+    // this gateway is still serving; without it the gateway would linger as a
+    // child of launchd. A parent pid of 1 (launchd) means we were already
+    // adopted, in which case we do not self-terminate (an explicit control
+    // shutdown or idle policy still applies).
+    let parent_pid = unsafe { libc::getppid() };
+    let parent_tracked = parent_pid > 1;
     let mut idle_check = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
             _ = control.wait_for_shutdown_request() => break,
             _ = tokio::signal::ctrl_c() => break,
             _ = idle_check.tick() => {
+                if parent_tracked && !process_is_alive(parent_pid) {
+                    break;
+                }
                 let active_bindings = binding_service
                     .load()?
                     .value
@@ -200,6 +215,10 @@ async fn run() -> localagentmanager_core::Result<()> {
     let current = state_repo.load()?;
     state_repo.release_process(current.revision, pid, &chrono::Utc::now().to_rfc3339())?;
     Ok(())
+}
+
+fn process_is_alive(pid: libc::pid_t) -> bool {
+    unsafe { libc::kill(pid, 0) == 0 }
 }
 
 fn network_target_policy() -> localagentmanager_core::Result<Arc<dyn NetworkTargetPolicy>> {

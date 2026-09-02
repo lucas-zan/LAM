@@ -63,10 +63,12 @@ fn provider() -> ProviderDefinitionDto {
             ProviderModelDto {
                 id: "model-a".into(),
                 label: "Model A".into(),
+                context_window: None,
             },
             ProviderModelDto {
                 id: "model-b".into(),
                 label: "Model B".into(),
+                context_window: None,
             },
         ],
         upstream_auth: UpstreamAuthDto::None,
@@ -80,6 +82,7 @@ fn provider() -> ProviderDefinitionDto {
             route_via_gateway: false,
             query_params: BTreeMap::new(),
             env_http_headers: BTreeMap::new(),
+            reasoning_effort: None,
         },
     }
 }
@@ -331,9 +334,7 @@ fn legacy_keychain_responses_account_migrates_once_to_native_codex_auth() {
     .unwrap();
     fs::remove_file(outcome.account.home_path.join("auth.json")).unwrap();
 
-    let hub = home
-        .path()
-        .join("Library/Application Support/dev.localagentmanager.desktop/provider-hub");
+    let hub = home.path().join(".lam/provider-hub");
     let providers_path = hub.join("providers.json");
     let bindings_path = hub.join("bindings.json");
     let reference = KeychainCredentialReference::new("legacy-work-api", 1).unwrap();
@@ -422,6 +423,7 @@ fn api_account_connection_detail_is_redacted_and_url_key_updates_are_projected()
             api_key: Some("sk-replaced-not-real".into()),
             models: None,
             selected_model: None,
+            reasoning_effort: None,
         },
         &mut state,
         2_000,
@@ -455,6 +457,7 @@ fn api_account_connection_update_preserves_key_and_rejects_stale_or_invalid_chan
             api_key: None,
             models: None,
             selected_model: None,
+            reasoning_effort: None,
         },
         &mut state,
         2_000,
@@ -472,6 +475,7 @@ fn api_account_connection_update_preserves_key_and_rejects_stale_or_invalid_chan
                 api_key: None,
                 models: None,
                 selected_model: None,
+                reasoning_effort: None,
             },
             "STORE_REVISION_CONFLICT",
         ),
@@ -483,6 +487,7 @@ fn api_account_connection_update_preserves_key_and_rejects_stale_or_invalid_chan
                 api_key: None,
                 models: None,
                 selected_model: None,
+                reasoning_effort: None,
             },
             "PROVIDER_URL_INSECURE",
         ),
@@ -494,6 +499,7 @@ fn api_account_connection_update_preserves_key_and_rejects_stale_or_invalid_chan
                 api_key: Some("   ".into()),
                 models: None,
                 selected_model: None,
+                reasoning_effort: None,
             },
             "CODEX_API_KEY_EMPTY",
         ),
@@ -543,13 +549,16 @@ fn api_account_connection_can_replace_saved_models_and_rewrite_catalog() {
                 ProviderModelDto {
                     id: "model-c".into(),
                     label: "Model C".into(),
+                    context_window: None,
                 },
                 ProviderModelDto {
                     id: "model-d".into(),
                     label: "Model D".into(),
+                    context_window: None,
                 },
             ]),
             selected_model: None,
+            reasoning_effort: None,
         },
         &mut state,
         2_500,
@@ -568,13 +577,16 @@ fn api_account_connection_can_replace_saved_models_and_rewrite_catalog() {
                 ProviderModelDto {
                     id: "model-c".into(),
                     label: "Model C".into(),
+                    context_window: None,
                 },
                 ProviderModelDto {
                     id: "model-d".into(),
                     label: "Model D".into(),
+                    context_window: None,
                 },
             ]),
             selected_model: Some("model-d".into()),
+            reasoning_effort: None,
         },
         &mut state,
         2_600,
@@ -679,9 +691,7 @@ fn startup_migrates_legacy_responses_gateway_binding_and_wrapper_idempotently() 
         1_100,
     )
     .unwrap();
-    let hub = home
-        .path()
-        .join("Library/Application Support/dev.localagentmanager.desktop/provider-hub");
+    let hub = home.path().join(".lam/provider-hub");
     let providers_path = hub.join("providers.json");
     let bindings_path = hub.join("bindings.json");
     let mut providers: serde_json::Value =
@@ -759,9 +769,7 @@ fn startup_adds_the_official_model_catalog_to_an_existing_direct_account() {
     fs::write(&config_path, config.to_string()).unwrap();
     fs::remove_file(created.account.home_path.join("models.json")).unwrap();
 
-    let bindings_path = home.path().join(
-        "Library/Application Support/dev.localagentmanager.desktop/provider-hub/bindings.json",
-    );
+    let bindings_path = home.path().join(".lam/provider-hub/bindings.json");
     let mut bindings: serde_json::Value =
         serde_json::from_slice(&fs::read(&bindings_path).unwrap()).unwrap();
     let projection = &mut bindings["bindings"][0]["configProjection"];

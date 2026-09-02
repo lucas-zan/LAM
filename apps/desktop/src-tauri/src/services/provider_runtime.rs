@@ -17,15 +17,12 @@ pub struct ProviderHubPaths {
 impl ProviderHubPaths {
     pub fn for_home(home: &Path) -> Self {
         Self {
-            canonical_root: home
+            canonical_root: super::lam_paths::LamPaths::for_home(home).provider_hub_root(),
+            legacy_root: home
                 .join("Library")
                 .join("Application Support")
                 .join("dev.localagentmanager.desktop")
                 .join("provider-hub"),
-            legacy_root: home
-                .join(".config")
-                .join("agent-workspace")
-                .join("provider-hub-v2"),
         }
     }
 
@@ -85,6 +82,7 @@ pub struct AuthHelperRuntime {
 }
 
 pub const GATEWAY_FIRST_RESPONSE_TIMEOUT_ENV: &str = "LAM_GATEWAY_FIRST_RESPONSE_TIMEOUT_SECS";
+pub const GATEWAY_REQUEST_TIMEOUT_ENV: &str = "LAM_GATEWAY_REQUEST_TIMEOUT_SECS";
 pub const CODEX_MODEL_CATALOG_ENV: &str = "LAM_CODEX_MODEL_CATALOG_PATH";
 
 pub fn gateway_first_response_timeout_from_env(value: Option<&OsStr>) -> Result<Duration> {
@@ -105,6 +103,29 @@ pub fn gateway_first_response_timeout_from_env(value: Option<&OsStr>) -> Result<
             AppError::new(
                 "GATEWAY_TIMEOUT_CONFIG_INVALID",
                 "Gateway first response timeout configuration is invalid",
+            )
+        })?;
+    Ok(Duration::from_secs(seconds))
+}
+
+pub fn gateway_request_timeout_from_env(value: Option<&OsStr>) -> Result<Duration> {
+    let Some(value) = value else {
+        return Ok(Duration::from_secs(
+            super::types::DEFAULT_GATEWAY_REQUEST_TIMEOUT_SECONDS,
+        ));
+    };
+    let seconds = value
+        .to_str()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| {
+            (super::types::MIN_GATEWAY_REQUEST_TIMEOUT_SECONDS
+                ..=super::types::MAX_GATEWAY_REQUEST_TIMEOUT_SECONDS)
+                .contains(seconds)
+        })
+        .ok_or_else(|| {
+            AppError::new(
+                "GATEWAY_TIMEOUT_CONFIG_INVALID",
+                "Gateway request timeout configuration is invalid",
             )
         })?;
     Ok(Duration::from_secs(seconds))

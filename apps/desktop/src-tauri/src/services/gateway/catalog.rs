@@ -113,6 +113,13 @@ impl CodexModelDefaultsCatalog {
     fn get(&self, slug: &str) -> Option<&CodexModelDefaults> {
         self.models.get(slug)
     }
+
+    pub fn context_window_for(&self, slug: &str) -> Option<i64> {
+        self.models
+            .get(slug)
+            .and_then(|info| info.context_window)
+            .filter(|window| *window > 0)
+    }
 }
 
 fn positive(value: Option<i64>) -> Option<i64> {

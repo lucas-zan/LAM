@@ -6,6 +6,10 @@ use std::time::{Duration, Instant};
 pub struct GatewayProcessIdentity {
     pub executable: PathBuf,
     pub uid: u32,
+    /// Parent PID of the gateway process at inspection time. Used to detect
+    /// orphaned gateways whose launching LAM process has exited (their parent
+    /// becomes launchd, pid 1).
+    pub parent_pid: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +68,7 @@ impl GatewayProcessControl for SystemGatewayProcessControl {
         Ok(Some(GatewayProcessIdentity {
             executable: process_executable(pid)?,
             uid,
+            parent_pid: process_parent_pid(pid)?.unwrap_or(1),
         }))
     }
 
@@ -129,6 +134,28 @@ fn process_uid(pid: u32) -> Result<Option<u32>> {
         return Err(process_error("GATEWAY_PROCESS_INSPECTION_FAILED"));
     }
     Ok(Some(unsafe { info.assume_init() }.pbi_uid))
+}
+
+#[cfg(target_os = "macos")]
+fn process_parent_pid(pid: u32) -> Result<Option<u32>> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let expected = std::mem::size_of::<libc::proc_bsdinfo>();
+    let length = unsafe {
+        libc::proc_pidinfo(
+            pid as i32,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            expected as i32,
+        )
+    };
+    if length != expected as i32 {
+        if !process_exists(pid) {
+            return Ok(None);
+        }
+        return Err(process_error("GATEWAY_PROCESS_INSPECTION_FAILED"));
+    }
+    Ok(Some(unsafe { info.assume_init() }.pbi_ppid))
 }
 
 #[cfg(target_os = "macos")]
