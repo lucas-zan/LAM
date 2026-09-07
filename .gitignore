@@ -26,6 +26,7 @@ secrets.json
 **/auth.json
 # Allow only checked-in fake tokens under test fixtures
 !.fake-home/**/auth.json
+!examples/fake-home/**/auth.json
 
 # --- Node / frontend (apps/desktop) ---
 node_modules/
@@ -69,6 +70,8 @@ apps/desktop/src-tauri/generated/provider-gateway-install-manifest.json
 
 # --- .fake-home: keep static fixtures; ignore volatile state ---
 .fake-home/.config/agent-workspace/
+.fake-home/.lam/
+.fake-home/bin/
 .fake-home/**/cache/
 .fake-home/**/tmp/
 .fake-home/**/logs/
