@@ -57,6 +57,17 @@ export function quotaBucketVariant(bucket: AntigravityQuotaBucket): 'session' | 
   return bucket.window === 'weekly' ? 'weekly' : 'session';
 }
 
+export function formatAntigravityBucketLabel(displayName: string): string {
+  const lower = displayName.toLowerCase().trim();
+  if (lower.includes('five') || lower === '5h' || lower.startsWith('5h')) {
+    return '5h';
+  }
+  if (lower.includes('week')) {
+    return 'weekly';
+  }
+  return displayName;
+}
+
 function modelMatchesGroup(model: AntigravityModelQuota, group: AntigravityQuotaGroup): boolean {
   const modelLabel = normalize(model.label);
   return groupTerms(group).some((term) => modelLabel.includes(term));

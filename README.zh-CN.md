@@ -1,384 +1,199 @@
-# LAM — macOS Codex 账号、额度与 Session 管理器
+# LAM — 专为 macOS 设计的 Codex 多账号运行时与智能网关
 
-在 macOS 上管理多个 Codex CLI 账号、额度、使用量与 Session，并用另一个账号继续已有 Session。
+> 让 Codex 突破单账号额度限制与模型边界：支持**零泄露会话接力**、**第三方/自建 API 智能接入（Responses 直连 + Chat Completions 本地网关适配）**、**Session 账号一键导入（类似 sub2api）** 与 **全景配额监控**。
 
-**Early Preview** · **仅支持 macOS** · **仅支持 Codex** · **Local-first，但并非完全离线**
-
-LAM 是一款面向多 Codex CLI Profile 用户的 macOS 菜单栏工具。它扫描本机的 `CODEX_HOME`，查看额度和本地 Token 使用量，浏览和恢复 Session，并将已有 Session 安全接力到另一个账号继续。
-
-![LAM 账号、额度、使用量与 Session 总览](docs/assets/lam-overview.png)
-
-LAM 不会内嵌运行 Codex。Resume 或 Handoff 会使用所选 Profile 的 `CODEX_HOME`，在外部终端中启动 Codex；默认终端是 Terminal.app。
+[![Release](https://img.shields.io/badge/release-v0.4.0-blue.svg)](https://github.com/lucas-zan/LAM/releases/tag/v0.4.0)
+[![Platform](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-lightgrey.svg)]()
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 **English:** [`README.md`](README.md)
 
-## 为什么需要 LAM
+---
 
-Codex Session 属于创建它的 `CODEX_HOME`。当一个账号达到使用上限时，切换到另一个账号并不会自动让之前的 Session 出现在新账号下。LAM 可以准备该 Session，并通过另一个 Profile 恢复它。
+## 为什么选择 LAM？
 
-如果没有专用工具，用户通常需要手动找到正确的 Session JSONL，在不泄露账号状态的前提下复制它，选择正确的目标 Profile，再使用正确的环境执行 `codex resume`。直接复制整个 `~/.codex*` 目录并不安全，因为认证、配置、数据库、缓存和其他账号级状态也可能被一并复制。
+传统的 Codex CLI 用户在面对多账号和第三方模型时，往往陷入繁琐甚至危险的手动折腾：要么整盘拷贝 `~/.codex` 导致串号与密钥泄漏，要么因为 Codex 只支持官方 Responses 协议而无法使用市面上主流的 `/chat/completions` 模型。
 
-从实际用途看，LAM 同时是 Codex CLI Account Manager、Codex Session Manager、Codex Quota 面板、本地 Codex Usage Tracker、Codex Token Usage 分析工具、估算 Codex Cost Tracker，以及安全的 Codex Session Handoff 工具。
+**LAM（Local Agent Manager）彻底改变了这一点：**
 
-LAM 将以下能力集中在一个本地界面中：
+| 你的痛点 / 需求 | 传统手动做法 | LAM 优雅解决方案 |
+| :--- | :--- | :--- |
+| **官方账号额度耗尽** | 复制整套 `~/.codex`，极易串号、凭据与历史数据库污染 | **安全会话接力（Handoff）**：只迁移上下文 JSONL，**绝不复制 `auth.json`**，一键换号无感继续（`codex resume`） |
+| **想用第三方模型（DeepSeek / Claude / 自建模型）** | Codex 原生只支持 Responses 协议，普通 OpenAI 兼容接口无法直接使用 | **内置 Local Gateway**：自动将 `/chat/completions` 转换适配为 Responses 协议，任何兼容 API 即插即用 |
+| **有官方 Responses 协议上游** | 手动修改 `config.toml`，参数繁琐且容易配错 | **原生直连转发**：图形化创建 API 账号，一键 Fetch Models，自动映射受管配置 |
+| **手头有 ChatGPT Session Token** | 每次在终端跳转浏览器 OAuth 登录，繁琐耗时 | **Session 账号快速导入（类似 sub2api）**：直接粘贴 Session JSON 自动生成独立 Profile / PAT，无需打开浏览器 |
+| **多个账号需要并行开发** | 环境变量冲突，多终端同时跑容易覆盖配置 | **Profile 隔离模式**：每个账号独立 `CODEX_HOME` 与 wrapper，支持多窗口真正并发运行 |
+| **随时掌握账号配额进度** | 只能触发请求碰壁或登录网页查询 | **macOS 菜单栏常驻**：实时掌握 5h 与每周配额进度条、重置倒计时，**同时支持 Codex 与 Google Antigravity** |
 
-- 多个 Codex 账号及其 `CODEX_HOME` Profile；
-- Codex 额度和 Reset Credits；
-- 本地 Codex Token、调用、Thread 和估算成本；
-- Session 浏览、Resume、冲突处理与跨账号接力；
-- 自定义 OpenAI-compatible Provider Profile；以及
-- macOS 菜单栏额度快捷入口。
+![LAM 账号、额度、使用量与 Session 总览](docs/assets/lam-overview.png)
 
-## LAM 适合你吗？
+> **注意**：LAM **不内嵌** Codex 命令行。会话启动、接力及 API Profile 均在系统外部终端（默认 Terminal.app 或 Ghostty）中以官方 CLI 契约执行，保证稳定性与兼容性。
 
-LAM 适合：
+---
 
-- macOS 用户；
-- Codex CLI 重度用户；
-- 本机维护 `~/.codex` 和多个 `~/.codex-*` Profile 的开发者；
-- 经常切换多个 Codex 账号的人；
-- 一个账号额度不足后，需要跨账号继续已有 Session 的人；
-- 希望查看本地 Codex Quota、Token、调用量、Thread 和成本估算的人；以及
-- 使用自定义 OpenAI-compatible Responses 或 Chat Completions Provider 的高级用户。
+## 一览表：核心功能与特性
 
-LAM 可能不适合：
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                              LAM 运行时架构                             │
+├───────────────────────────────────┬────────────────────────────────────┤
+│           官方账号体系            │           第三方 API 体系          │
+│  • Profile 模式（多环境完全物理隔离）  │  • 原生 Responses 协议直连转发     │
+│  • PAT 模式（单目录凭据快速热切换）   │  • Chat Completions 本地网关智能适配│
+│  • Session JSON 一键导入 (免 OAuth)│  • 上游模型一键 Fetch 与 Allowlist │
+├───────────────────────────────────┴────────────────────────────────────┤
+│                              核心引擎与功能                             │
+│  • 零凭据泄漏的会话安全接力 (Safe Session Handoff)                       │
+│  • macOS 菜单栏常驻配额监控 (Codex 5h/周配额 + Antigravity 多模型分组)   │
+│  • 本地多维使用量看板 (Token 统计、调用热力图、成本预估)                │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
-- Windows 或 Linux 用户；
-- 只使用一个 Codex 账号且不需要本地使用量分析的人；
-- 当前需要 Claude Code 或 OpenCode 支持的人；
-- 需要云同步或多设备访问的人；
-- 希望直接在 LAM 窗口内运行 Codex 的人；或
-- 不熟悉 PAT、Session JSON 和认证文件风险的用户。
+---
 
-### 两种账号模式怎么选？
+## 核心亮点深度解析
 
-| 如果你需要…… | 适合的模式 |
-| --- | --- |
-| 一个活动空间、同一个 Codex CLI 和 App，并在活动的 `~/.codex` 中按需顺序切换账号 | **PAT 模式** — 高级功能；切换时会替换活动认证文件 |
-| 多个项目或任务并发运行，让多个账号同时存在于相互独立的 `CODEX_HOME` 中 | **Profile 模式** — 推荐用于 LAM 的核心工作流 |
+### 1. 第三方 API 账号：Responses 直连转发 + Chat Completions 本地网关适配
 
-Profile 模式按目录隔离账号状态和 Session。PAT 模式保留一个活动 Codex 空间，并切换写入其中的账号认证；它适合已经理解认证文件风险的用户。
+Codex 自定义 Provider 的官方稳定边界是 **`wire_api = "responses"`**。但市面上绝大多数中转平台、自建反代、开源大模型只提供标准 OpenAI `/chat/completions` 接口。
 
-## 核心流程
+LAM 原生提供**双路径智能适配**，让你彻底告别手写配置：
 
-1. **发现 Profile。** LAM 扫描 `~/.codex` 和 `~/.codex-*`，展示账号、Session 数量、额度和最近的本地 Session。
-2. **选择 Session。** 从账号卡或 Session 行打开 **Handoff Session**，在 UI 中选择源账号、源 Session 和目标账号。
-3. **安全准备目标。** LAM 只将选中的 Session JSONL 复制到目标 `CODEX_HOME` 下的对应路径。跨 Provider 写入前会检查兼容性；目标中已存在的 Session 会经过内容比较和显式冲突策略处理。
-4. **继续使用 Codex。** LAM 生成目标命令，并在所选外部终端中启动 `CODEX_HOME=<target> codex resume <session-id>`。
+| 上游接口协议 | LAM 怎么接 | Codex 看到什么 | 适用场景 |
+| :--- | :--- | :--- | :--- |
+| **OpenAI Responses**<br>(`/v1/responses`) | **直连转发 (Direct Projection)**：将 Base URL、认证、模型配置安全投影进该 Profile 的 `config.toml` | 官方 Responses Provider | 官方兼容的 Responses 上游端点 |
+| **Chat Completions**<br>(`/chat/completions`) | **本地 Gateway 智能适配**：内置轻量高效的 Rust 本地网关（`lam-provider-gateway`），实时将 Chat Completions 转换为 Responses 格式及双向流式协议 | 本机 Loopback 端点<br>(`127.0.0.1`) | DeepSeek、Claude、各大第三方模型中转平台、自建 vLLM / Ollama 端点 |
 
-## 功能
-
-### Account 与 Profile 管理
-
-- 扫描主 Profile `~/.codex` 以及同级的 `~/.codex-*`。
-- 展示 Profile 路径、认证状态、Session 数量、活动认证状态、Provider/Model、续费日期和备注。
-- 创建相互隔离的受管 Profile 和 shell wrapper。
-- 在冲突检查后重命名或删除非 `main` 的受管 Profile。
-- 使用所选 `CODEX_HOME` 打开 `codex login`。
-- 保持账号隔离：一个 Profile 对应一个 `CODEX_HOME`。
-
-### Quota
-
-- 展示 Codex 或 ChatGPT 返回的额度窗口，通常包括 5 小时和每周窗口，以及上游提供的重置时间。
-- 实时刷新失败时展示缓存的真实额度；完全没有真实数据时显示 `N/A`。
-- 上游返回相关信息时，展示 Reset Credit 数量和过期详情。
-- 分账号刷新额度，并在主窗口和菜单栏浮层中展示。
-- 不为自定义 External API Account 伪造额度百分比。
-
-Quota 与本地 Usage Analytics 是不同的数据：Quota 是上游账号状态，Usage 是从本机 Codex 事件数据中统计得到的。
-
-### Sessions、Resume 与 Handoff
-
-- 按账号浏览 Session，并读取 ID、工作目录、名称、摘要、Model、时间和 Provider mismatch 信息。
-- 复制或打开经过 shell 转义的 Resume 命令。
-- 默认在 Terminal.app 中启动 `codex resume`；Settings 中也提供 Ghostty 和 cmux 目标。
-- 在一个 Handoff 对话框中选择源账号、源 Session 和目标账号。
-- 复制目标缺失的 Session；当目标是源内容的旧前缀时扩展目标；否则识别内容分叉。
-- 支持保留备份、优先源版本、保留目标并创建源分叉、将时间线合并到分叉，以及为目标账号生成总结接力材料等策略。
-- 不兼容的跨 Provider 历史会在目标写入前被阻止；仅存在表示层损失时需要用户确认。
-
-### Safe Session Sync
-
-Safe Session Sync 是 Session Handoff 内部的安全复制步骤，范围被刻意限制：
-
-- 只复制 `sessions/` 下选中的一个 Session JSONL。
-- 在目标 `CODEX_HOME` 中保留相对 Session 路径。
-- 目标 Session 分叉时，会在执行配置的冲突策略前保留备份。
-- 当前不暴露批量同步整个 `sessions/` 目录的命令。
-
-由于 LAM 只复制选中的 Session 文件，而不是复制整个 Profile，所以 Handoff 不会复制：
-
-- `auth.json` 或 `auth-f.json`；
-- `config.toml`；
-- `history.jsonl`；
-- `logs_2.sqlite`、`state_*.sqlite`、LAM Usage 数据库等 SQLite 文件；
-- `cache/`；
-- `tmp/`；
-- `log/` 或 `logs/`；以及
-- `installation_id`。
-
-Session Handoff 不是 Dry Run 工作流。Provider 兼容性会在目标写入前分析；本地 Session 分叉则通过备份和显式策略处理。
-
-### 本地 Usage Analytics
-
-**Usage** 页面将本地 Codex JSONL 事件索引到 LAM 自己的 `.codex/lam/usage/` SQLite 数据库中。它支持账号/Workspace Scope、活动或归档历史、时间范围、搜索、Model、Reasoning Effort、价格可信度和分页过滤。
-
-当前 UI 展示：
-
-- Total、Input、Cached Input、Uncached Input、Output 和 Reasoning Output Token；
-- 调用量、Thread 数量、活动热力图、连续使用天数和最长 Turn；
-- 每次调用的 Model、Effort、时长、Context、Cache Ratio 和估算成本；
-- 每个 Thread 的调用、Session、Token、Cache Ratio、建议和估算成本；
-- 价格覆盖率、未知 Model、解析器诊断和跳过的事件；以及
-- 从原始本地日志按需读取的 Request、Assistant 和 Tool Output 详情。
-
-成本来自内置 Rate Card 的本地估算，不是 OpenAI Invoice 或真实账单余额。当前 “Codex Credits” 卡片复用了估算成本，并不表示真实 Credit 余额。
-
-![本地 Codex Token、调用、Thread 与估算成本](docs/assets/lam-usage.png)
-
-### Provider Profile
-
-- 创建、编辑、测试和删除 Provider Profile。
-- 自动发现或手动配置 Model Allowlist 和默认 Model。
-- 支持直接调用 OpenAI Responses Endpoint，以及为已验证 Chat Completions Adapter 提供本地认证 Gateway。
-- 通过环境变量、macOS Keychain、已批准的 Auth Command 或 Codex Profile Login 引用凭据。
-- 执行 Provider Attach、Rebind 和 Detach 前预览操作。
-- 将 Provider/Model Attach 到 Profile，并把受管配置投影写入该 Profile 的 `config.toml`。
-- 在 Session 上展示 Provider/Model mismatch。
-- 提供以账号为入口的 **External API Account** 流程，并可在同一 `CODEX_HOME` 内切换 Model。
-
-自定义 Provider 面向高级用户。兼容性取决于协议、Model、Tool、Streaming 行为和具体上游实现。
+* **API Account 一键式接入**：输入 Base URL、API Key 与协议类型即可完成接入。
+* **模型一键发现 (Fetch Models)**：支持自动拉取上游支持的模型列表，一键勾选 Model Allowlist，快速切换默认模型。
+* **凭据安全引用**：API Key 仅通过受管引用存储，不暴露在明文配置与前端状态中。
+* **安全附加与解绑**：Attach / Rebind / Detach 全流程可视化预览，在工具或状态历史不兼容时严格拦截（Fail-Closed）。
 
 ![创建 External API Account 并配置 Model](docs/assets/lam-external-api.png)
 
-### macOS 菜单栏
+---
 
-- 提供紧凑的账号额度浮层。
-- 支持刷新、打开主窗口、Resume 和 Handoff 快捷操作。
-- 可隐藏 Dock 图标并作为菜单栏应用运行。
-- LAM 主窗口与实际运行 Codex 的终端进程相互独立。
+### 2. 官方账号双模式：Profile 模式 vs PAT 模式
 
-![带账号 Relay 操作的 LAM 菜单栏额度浮层](docs/assets/lam-menu-bar.png)
+针对官方账号的不同使用习惯，LAM 提供了两种完全不同架构的运行模式：
 
-当前应用路由为 **Overview**、**Usage**、**Sessions**、**Providers** 和 **Settings**。
+| 维度 | Profile 模式（推荐） | PAT 模式（单目录模式） |
+| :--- | :--- | :--- |
+| **底层实现** | 每个账号独立一套 `~/.codex-<name>` 目录与 wrapper 脚本 | 所有账号共用默认的 `~/.codex` 目录，单点替换 `auth.json` |
+| **运行隔离性** | **完全物理隔离**：配置、会话记录、缓存、认证互不影响 | **单点覆盖**：当前激活账号的凭据会写入默认目录 |
+| **并发支持** | **支持**：不同终端窗口可同时运行不同账号，互不干扰 | **不支持**：同一时刻只能激活一个账号 |
+| **启动方式** | 通过 LAM 启动或使用生成的专属 wrapper 命令 | 直接在终端使用系统原生的 `codex` 命令 |
+| **适用人群** | 多账号并行开发、工作/个人环境严格隔离的高阶用户 | 习惯单目录操作、仅在额度耗尽时快速换号的用户 |
 
-## 认证模式
-
-LAM 提供 OAuth/Profile 和 PAT 两类账号工作流。两种模式对认证文件的写入行为不同。
-
-Settings 可以控制界面显示 Profile、PAT 或两种模式，也可以选择 Handoff、Resume 和 Login 使用的终端。
+在 LAM 设置（Settings）中可根据需要随时切换主展示模式。
 
 ![Profile/PAT 显示模式与 Handoff 终端设置](docs/assets/lam-settings.png)
 
-需要多个独立账号和 `CODEX_HOME` 并发工作时，选择 **Profile 模式**；明确需要一个 Codex CLI/App 活动空间，并愿意切换写入 `~/.codex` 的认证信息时，选择 **PAT 模式**。
+---
 
-### OAuth / Profile 模式
+### 3. Session 账号快速导入（类似 sub2api）
 
-- 使用相互隔离的 Codex Profile 及其已有认证状态。
-- **Login** 打开 `CODEX_HOME=<profile> codex login`；认证流程由 Codex 负责，并由 Codex 在对应 Profile 中写入认证状态。
-- Session Handoff 只复制选中的 Session，不会从源账号复制认证信息。
-- 普通 Profile 也可以通过粘贴 ChatGPT Session JSON 创建；导入过程会把提供的凭据转换为新 Profile 的 `auth.json`。
+无需繁琐地每次都打开浏览器进行 OAuth 网页跳转授权，LAM 提供了极速导入通道：
+
+* **支持粘贴 Session JSON**：直接复制粘贴外部导出的 ChatGPT Session JSON（包含 `accessToken`、`idToken` 等字段）或 `auth.json`。
+* **自动生成 Profile / PAT**：系统自动解析 Token 有效期、Plan 类型（Plus / Team / Enterprise 等），一键转换并初始化为可独立运行的 Codex Profile。
+* **支持 CPA 导出 (CPA Export)**：支持将已有账号导出为标准的 CPA 认证文件，便于在多台设备间快速分发与备份。
 
 ![将可信的 ChatGPT Session JSON 导入独立 Codex Profile](docs/assets/lam-import-session.png)
 
-### PAT 模式
+---
 
-PAT 管理是高级功能，并且**会修改认证文件**：
+### 4. 零凭据泄露的安全会话接力 (Safe Session Handoff)
 
-- 添加 PAT Account 会创建新的 `~/.codex-<name>` Profile、`auth.json`、最小 `config.toml` 和元数据。
-- 单独提供 Personal Access Token 时，LAM 将 PAT Runtime 形式写入 `auth.json`，并将上传的 Session Credential 保存在 `auth-f.json`。
-- Credential Upload Command 可以替换 Profile 的 `auth.json`。
-- 更新 Session Authentication 会替换该 PAT Profile 的 `auth-f.json`。
-- 切换 PAT Account 时，LAM 会原子地把所选 Profile 的 `auth.json` 写入活动的 `~/.codex/auth.json`，同步复制或删除 `auth-f.json`，验证结果，然后由 UI 尝试重启 ChatGPT App。
+当账号 A 的 5 小时会话窗口或每周额度耗尽时，无需重开话题：
 
-除非你理解哪个 Profile 是活动认证槽，并已在必要时准备安全备份，否则不要使用 PAT 模式。
+1. **选择会话与目标**：在 LAM 界面选择当前未完成的会话及有剩余额度的目标账号。
+2. **安全上下文迁移**：LAM **仅复制选中会话的单个 JSONL 记录**。
+   * **绝对不拷贝**：`auth.json`、`config.toml`、历史记录索引、SQLite 数据库、缓存、Token、系统 ID。
+   * **彻底避免串号**：目标账号的认证凭据保持 100% 独立纯净。
+3. **分叉与兼容预检**：支持模型兼容性检查；若目标端已存在同名会话，提供备份、优先源、Fork、时间线合并等多种安全策略。
+4. **一键恢复执行**：直接调用目标环境执行 `codex resume <session-id>`，在外部终端无缝接续工作。
 
-## 隐私与网络行为
+---
 
-LAM 是 local-first 工具，但并非完全离线。
+### 5. macOS 菜单栏全景配额监控 + 本地多维用量分析
 
-- Session、源代码和 Prompt 不会上传到 LAM 自己运营的服务器。
-- 项目没有 LAM 云端账号、云端 Session Store 或云同步服务。
-- 账号扫描、Session 浏览、Handoff 和本地 Usage 索引都在 Mac 上完成。
-- Usage SQLite 数据库不会持久化原始 Prompt/Response 内容，但 UI 可以按需从原始本地 JSONL 读取调用详情。
-- Quota 刷新可能启动 `codex app-server`，并使用所选 Profile 的认证访问 Codex 或 ChatGPT 服务。
-- Usage 和 Reset Credit 使用的部分 ChatGPT Web Backend 路径属于上游内部接口，可能随时变化。
-- Provider Test 和通过 Provider 运行的 Codex Session 会访问用户配置的上游 Provider。
-- Antigravity Quota 会检查本机进程，并访问手动配置的本地 Antigravity Language Server Endpoint。
-- 正常安装和开发可能访问 npm、Cargo Registry、GitHub 和用户配置的 API Provider。
+* **macOS 菜单栏常驻面板**：
+  * 随时点击菜单栏图标展开浮层，查看各账号的 **5h 滑动窗口**与 **每周额度** 剩余百分比及重置时间。
+  * **支持 Codex 与 Google Antigravity 双平台**：不仅能监控 Codex 各账号，还能分组实时追踪 Google Antigravity 的模型配额（Gemini 模型组、Claude & GPT 模型组）。
+  * 浮层内直接提供一键刷新与快捷 Resume 操作。
+* **本地用量看板 (Usage Dashboard)**：
+  * **Token 消耗统计**：精确追踪输入、输出及总 Token 数量。
+  * **请求与调用分析**：按天/周展示调用次数、Thread 活跃趋势与交互热力图。
+  * **成本预估**：根据使用模型和 Token 消耗进行本地成本分析与预估。
 
-## 安全
+![带账号 Relay 操作的 LAM 菜单栏额度浮层](docs/assets/lam-menu-bar.png)
+![本地 Codex Token、调用、Thread 与估算成本](docs/assets/lam-usage.png)
 
-LAM 会处理敏感的本地状态。使用高级功能前，请理解以下边界：
+---
 
-- **Handoff 边界：** 只复制选中的 Session JSONL。认证、配置、History、数据库、缓存、临时文件、日志和 Installation ID 都不在复制路径内。
-- **冲突边界：** 不兼容的 Provider History 会在目标写入前失败。分叉的本地 Session 不会被静默覆盖；配置的策略会保留备份或分叉。
-- **Provider Credential 边界：** Provider Secret 是 write-only 输入，并通过 Keychain、环境变量等引用保存或解析。Provider DTO 和 Plan 会保持脱敏。
-- **PAT 边界：** PAT 导入、更新和切换会创建或替换认证文件。这与 Session Handoff 不复制认证的保证是两个不同边界。
-- **导出边界：** ChatGPT Session JSON Import 和 CPA Export 可能包含 Access Token、Refresh Token、ID Token、Session Token、Account ID 或 Authorization Header。
+## 隐私、数据安全与边界承诺
 
-**请像对待密码一样对待导出的 Credential 文件。**
+LAM 坚持 **Local-First（本地优先）** 架构原则：
 
-不要提交导出的 Credential，不要粘贴到 Issue，也不要通过不可信渠道发送。仓库 Fixture 使用合成数据，切勿用真实认证文件替换。
+- **无云端服务**：没有 LAM 集中式账号系统，不收集、不上传任何会话记录、Prompt 内容或私有密钥。
+- **透明出网**：除配额查询、API 账号请求、Gateway 向上游转发以及本地语言服务探测外，所有数据均保存在本地 `~/.lam`。
+- **安全失败原则 (Fail-Closed)**：跨账号接力时若检测到环境冲突或协议断裂，严格终止操作并提示风险，绝不进行不可逆的静默覆盖。
 
-现有安全说明见 [Security and data safety](docs/03-security-and-data-safety.md)。部分旧设计文档包含已被替代的计划，因此当前源码和测试是功能行为的最终依据。
+---
 
-## 高级与实验功能
+## 快速安装与使用
 
-以下功能已经存在，但不属于风险最低的 Profile → Session → Handoff 核心路径：
+### 下载体验版 (macOS Apple Silicon)
 
-- **PAT Account Import 与切换** — 创建和替换认证文件，并可能重启 ChatGPT App。
-- **ChatGPT Session JSON Import** — 将粘贴的 Access/Refresh/ID/Session Token 转换为新的 Codex Profile。
-- **CPA Credential Export** — 为兼容工具导出认证信息。
-- **Reset Credits** — 存在可用 Reset Credit 时执行消耗操作；需要用户确认，并会改变上游账号状态。
-- **Antigravity Quota** — 通过手动配置的端口查询本机运行的 Antigravity Language Server。
-- **ChatGPT Usage Path 与 Fallback** — 存在可用 Credential 时访问 ChatGPT 内部 Web Backend，并使用 Codex app-server 和缓存数据作为回退路径。
-- **External Provider Gateway** — 将支持的 Chat Completions Provider 适配到 Responses Contract；不支持或包含有状态历史时会 fail closed。
+前往 [Releases 页面](https://github.com/lucas-zan/LAM/releases) 下载最新安装包：
 
-上游内部接口和第三方 Provider 行为可能独立于 LAM 发生变化。
+* **下载地址**：[v0.4.0 预编译 DMG](https://github.com/lucas-zan/LAM/releases/tag/v0.4.0) (`LAM_0.4.0_aarch64.dmg`)
+* 双击打开 DMG，将 LAM 拖拽入 `Applications`（应用程序）文件夹即可。
+* *系统要求：macOS 12+，需预先安装官方 Codex CLI。*
 
-## 当前限制
-
-- **Early Preview：** 仍可能存在体验问题、上游兼容性变化和未完成的人工验证。
-- **仅支持 macOS：** 不支持 Windows 和 Linux。
-- **仅支持 Codex：** Claude Code 和 OpenCode Adapter 尚未实现。
-- **下载包仅支持 Apple Silicon：** 当前 v0.3.0 Release 只提供 `aarch64` DMG，没有 Intel 或 Universal DMG。
-- **签名状态未确认：** 仓库和 v0.3.0 Release Metadata 无法证明已完成 Developer ID 签名或 Apple Notarization。
-- **必须使用外部终端：** LAM 不内嵌 Codex。默认使用 Terminal.app，也可选择 Ghostty 或 cmux。
-- **Sessions 页面按账号过滤：** 页面一次显示一个 Profile；Handoff 对话框提供跨 Profile 的源账号、Session 和目标账号流程。
-- **没有批量 Safe Sync：** 批量同步整个 `sessions/` 目录的功能已移除；Handoff 只复制一个选中的 Session JSONL。
-- **不合并 `history.jsonl`：** Handoff 不合并命令历史。
-- **Provider 兼容性有限：** 不支持的 Tool 或有状态 History 可能阻止跨 Provider Handoff。
-- **Quota 是 best effort：** 依赖 Codex/ChatGPT 认证和上游行为；External API Account 不会显示伪造额度。
-- **Usage 是本地近似统计：** 缺失或归档的日志会影响总数；成本是估算值，不是账单成本。
-- **没有云同步：** 除非用户自行移动，否则 Profile 和 Session 只保留在当前 Mac。
-- **人工验收未完成：** `docs/PHASE1-ACCEPTANCE.md` 中的项目目前全部未勾选。
-- **仓库完整检查当前不是绿色：** Frontend Build、UI Smoke、Vitest 和 `cargo test` 通过，但 `make check` 会因 4 个现有 Clippy Warning 被视为 Error 而停止。
-
-## 安装
-
-### 下载 Preview Release
-
-最新发布版本是适用于 Apple Silicon 的 [v0.3.0](https://github.com/lucas-zan/LAM/releases/tag/v0.3.0)：
-
-- `LAM_0.3.0_aarch64.dmg`
-- `LAM_0.3.0_aarch64.dmg.sha256`
-
-请将其视为 Preview Build。仓库元数据无法确认签名与公证状态。
-
-要使用 Session Resume 和实时 Codex 功能，系统中必须安装可用的 Codex CLI。
-
-### 从源码安装
-
-要求：
-
-- macOS；
-- Node.js 和 npm；
-- Rust 和 Cargo；以及
-- 用于真实账号、Quota、Session 和 Resume 的 Codex CLI。
+### 从源码编译运行
 
 ```bash
+# 1. 克隆代码仓库
 git clone https://github.com/lucas-zan/LAM.git
 cd LAM
+
+# 2. 安装前端与 Rust 依赖
 make install
+
+# 3. 启动开发模式
 make start
+
+# 4. 打包构建 DMG
+make dmg
 ```
 
-`make start` 启动原生 Tauri 开发应用。Vite 只是嵌入式 Renderer 的开发服务器。
+---
 
-如果不想扫描真实的 `~/.codex*`，可以使用仓库中的合成 Fixture：
-
-```bash
-LAM_HOME="$(pwd)/.fake-home" make start
-```
-
-Fixture 包含用于扫描测试的合成认证结构，不是真实可用的 Credential。
-
-## 开发
-
-在仓库根目录执行：
+## 常用命令速查
 
 | 命令 | 用途 |
-| --- | --- |
-| `make install` | `node_modules` 不存在时安装前端依赖 |
-| `make start` | 打包开发 Sidecar 并运行 `tauri dev` |
-| `LAM_HOME="$(pwd)/.fake-home" make start` | 使用仓库中的合成 Fixture Home 运行 |
-| `make accounts` | 使用 `lam-core` CLI 扫描账号 |
-| `make check` | Frontend Build、UI Smoke、Rust Format、Clippy 和 Rust Tests |
-| `make build` | 构建 macOS `.app` Bundle |
-| `make dmg` | 构建 `.app` 和带版本号的 DMG |
-| `make status` | 显示 Node、npm、Rust 和 Tauri 环境信息 |
+| :--- | :--- |
+| `make install` | 安装前端与 Rust 依赖 |
+| `make start` | 启动 Tauri 开发模式（实时热重载） |
+| `make check` | 运行前端测试、TypeScript 检查、Clippy 及 Rust 单元测试 |
+| `make build` | 编译打包生产版本的 `.app` |
+| `make dmg` | 生成可分发的 macOS DMG 安装镜像 |
 
-单独运行测试：
+---
 
-```bash
-cd apps/desktop
-npm test
-npm run test:ui
+## 参与贡献与开发
 
-cd src-tauri
-cargo test
-```
+欢迎提交 Issue 和 Pull Request！开发与架构设计详情可参考文档目录：
 
-对提交 `e2e41bd` 在 2026-07-27 的审计结果：
+* [产品架构设计文档](docs/01-product-design.md)
+* [安全与数据保护设计](docs/03-security-and-data-safety.md)
+* [桌面端运行时与交互设计](docs/DESKTOP-RUNTIME.md)
+* [Provider Gateway 协议覆盖文档](docs/remote-provider-gateway-contract-coverage.md)
 
-- `npm run build`：通过；
-- `npm run test:ui`：通过；
-- `npm test`：22 个文件、228 个测试通过；
-- `cargo test`：通过，部分环境/负载 Probe 被明确标记为 ignored；
-- `make check`：在运行 `cargo test` 前，因为 4 个现有 Clippy Warning 被提升为 Error 而失败；以及
-- 人工验收：没有完成记录。
+---
 
-单元和集成测试通过不代表 Release 已签名、公证，或已完成真实账号端到端验证。
+## 开源协议
 
-## 仓库结构
-
-```text
-apps/desktop/                 React、TypeScript、Vite、Zustand 与 UI Tests
-apps/desktop/src-tauri/       Tauri Commands、Rust Services、Binaries 与 Rust Tests
-.fake-home/                   本地开发与测试使用的合成 Fixture Home
-examples/fake-home/           较小的示例 Profile Fixture
-docs/                         产品、安全、Runtime、Contract、设计与 TODO 文档
-docs/assets/                  README 使用的产品截图
-plans/                        历史实施计划和报告
-Makefile                      仓库根目录开发命令
-LICENSE                       MIT License
-```
-
-用户界面路由位于 `apps/desktop/src/routes/`；Tauri Command 注册位于 `apps/desktop/src-tauri/src/main.rs`；Command Adapter 位于 `apps/desktop/src-tauri/src/commands/`；核心行为位于 `apps/desktop/src-tauri/src/services/`。
-
-现有相关文档：
-
-- [Desktop runtime](docs/DESKTOP-RUNTIME.md)
-- [Security and data safety](docs/03-security-and-data-safety.md)
-- [Tauri command contracts](docs/05-tauri-command-contracts.md)
-- [Phase 1 manual acceptance](docs/PHASE1-ACCEPTANCE.md)
-- [Remote Provider Gateway contract coverage](docs/remote-provider-gateway-contract-coverage.md)
-
-部分旧设计文档仍包含已被替代的 Phase Plan 或已移除的 Bulk Sync。后续文档整理建议将当前实现提取到：
-
-- `docs/ARCHITECTURE.md`
-- `docs/SECURITY.md`
-- `docs/PAT-MODE.md`
-- `docs/SESSION-HANDOFF.md`
-- `docs/PROVIDERS.md`
-- `docs/DEVELOPMENT.md`
-- `docs/TROUBLESHOOTING.md`
-
-这些聚焦文档目前尚未创建，因此没有作为已完成文档链接。
-
-## Roadmap
-
-- Claude Code Adapter。
-- OpenCode Adapter。
-- 如果维护者决定扩展当前 macOS 范围，则支持 Windows 和 Linux。
-- 提供签名、公证的 macOS 安装包，以及 Intel 或 Universal Build。
-- 完成并记录真实账号人工验收矩阵。
-- 上游出现稳定公开接口后，替换 ChatGPT 内部 Web Backend 依赖。
-- 完成上面列出的聚焦文档拆分。
-
-Roadmap 内容不是当前功能。
-
-## License
-
-[MIT](LICENSE) © 2026 LocalAgentManager contributors。
+本项目采用 [MIT License](LICENSE) 开源协议。

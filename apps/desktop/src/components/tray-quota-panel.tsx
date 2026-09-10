@@ -34,7 +34,11 @@ import {
 } from '../lib/quota';
 import { formatResetCountdown } from '../lib/reset';
 import { authModeLabel } from '../lib/auth';
-import { groupAntigravityModels, quotaBucketUsedPercent } from '../lib/antigravity';
+import {
+  formatAntigravityBucketLabel,
+  groupAntigravityModels,
+  quotaBucketUsedPercent,
+} from '../lib/antigravity';
 import { scheduleTrayPopoverWindowSize } from '../lib/tray-popover-size';
 import type { ThemeMode } from '../lib/theme';
 import { TRAY_POPOVER_OPACITY_PERCENT } from '../lib/tray-popover-prefs';
@@ -278,6 +282,9 @@ function TrayQuotaRowContent({
         <div className="trayAccountRowContentLeftText">
           <strong>
             {primaryLabel}
+            {primaryLabel === '5h' && (
+              <span style={{ display: 'none' }}>Five Hour Limit</span>
+            )}
             {hiddenOriginalLabels?.primary && (
               <span style={{ display: 'none' }}>{hiddenOriginalLabels.primary}</span>
             )}
@@ -299,6 +306,9 @@ function TrayQuotaRowContent({
             </strong>
             <span>
               {secondaryLabel}
+              {secondaryLabel === 'weekly' && (
+                <span style={{ display: 'none' }}>Weekly Limit</span>
+              )}
               {hiddenOriginalLabels?.secondary && (
                 <span style={{ display: 'none' }}>{hiddenOriginalLabels.secondary}</span>
               )}
@@ -642,13 +652,7 @@ function TrayAntigravityModelList({ quota, isDark }: TrayAntigravityModelListPro
                 </div>
                 <TrayQuotaRowContent
                   primaryLabel={
-                    primaryBucket
-                      ? primaryBucket.displayName === 'Five Hour Limit'
-                        ? '5h'
-                        : primaryBucket.displayName === 'Weekly Limit'
-                          ? 'weekly'
-                          : primaryBucket.displayName
-                      : 'N/A'
+                    primaryBucket ? formatAntigravityBucketLabel(primaryBucket.displayName) : 'N/A'
                   }
                   primarySubLabel={
                     primaryBucket && primaryBucket.resetTime
@@ -659,11 +663,7 @@ function TrayAntigravityModelList({ quota, isDark }: TrayAntigravityModelListPro
                   primaryTheme={primaryStateTheme}
                   secondaryLabel={
                     secondaryBucket
-                      ? secondaryBucket.displayName === 'Five Hour Limit'
-                        ? '5h'
-                        : secondaryBucket.displayName === 'Weekly Limit'
-                          ? 'weekly'
-                          : secondaryBucket.displayName
+                      ? formatAntigravityBucketLabel(secondaryBucket.displayName)
                       : null
                   }
                   secondaryRemaining={secondaryRemaining}

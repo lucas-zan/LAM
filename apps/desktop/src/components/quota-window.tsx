@@ -19,12 +19,17 @@ export function QuotaWindow(props: {
 
   const windowClass = props.appearance === 'tray' ? 'quotaWindow quotaWindow--tray' : 'quotaWindow';
 
-  const displayLabel =
-    props.label === 'Weekly Limit'
-      ? 'weekly'
-      : props.label === 'Five Hour Limit'
-        ? '5h'
-        : props.label;
+  const lowerLabel = props.label.toLowerCase().trim();
+  const isWeekly =
+    props.label === 'Weekly Limit' ||
+    lowerLabel.includes('weekly limit') ||
+    lowerLabel === 'weekly';
+  const is5h =
+    props.label === 'Five Hour Limit' ||
+    lowerLabel.includes('five hour limit') ||
+    lowerLabel === '5h';
+
+  const displayLabel = isWeekly ? 'weekly' : is5h ? '5h' : props.label;
 
   return (
     <div className={windowClass}>
@@ -33,6 +38,9 @@ export function QuotaWindow(props: {
           {displayLabel}
           {displayLabel === 'weekly' && <span style={{ display: 'none' }}>Weekly Limit</span>}
           {displayLabel === '5h' && <span style={{ display: 'none' }}>Five Hour Limit</span>}
+          {props.label && props.label !== displayLabel && (
+            <span style={{ display: 'none' }}>{props.label}</span>
+          )}
         </span>
         <strong>{value}</strong>
       </div>

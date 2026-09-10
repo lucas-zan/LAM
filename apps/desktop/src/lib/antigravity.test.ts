@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupAntigravityModels } from './antigravity';
+import { formatAntigravityBucketLabel, groupAntigravityModels } from './antigravity';
 import type { AntigravityQuotaResponse } from './types';
 
 const quota: AntigravityQuotaResponse = {
@@ -46,5 +46,18 @@ describe('groupAntigravityModels', () => {
 
     expect(otherGroup.group.displayName).toBe('Other models');
     expect(otherGroup.models.map((model) => model.label)).toEqual(['Unknown Preview']);
+  });
+});
+
+describe('formatAntigravityBucketLabel', () => {
+  it('formats five-hour and weekly bucket labels correctly', () => {
+    expect(formatAntigravityBucketLabel('Five Hour Limit Remaining')).toBe('5h');
+    expect(formatAntigravityBucketLabel('Five Hour Limit')).toBe('5h');
+    expect(formatAntigravityBucketLabel('5h')).toBe('5h');
+    expect(formatAntigravityBucketLabel('5h limit')).toBe('5h');
+    expect(formatAntigravityBucketLabel('Weekly Limit Remaining')).toBe('weekly');
+    expect(formatAntigravityBucketLabel('Weekly Limit')).toBe('weekly');
+    expect(formatAntigravityBucketLabel('weekly')).toBe('weekly');
+    expect(formatAntigravityBucketLabel('Custom Bucket')).toBe('Custom Bucket');
   });
 });
