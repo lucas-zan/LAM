@@ -2050,6 +2050,11 @@ html[data-tray-popover='1'] #root {
 .trayAccountRow--monthlyOnly .trayAccountRowContentLeftText {
   width: 160px;
 }
+.trayAntigravityModelRow .trayAccountRowContentLeftText {
+  width: auto;
+  min-width: 48px;
+  max-width: 130px;
+}
 .trayAccountRowContentLeftText strong {
   font-size: 13px;
   font-weight: 850;

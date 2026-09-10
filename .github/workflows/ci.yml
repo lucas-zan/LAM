@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  check-and-test:
+    name: Lint, Test and Build
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - name: Install npm dependencies
+        run: |
+          cd apps/desktop
+          npm ci
+
+      - name: Frontend Build (TypeScript & Vite)
+        run: |
+          cd apps/desktop
+          npm run build
+
+      - name: Frontend Unit Tests (Vitest)
+        run: |
+          cd apps/desktop
+          npm test
+
+      - name: Rust Check & Tests
+        run: |
+          cd apps/desktop/src-tauri
+          cargo check
+          cargo test

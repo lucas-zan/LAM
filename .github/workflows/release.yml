@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (without leading v, e.g. 0.4.1)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-dmg:
+    name: Build macOS DMG (${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.os }}
+    continue-on-error: ${{ !matrix.platform.required }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: macos-14
+            arch: aarch64
+            name: Apple Silicon
+            required: true
+          - os: macos-13
+            arch: x64
+            name: Intel
+            required: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - name: Install npm dependencies
+        run: |
+          cd apps/desktop
+          npm ci
+
+      - name: Determine release version
+        id: get_version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION=$(node -p "require('./apps/desktop/package.json').version")
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building LAM version: $VERSION (${{ matrix.platform.arch }})"
+
+      - name: Build DMG and Checksums
+        run: |
+          make dmg VERSION="${{ steps.get_version.outputs.version }}"
+
+      - name: List generated DMG artifacts
+        run: |
+          ls -la apps/desktop/src-tauri/target/release/bundle/dmg/
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.platform.arch }}
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg.sha256
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-dmg
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all DMG artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: List release artifacts
+        run: |
+          echo "Artifacts to publish:"
+          ls -la release-artifacts/
+
+      - name: Determine tag name
+        id: tag_info
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG_NAME="${GITHUB_REF_NAME}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            TAG_NAME="v${{ inputs.version }}"
+          else
+            TAG_NAME="v$(date +'%Y%m%d%H%M%S')"
+          fi
+          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "Release tag: $TAG_NAME"
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_info.outputs.tag }}
+          name: Release ${{ steps.tag_info.outputs.tag }}
+          files: |
+            release-artifacts/*.dmg
+            release-artifacts/*.dmg.sha256
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

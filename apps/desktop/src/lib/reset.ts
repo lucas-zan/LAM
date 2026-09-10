@@ -49,6 +49,53 @@ export function formatResetAt(resetAt?: string | null, kind: ResetWindowKind = '
   return `${formatted}`;
 }
 
+/**
+ * Formats relative countdown to reset time in official Antigravity style:
+ * e.g. "6 days, 20 hours", "1 hour, 56 minutes", "45 minutes", "30 seconds", or "now"
+ */
+export function formatOfficialCountdown(
+  resetAt?: string | number | Date | null,
+  referenceNow: number = Date.now(),
+): string {
+  if (!resetAt) return 'unknown';
+  const date =
+    typeof resetAt === 'object' && resetAt instanceof Date
+      ? resetAt
+      : parseResetAt(String(resetAt));
+  if (!date) return 'unknown';
+
+  const diffMs = date.getTime() - referenceNow;
+  if (diffMs <= 0) return 'now';
+
+  const diffSecs = Math.floor(diffMs / 1000);
+  const days = Math.floor(diffSecs / 86400);
+  const hours = Math.floor((diffSecs % 86400) / 3600);
+  const minutes = Math.floor((diffSecs % 3600) / 60);
+  const seconds = diffSecs % 60;
+
+  if (days > 0) {
+    const dayStr = `${days} ${days === 1 ? 'day' : 'days'}`;
+    if (hours > 0) {
+      return `${dayStr}, ${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+    }
+    return dayStr;
+  }
+
+  if (hours > 0) {
+    const hourStr = `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+    if (minutes > 0) {
+      return `${hourStr}, ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+    }
+    return hourStr;
+  }
+
+  if (minutes > 0) {
+    return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  }
+
+  return `${seconds} ${seconds === 1 ? 'second' : 'seconds'}`;
+}
+
 export function formatResetCountdown(
   resetAt?: string | null,
   kind: ResetWindowKind = 'session',

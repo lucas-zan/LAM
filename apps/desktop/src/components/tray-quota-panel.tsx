@@ -32,7 +32,7 @@ import {
   quotaRemainingPercent,
   resetCreditDisplay,
 } from '../lib/quota';
-import { formatResetCountdown } from '../lib/reset';
+import { formatOfficialCountdown, formatResetCountdown } from '../lib/reset';
 import { authModeLabel } from '../lib/auth';
 import {
   formatAntigravityBucketLabel,
@@ -523,24 +523,7 @@ function TrayPopoverFooter({ onClose: _onClose, onOpen }: TrayPopoverFooterProps
 }
 
 function formatRelativeTime(resetTimeStr: string | null | undefined): string {
-  if (!resetTimeStr) return 'unknown';
-  const date = new Date(resetTimeStr);
-  if (Number.isNaN(date.getTime())) return 'unknown';
-  const diffMs = date.getTime() - Date.now();
-  if (diffMs <= 0) return 'now';
-
-  const diffSecs = Math.floor(diffMs / 1000);
-  const hours = Math.floor(diffSecs / 3600);
-  const minutes = Math.floor((diffSecs % 3600) / 60);
-  const seconds = diffSecs % 60;
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
-  }
-  return `${seconds}s`;
+  return formatOfficialCountdown(resetTimeStr);
 }
 
 interface TrayAntigravityModelListProps {

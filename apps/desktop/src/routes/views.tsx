@@ -172,6 +172,7 @@ export function AntigravityModels({
                       usedPercent={quotaBucketUsedPercent(bucket)}
                       resetAt={bucket.resetTime}
                       variant={quotaBucketVariant(bucket)}
+                      isAntigravity
                     />
                   ))}
               </div>
@@ -257,6 +258,7 @@ export function AntigravityModels({
                   usedPercent={usedPercent}
                   resetAt={model.resetTime}
                   variant="session"
+                  isAntigravity
                 />
               </div>
             </article>
