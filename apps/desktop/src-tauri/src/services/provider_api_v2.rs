@@ -1291,15 +1291,20 @@ pub fn repair_stale_codex_auth_projections_service_v2(home_root: &Path) -> Resul
             .get("model_provider")
             .map(|value| value.trim_matches('"').to_owned())
             .unwrap_or_else(|| binding.provider_id.clone());
-        let Some((command, mut args)) =
-            codex_auth_command_from_config(&source, &provider_table_id)
+        let Some((command, mut args)) = codex_auth_command_from_config(&source, &provider_table_id)
         else {
             continue;
         };
         if !codex_auth_projection_stale(&command, &args, &state_root) {
             continue;
         }
-        if validate_managed_projection(&source, &provider_table_id, &binding.config_projection.managed_values).is_err() {
+        if validate_managed_projection(
+            &source,
+            &provider_table_id,
+            &binding.config_projection.managed_values,
+        )
+        .is_err()
+        {
             continue;
         }
         if let Some(index) = auth_state_root_arg_index(&args) {
@@ -1356,7 +1361,10 @@ pub fn repair_stale_codex_auth_projections_service_v2(home_root: &Path) -> Resul
     Ok(repaired)
 }
 
-fn codex_auth_command_from_config(source: &str, provider_table_id: &str) -> Option<(String, Vec<String>)> {
+fn codex_auth_command_from_config(
+    source: &str,
+    provider_table_id: &str,
+) -> Option<(String, Vec<String>)> {
     let document = source.parse::<DocumentMut>().ok()?;
     let auth = document
         .get("model_providers")?
@@ -2158,6 +2166,17 @@ pub fn update_provider_service_v2(
             .iter()
             .find(|item| item.id == request.provider.id)
             .ok_or_else(|| AppError::new("PROVIDER_NOT_FOUND", &request.provider.id))?;
+        let next = request.provider.to_domain()?;
+        if next.default_model != previous.default_model
+            || next.models.len() != previous.models.len()
+            || next
+                .models
+                .iter()
+                .zip(&previous.models)
+                .any(|(a, b)| a.id != b.id || a.label != b.label)
+        {
+            return update_attached_account_models(home_root, &request, previous, now);
+        }
         validate_attached_provider_update(previous, &request.provider)?;
     }
     let snapshot = ProviderRepository::new(stores.providers).update(
@@ -2194,6 +2213,143 @@ pub fn update_provider_service_v2(
         super::provider_runtime::resolve_auth_helper_executable().is_ok(),
     );
     Ok(view)
+}
+
+fn update_attached_account_models(
+    home_root: &Path,
+    request: &UpdateProviderRequestV2,
+    previous: &ProviderProfileV2,
+    now: &str,
+) -> Result<ProviderProfileView> {
+    let stores = provider_hub_stores(home_root)?;
+    let binding = exclusive_model_update_binding(&stores, request)?;
+    let next = provider_for_model_update(request, previous, now)?;
+    let now_ms = chrono::DateTime::parse_from_rfc3339(now)
+        .map_err(|_| AppError::new("PROVIDER_TIMESTAMP_INVALID", "invalid update timestamp"))?
+        .timestamp_millis()
+        .max(0) as u64;
+    let mut state = ProviderApiV2State::default();
+    let view = plan_account_model_update(home_root, &binding, next, &mut state, now_ms)?;
+    commit_account_model_update(stores, request, previous, &view.plan_id, &mut state, now_ms)?;
+    list_provider_views_service_v2(home_root)?
+        .into_iter()
+        .find(|p| p.id == previous.id)
+        .ok_or_else(|| AppError::new("PROVIDER_NOT_FOUND", &previous.id))
+}
+
+fn exclusive_model_update_binding(
+    stores: &ProviderHubStores,
+    request: &UpdateProviderRequestV2,
+) -> Result<ProfileProviderBinding> {
+    if stores.providers.load_or_default()?.revision != request.expected_revision {
+        return Err(AppError::new(
+            "STORE_REVISION_CONFLICT",
+            "Provider store revision changed",
+        ));
+    }
+    let bindings = stores.bindings.load_or_default()?;
+    let bound: Vec<_> = bindings
+        .value
+        .bindings
+        .iter()
+        .filter(|b| b.provider_id == request.provider.id)
+        .collect();
+    if bound.len() != 1 || request.provider.id != format!("account-{}", bound[0].profile_id) {
+        return Err(AppError::new(
+            "PROVIDER_HAS_BINDINGS_REBIND_REQUIRED",
+            "shared Provider model changes require an explicit rebind plan",
+        ));
+    }
+    Ok(bound[0].clone())
+}
+
+fn provider_for_model_update(
+    request: &UpdateProviderRequestV2,
+    previous: &ProviderProfileV2,
+    now: &str,
+) -> Result<ProviderProfileV2> {
+    let mut settings_only = request.provider.clone();
+    settings_only.default_model = previous.default_model.clone();
+    settings_only.models = previous
+        .models
+        .iter()
+        .map(|m| ProviderModelDto {
+            id: m.id.clone(),
+            label: m.label.clone(),
+            context_window: m.context_window,
+        })
+        .collect();
+    validate_attached_provider_update(previous, &settings_only)?;
+    let mut next = build_provider(request.provider.to_domain()?, now)?;
+    next.created_at = previous.created_at.clone();
+    Ok(next)
+}
+
+fn plan_account_model_update(
+    home_root: &Path,
+    binding: &ProfileProviderBinding,
+    next: ProviderProfileV2,
+    state: &mut ProviderApiV2State,
+    now_ms: u64,
+) -> Result<ProfileAttachPlanView> {
+    plan_attach_with_provider(
+        home_root,
+        Path::new(&binding.config_projection.config_path),
+        PlanAttachRequestV2 {
+            profile_id: binding.profile_id.clone(),
+            provider_id: next.id.clone(),
+            selected_model: next.default_model.clone(),
+        },
+        state,
+        now_ms,
+        AttachProviderOptions {
+            resolver: &ProductionCredentialResolver { home_root },
+            gateway_available: super::provider_runtime::resolve_auth_helper_executable().is_ok(),
+            replacement: Some(next),
+        },
+    )
+}
+
+fn commit_account_model_update(
+    stores: ProviderHubStores,
+    request: &UpdateProviderRequestV2,
+    previous: &ProviderProfileV2,
+    ticket: &str,
+    state: &mut ProviderApiV2State,
+    now_ms: u64,
+) -> Result<()> {
+    let plan = state
+        .attach_plans
+        .get(ticket)
+        .expect("issued model update plan");
+    if plan.expected_provider_store_revision.checked_sub(1) != Some(request.expected_revision) {
+        return Err(AppError::new(
+            "STORE_REVISION_CONFLICT",
+            "Provider store changed while planning the update",
+        ));
+    }
+    ensure_gateway_state_for_plan(&stores.gateway_state, plan)?;
+    let gateway = GatewayBindingService::new(
+        stores.gateway_bindings,
+        KeychainCredentialService::system_with_plaintext(&stores.root),
+    );
+    let coordinator = AttachTransactionCoordinator::new(
+        stores.lock,
+        stores.providers,
+        stores.bindings,
+        stores.journals,
+        Arc::new(gateway),
+        1,
+    );
+    coordinator.execute_provider_update(
+        &mut state.registry,
+        ticket,
+        plan,
+        previous,
+        now_ms,
+        None,
+    )?;
+    Ok(())
 }
 
 /// After a non-destructive attached-Provider update, write the resolved
@@ -4352,15 +4508,55 @@ pub fn plan_attach_service_v2_with_resolver(
     resolver: &dyn ProviderCredentialResolver,
     gateway_available: bool,
 ) -> Result<ProfileAttachPlanView> {
+    plan_attach_with_provider(
+        home_root,
+        config_path,
+        request,
+        state,
+        now_ms,
+        AttachProviderOptions {
+            resolver,
+            gateway_available,
+            replacement: None,
+        },
+    )
+}
+
+struct AttachProviderOptions<'a> {
+    resolver: &'a dyn ProviderCredentialResolver,
+    gateway_available: bool,
+    replacement: Option<ProviderProfileV2>,
+}
+
+fn plan_attach_with_provider(
+    home_root: &Path,
+    config_path: &Path,
+    request: PlanAttachRequestV2,
+    state: &mut ProviderApiV2State,
+    now_ms: u64,
+    options: AttachProviderOptions<'_>,
+) -> Result<ProfileAttachPlanView> {
+    let AttachProviderOptions {
+        resolver,
+        gateway_available,
+        replacement,
+    } = options;
     let stores = provider_hub_stores(home_root)?;
-    let providers = stores.providers.load_or_default()?;
-    let provider = providers
+    let mut providers = stores.providers.load_or_default()?;
+    let mut provider = providers
         .value
         .providers
         .iter()
         .find(|provider| provider.id == request.provider_id)
         .cloned()
         .ok_or_else(|| AppError::new("PROVIDER_NOT_FOUND", request.provider_id))?;
+    let updating = replacement.is_some();
+    if let Some(next) = replacement {
+        provider = next;
+        providers.revision = providers.revision.checked_add(1).ok_or_else(|| {
+            AppError::new("STORE_REVISION_CONFLICT", "Provider revision overflow")
+        })?;
+    }
     let bindings = stores.bindings.load_or_default()?;
     let existing = bindings
         .value
@@ -4387,10 +4583,20 @@ pub fn plan_attach_service_v2_with_resolver(
             choose_gateway_port()?
         }
     };
-    let binding_drifted = existing.is_some_and(|binding| {
-        binding.config_projection.applied_hash
-            != super::provider_config_editor::config_hash(&source)
-    });
+    if updating {
+        if let Some(binding) = existing {
+            validate_managed_projection(
+                &String::from_utf8_lossy(&source),
+                &binding.provider_id,
+                &binding.config_projection.managed_values,
+            )?;
+        }
+    }
+    let binding_drifted = !updating
+        && existing.is_some_and(|binding| {
+            binding.config_projection.applied_hash
+                != super::provider_config_editor::config_hash(&source)
+        });
     let gateway_binding_id = (route.route_kind == super::provider_binding::RouteKind::Gateway)
         .then(|| uuid::Uuid::new_v4().to_string());
     let auth_helper_path = if matches!(

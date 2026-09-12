@@ -140,11 +140,13 @@ export const useProviderStore = create<ProviderState>()((set, get) => ({
 
   saveProvider: async (provider, editing) => {
     const expectedRevision = requiredProviderStoreRevision(get());
+    const attached = get().providers.some((current) => current.id === provider.id && current.usedBy.length > 0);
     try {
       const request = { expectedRevision, provider };
       if (editing) await api.updateProviderV2(request);
       else await api.createProviderV2(request);
       await get().refresh();
+      if (editing && attached) await useAccountStore.getState().refresh();
       useAppStore
         .getState()
         .setStatus(`Provider ${provider.id} ${editing ? 'updated' : 'created'}`);
@@ -159,6 +161,9 @@ export const useProviderStore = create<ProviderState>()((set, get) => ({
           }),
         get().refresh,
       );
+      if (editing && !conflictCodes.has(structuredError(error)?.code ?? '')) {
+        await get().refresh().catch(() => undefined);
+      }
       useAppStore.getState().setError(formatError(error));
       throw error;
     }

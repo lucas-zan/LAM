@@ -131,7 +131,7 @@ export function ProviderModelPicker({
       setDraftSelectedModel('');
       setFetchedModels([]);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not apply models');
+      setError(formatProviderError(reason));
     }
   }
 
@@ -145,7 +145,7 @@ export function ProviderModelPicker({
         <UIButton
           type="button"
           size="sm"
-          disabled={refreshingModels}
+          disabled={refreshingModels || applying}
           onClick={async () => {
             setRefreshingModels(true);
             setError('');

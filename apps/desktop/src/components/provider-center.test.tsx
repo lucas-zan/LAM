@@ -499,3 +499,93 @@ describe('ApiAccountConnectionEditor', () => {
     });
   });
 });
+
+describe('Gateway account model saving', () => {
+  function renderGateway(onSave = vi.fn().mockResolvedValue(undefined)) {
+    render(
+      <ProviderEditor
+        provider={{
+          ...provider,
+          protocol: 'chat_completions',
+          adapter: {
+            kind: 'local',
+            adapterId: 'responses_to_chat_completions',
+            upstreamPath: '/chat/completions',
+          },
+          compatibilityProfile: 'openai_chat_completions',
+        }}
+        simpleCredentials
+        onSave={onSave}
+        onCancel={vi.fn()}
+        onRefreshModels={async () => [
+          { id: 'model-a', label: 'Model A' },
+          { id: 'model-c', label: 'Model C' },
+        ]}
+      />,
+    );
+    return onSave;
+  }
+
+  async function customize() {
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch models' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize selection' }));
+    fireEvent.click(screen.getByLabelText('Select model model-c'));
+  }
+
+  it.each(['model-a', 'model-c'])('persists Apply models with default %s', async (selected) => {
+    const onSave = renderGateway();
+    await customize();
+    fireEvent.change(screen.getByLabelText('Default model for allowlist'), {
+      target: { value: selected },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply models' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][0]).toMatchObject({
+      defaultModel: selected,
+      models: expect.arrayContaining([
+        expect.objectContaining({ id: 'model-c', label: 'Model C' }),
+      ]),
+    });
+  });
+
+  it('preserves the chosen context window when applying freshly fetched models', async () => {
+    const onSave = renderGateway();
+    fireEvent.click(screen.getByRole('button', { name: '1M' }));
+    await customize();
+    fireEvent.click(screen.getByRole('button', { name: 'Apply models' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(
+      onSave.mock.calls[0][0].models.every(
+        (model: { contextWindow?: number }) => model.contextWindow === 1_000_000,
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps the failed selection available for retry and displays structured errors', async () => {
+    const onSave = renderGateway(
+      vi.fn().mockRejectedValue({
+        code: 'STORE_REVISION_CONFLICT',
+        message: 'Provider changed; refresh and retry',
+        recoverable: true,
+      }),
+    );
+    await customize();
+    fireEvent.click(screen.getByRole('button', { name: 'Apply models' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect((await screen.findByRole('alert')).textContent).toMatch(
+      /Provider changed|STORE_REVISION_CONFLICT/,
+    );
+    expect(screen.getByLabelText('Select model model-c')).toHaveProperty('checked', true);
+    expect(screen.getByRole('button', { name: 'Apply models' })).toHaveProperty('disabled', false);
+  });
+
+  it('disables both save actions and fetching while applying a selection', async () => {
+    const onSave = renderGateway(vi.fn(() => new Promise<void>(() => {})));
+    await customize();
+    fireEvent.click(screen.getByRole('button', { name: 'Apply models' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(screen.getByRole('button', { name: 'Applying…' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Save Provider' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Fetch models' })).toHaveProperty('disabled', true);
+  });
+});

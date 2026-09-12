@@ -461,3 +461,29 @@ describe('useProviderStore V2', () => {
     expect(api.executeAttachProviderV2).not.toHaveBeenCalled();
   });
 });
+
+it('refreshes the account card after saving an attached Provider', async () => {
+  useProviderStore.setState({
+    providers: [{ ...provider, usedBy: ['profile-a'] }],
+    providerStoreRevision: 4,
+  });
+  const refreshAccounts = vi
+    .spyOn(useAccountStore.getState(), 'refresh')
+    .mockResolvedValue(undefined);
+  await useProviderStore.getState().saveProvider(definition, true);
+  expect(refreshAccounts).toHaveBeenCalledOnce();
+});
+
+it('refreshes a rolled-back save revision before the user retries', async () => {
+  useProviderStore.setState({ providers: [provider], providerStoreRevision: 4 });
+  const error = { code: 'ATTACH_BINDING_COMMIT_FAILED', message: 'Save rolled back' };
+  vi.mocked(api.updateProviderV2).mockRejectedValueOnce(error);
+  vi.mocked(api.listProvidersV2).mockResolvedValueOnce({ revision: 6, providers: [provider] });
+  await expect(useProviderStore.getState().saveProvider(definition, true)).rejects.toEqual(error);
+  expect(useProviderStore.getState().providerStoreRevision).toBe(6);
+  await useProviderStore.getState().saveProvider(definition, true);
+  expect(api.updateProviderV2).toHaveBeenLastCalledWith({
+    expectedRevision: 6,
+    provider: definition,
+  });
+});

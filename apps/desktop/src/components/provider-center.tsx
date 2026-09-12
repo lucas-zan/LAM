@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import * as api from '../lib/api';
 import type {
   ApiAccountConnectionViewV2,
@@ -11,6 +11,7 @@ import type {
   UpdateApiAccountConnectionRequestV2,
 } from '../lib/types';
 import { UIButton } from './ui-button';
+import { formatProviderError } from '../lib/format';
 import { Modal } from './shell';
 import { ProviderBindingDialog } from './provider-binding-dialog';
 import { ProviderModelPicker } from './provider-model-picker';
@@ -260,6 +261,7 @@ export function ProviderEditor({
   );
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef(false);
   const [advancedAuthOpen, setAdvancedAuthOpen] = useState(false);
   const [contextWindowPreset, setContextWindowPreset] = useState<
     '128k' | '272k' | '1m' | 'custom' | 'none'
@@ -338,25 +340,20 @@ export function ProviderEditor({
     return { kind: 'none' };
   }
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setError('');
+  function buildDefinition(models: ProviderModelV2[], selected: string): ProviderDefinitionV2 {
     let normalizedUrl: string;
     try {
       const url = new URL(baseUrl.trim());
       if (url.protocol !== 'https:' || url.username || url.password) throw new Error('invalid');
       normalizedUrl = url.toString().replace(/\/$/, '');
     } catch {
-      setError('Enter a valid HTTPS Provider URL');
-      return;
+      throw new Error('Enter a valid HTTPS Provider URL');
     }
-    if (!parsedModels.some((model) => model.id === defaultModel.trim())) {
-      setError('Default model must be listed in Models');
-      return;
+    if (!models.some((model) => model.id === selected.trim())) {
+      throw new Error('Default model must be listed in Models');
     }
     if (authKind !== 'none' && credentialKind === 'env' && !envKey.trim()) {
-      setError('Environment variable is required');
-      return;
+      throw new Error('Environment variable is required');
     }
     if (
       authKind !== 'none' &&
@@ -364,35 +361,29 @@ export function ProviderEditor({
       !approvalId.trim() &&
       !authCommandExecutable.trim()
     ) {
-      setError('Absolute auth command executable is required');
-      return;
+      throw new Error('Absolute auth command executable is required');
     }
     if (authKind !== 'none' && credentialKind === 'keychain' && !editing && !keychainSecret) {
-      setError('API key is required');
-      return;
+      throw new Error('API key is required');
     }
     if (authKind === 'header' && !headerName.trim()) {
-      setError('Header name is required');
-      return;
+      throw new Error('Header name is required');
     }
     if (
       protocol === 'chat_completions' &&
       (Number(requestRetries) !== 0 || Number(streamRetries) !== 0)
     ) {
-      setError('Gateway profiles require request and stream retries to be 0');
-      return;
+      throw new Error('Gateway profiles require request and stream retries to be 0');
     }
     if (
       protocol === 'chat_completions' &&
       (!upstreamPath.startsWith('/') || upstreamPath.includes('..') || upstreamPath.includes('?'))
     ) {
-      setError('Enter a controlled absolute upstream path');
-      return;
+      throw new Error('Enter a controlled absolute upstream path');
     }
     const timeout = Number(streamIdleTimeout);
     if (!Number.isSafeInteger(timeout) || timeout < 1) {
-      setError('Stream idle timeout must be a positive integer');
-      return;
+      throw new Error('Stream idle timeout must be a positive integer');
     }
 
     const credential = selectedCredential();
@@ -407,8 +398,8 @@ export function ProviderEditor({
       name: name.trim(),
       protocol,
       baseUrl: normalizedUrl,
-      defaultModel: defaultModel.trim(),
-      models: parsedModels,
+      defaultModel: selected.trim(),
+      models,
       upstreamAuth,
       adapter:
         protocol === 'responses'
@@ -431,6 +422,13 @@ export function ProviderEditor({
       },
     };
 
+    return definition;
+  }
+
+  async function persist(models: ProviderModelV2[], selected: string) {
+    if (saveInFlight.current) throw new Error('A Provider save is already in progress');
+    const definition = buildDefinition(models, selected);
+    saveInFlight.current = true;
     setSaving(true);
     try {
       await onSave(
@@ -446,12 +444,35 @@ export function ProviderEditor({
             }
           : null,
       );
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Provider operation failed');
     } finally {
       setKeychainSecret('');
+      saveInFlight.current = false;
       setSaving(false);
     }
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError('');
+    try {
+      await persist(parsedModels, defaultModel);
+    } catch (reason) {
+      setError(formatProviderError(reason));
+    }
+  }
+
+  async function applyModelSelection(models: ProviderModelV2[], selected: string) {
+    setError('');
+    const contextWindow = contextWindowPreset === 'custom'
+      ? Number(customContextWindow.trim())
+      : ({ '128k': 128_000, '272k': 272_000, '1m': 1_000_000, none: undefined } as const)[contextWindowPreset];
+    if (contextWindow !== undefined && (!Number.isSafeInteger(contextWindow) || contextWindow <= 0)) {
+      throw new Error('Context window must be a positive integer');
+    }
+    const selectedModels = models.map((model) => ({ ...model, contextWindow: contextWindow ?? model.contextWindow }));
+    if (editing) await persist(selectedModels, selected);
+    setModelsText(formatModels(selectedModels));
+    setDefaultModel(selected);
   }
 
   return (
@@ -647,10 +668,8 @@ export function ProviderEditor({
               savedModels={parsedModels}
               selectedModelId={defaultModel}
               onRefreshModels={refreshModelsForPicker}
-              onApply={(models, selected) => {
-                setModelsText(formatModels(models));
-                setDefaultModel(selected);
-              }}
+              onApply={applyModelSelection}
+              applying={saving}
             />
           ) : (
             <div className="formGrid">

@@ -30,6 +30,8 @@ vi.mock('./lib/api', () => ({
   listProfileProviderBindingsV2: vi.fn(),
   getApiAccountConnectionV2: vi.fn(),
   updateApiAccountConnectionV2: vi.fn(),
+  updateProviderV2: vi.fn(),
+  refreshProviderModelsV2: vi.fn(),
   listSessions: vi.fn(),
   listSessionsPage: vi.fn(),
   querySessionsPage: vi.fn(),
@@ -1592,16 +1594,12 @@ describe('App handoff modal', () => {
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
 
-    const input = (await screen.findByLabelText(
-      /gateway request timeout/i,
-    )) as HTMLInputElement;
+    const input = (await screen.findByLabelText(/gateway request timeout/i)) as HTMLInputElement;
     expect(input.value).toBe('1200');
     fireEvent.change(input, { target: { value: '1800' } });
     fireEvent.blur(input);
 
-    await waitFor(() =>
-      expect(api.setGatewayRequestTimeoutSeconds).toHaveBeenCalledWith(1800),
-    );
+    await waitFor(() => expect(api.setGatewayRequestTimeoutSeconds).toHaveBeenCalledWith(1800));
     expect(await screen.findByLabelText(/gateway request timeout/i)).toBeTruthy();
   });
 
@@ -1747,7 +1745,12 @@ describe('App handoff modal', () => {
       protocol: 'chat_completions',
       upstreamAuth: {
         kind: 'bearer',
-        credential: { kind: 'keychain', service: 'lam.remote-provider', account: 'cred/x/v1', version: 1 },
+        credential: {
+          kind: 'keychain',
+          service: 'lam.remote-provider',
+          account: 'cred/x/v1',
+          version: 1,
+        },
       },
       adapter: {
         kind: 'local',
@@ -1788,5 +1791,21 @@ describe('App handoff modal', () => {
     expect(screen.getByRole('button', { name: 'Fetch models' })).toBeTruthy();
     expect(api.getApiAccountConnectionV2).not.toHaveBeenCalled();
     expect(screen.queryByRole('heading', { name: 'API Account Configuration' })).toBeNull();
+
+    vi.mocked(api.refreshProviderModelsV2).mockResolvedValue({
+      ...gatewayProvider,
+      models: [...gatewayProvider.models, { id: 'model-new', label: 'New model' }],
+    });
+    vi.mocked(api.updateProviderV2).mockRejectedValue({
+      code: 'STORE_REVISION_CONFLICT',
+      message: 'Refresh and retry model selection',
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch models' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize selection' }));
+    fireEvent.click(screen.getByLabelText('Select model model-new'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply models' }));
+    await waitFor(() => expect(api.updateProviderV2).toHaveBeenCalledOnce());
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getByLabelText('Select model model-new')).toHaveProperty('checked', true);
   });
 });

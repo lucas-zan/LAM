@@ -9,8 +9,12 @@ use super::provider_config_editor::{
     ConfigManagedProjection,
 };
 use super::provider_planner::{DryRunRegistry, ProfileAttachPlan, ProfileDetachPlan};
-use super::provider_v2::ProviderCollection;
+use super::provider_v2::{ProviderCollection, ProviderProfileV2};
+
+#[path = "provider_attach_update.rs"]
+mod model_update;
 use super::storage::{InstallationLock, InstallationLockGuard, StoreSnapshot, VersionedFileStore};
+pub use model_update::AttachedProviderUpdate;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -76,6 +80,8 @@ pub struct AttachJournalRecord {
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
     pub last_error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_update: Option<AttachedProviderUpdate>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -282,7 +288,12 @@ fn validate_collection(value: &AttachJournalCollection) -> Result<()> {
 }
 
 fn validate_record(record: &AttachJournalRecord) -> Result<()> {
-    if record.journal_version != 1
+    let expected_version = if record.provider_update.is_some() {
+        2
+    } else {
+        1
+    };
+    if record.journal_version != expected_version
         || record.operation_id.trim().is_empty()
         || record.profile_id.trim().is_empty()
         || record.provider_id.trim().is_empty()
@@ -310,6 +321,9 @@ fn validate_record(record: &AttachJournalRecord) -> Result<()> {
             "ATTACH_JOURNAL_INVALID",
             "attach journal operation shape is invalid",
         ));
+    }
+    if let Some(update) = &record.provider_update {
+        update.validate(record)?;
     }
     let bytes = serde_json::to_vec(record)
         .map_err(|error| AppError::new("ATTACH_JOURNAL_INVALID", error.to_string()))?;
@@ -374,6 +388,12 @@ pub struct RecoveryReport {
     pub remaining: usize,
 }
 
+#[derive(Default)]
+struct AttachCommitOptions {
+    fault: Option<TransactionFault>,
+    provider_update: Option<AttachedProviderUpdate>,
+}
+
 pub struct AttachTransactionCoordinator<G: GatewayBindingLifecycle> {
     lock: InstallationLock,
     provider_store: VersionedFileStore<ProviderCollection>,
@@ -419,10 +439,36 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
         fault: Option<TransactionFault>,
     ) -> Result<AttachTransactionOutcome> {
         let guard = self.lock.acquire_exclusive()?;
-        registry.validate(ticket, &plan.fingerprint, &plan.fingerprint, now_ms)?;
-        self.validate_attach_state(&guard, plan)?;
+        self.execute_attach_locked(
+            &guard,
+            registry,
+            ticket,
+            plan,
+            now_ms,
+            AttachCommitOptions {
+                fault,
+                provider_update: None,
+            },
+        )
+    }
 
-        let bindings = self.binding_store.load_locked(&guard)?;
+    fn execute_attach_locked(
+        &self,
+        guard: &InstallationLockGuard,
+        registry: &mut DryRunRegistry,
+        ticket: &str,
+        plan: &ProfileAttachPlan,
+        now_ms: u64,
+        options: AttachCommitOptions,
+    ) -> Result<AttachTransactionOutcome> {
+        let AttachCommitOptions {
+            fault,
+            provider_update,
+        } = options;
+        registry.validate(ticket, &plan.fingerprint, &plan.fingerprint, now_ms)?;
+        self.validate_attach_state(guard, plan, provider_update.as_ref())?;
+
+        let bindings = self.binding_store.load_locked(guard)?;
         let previous = bindings
             .value
             .bindings
@@ -445,7 +491,7 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
         };
         let operation_id = Uuid::new_v4().to_string();
         let new_gateway_reference = if plan.route.route_kind == RouteKind::Gateway {
-            self.gateway.prepare(&guard, &operation_id, plan)?
+            self.gateway.prepare(guard, &operation_id, plan)?
         } else {
             None
         };
@@ -453,7 +499,7 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
             && new_gateway_reference.as_deref() != plan.gateway_binding_id.as_deref()
         {
             if let Some(reference) = new_gateway_reference.as_deref() {
-                let _ = self.gateway.revoke(&guard, reference);
+                let _ = self.gateway.revoke(guard, reference);
             }
             return Err(AppError::new(
                 "GATEWAY_BINDING_PLAN_MISMATCH",
@@ -468,7 +514,7 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
             now_ms,
         );
         let record = AttachJournalRecord {
-            journal_version: 1,
+            journal_version: if provider_update.is_some() { 2 } else { 1 },
             operation_id: operation_id.clone(),
             operation: if previous.is_some() {
                 AttachOperation::Rebind
@@ -496,12 +542,13 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
             created_at_ms: now_ms,
             updated_at_ms: now_ms,
             last_error_code: None,
+            provider_update: provider_update.clone(),
         };
-        let journal_revision = match self.create_journal_locked(&guard, record) {
+        let journal_revision = match self.create_journal_locked(guard, record) {
             Ok(revision) => revision,
             Err(error) => {
                 if let Some(reference) = &new_gateway_reference {
-                    let _ = self.gateway.revoke(&guard, reference);
+                    let _ = self.gateway.revoke(guard, reference);
                 }
                 return Err(error);
             }
@@ -511,6 +558,14 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
             return Err(interrupted("after prepared journal"));
         }
 
+        if let Some(update) = &provider_update {
+            update.backup_config(&source)?;
+            update.apply(
+                &self.provider_store,
+                guard,
+                plan.expected_provider_store_revision - 1,
+            )?;
+        }
         let config_result = if previous.is_some() {
             replace_config_file_with_backup(
                 &config_path,
@@ -528,11 +583,14 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
             .map(|_| ())
         };
         if let Err(error) = config_result {
+            if let Some(update) = &provider_update {
+                update.reconcile(&self.provider_store, guard, false)?;
+            }
             if let Some(reference) = &new_gateway_reference {
-                let _ = self.gateway.revoke(&guard, reference);
+                let _ = self.gateway.revoke(guard, reference);
             }
             let _ = self.transition_journal_locked(
-                &guard,
+                guard,
                 journal_revision,
                 &operation_id,
                 AttachJournalState::RolledBack,
@@ -542,7 +600,7 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
             return Err(error);
         }
         let journal_revision = self.transition_journal_locked(
-            &guard,
+            guard,
             journal_revision,
             &operation_id,
             AttachJournalState::ConfigCommitted,
@@ -555,10 +613,13 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
         if fault == Some(TransactionFault::FailBindingCommit) {
             replace_config_file(&config_path, &applied.projection.applied_hash, &source)?;
             if let Some(reference) = &new_gateway_reference {
-                self.gateway.revoke(&guard, reference)?;
+                self.gateway.revoke(guard, reference)?;
+            }
+            if let Some(update) = &provider_update {
+                update.reconcile(&self.provider_store, guard, false)?;
             }
             self.transition_journal_locked(
-                &guard,
+                guard,
                 journal_revision,
                 &operation_id,
                 AttachJournalState::RolledBack,
@@ -575,10 +636,10 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
         }
         if config_hash(&fs::read(&config_path)?) != applied.projection.applied_hash {
             if let Some(reference) = &new_gateway_reference {
-                let _ = self.gateway.revoke(&guard, reference);
+                let _ = self.gateway.revoke(guard, reference);
             }
             self.transition_journal_locked(
-                &guard,
+                guard,
                 journal_revision,
                 &operation_id,
                 AttachJournalState::ManualIntervention,
@@ -605,13 +666,13 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
             .bindings
             .sort_by(|a, b| a.profile_id.cmp(&b.profile_id));
         self.binding_store.compare_and_swap_locked(
-            &guard,
+            guard,
             plan.expected_binding_store_revision,
             &next_bindings,
             None,
         )?;
         let journal_revision = self.transition_journal_locked(
-            &guard,
+            guard,
             journal_revision,
             &operation_id,
             AttachJournalState::BindingCommitted,
@@ -628,10 +689,10 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
             .as_ref()
             .and_then(|item| item.gateway_binding_id.as_deref())
         {
-            self.gateway.revoke(&guard, reference)?;
+            self.gateway.revoke(guard, reference)?;
         }
         self.transition_journal_locked(
-            &guard,
+            guard,
             journal_revision,
             &operation_id,
             AttachJournalState::Completed,
@@ -708,6 +769,7 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
             created_at_ms: now_ms,
             updated_at_ms: now_ms,
             last_error_code: None,
+            provider_update: None,
         };
         let journal_revision = self.create_journal_locked(&guard, record)?;
         registry.consume(ticket, &plan.fingerprint, &plan.fingerprint, now_ms)?;
@@ -789,6 +851,7 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
         &self,
         guard: &InstallationLockGuard,
         plan: &ProfileAttachPlan,
+        update: Option<&AttachedProviderUpdate>,
     ) -> Result<()> {
         if !plan.blockers.is_empty() {
             return Err(AppError::new(
@@ -797,12 +860,19 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
             ));
         }
         let providers = self.provider_store.load_locked(guard)?;
-        if providers.revision != plan.expected_provider_store_revision
+        let expected_revision = plan
+            .expected_provider_store_revision
+            .checked_sub(u64::from(update.is_some()))
+            .ok_or_else(stale_plan)?;
+        let expected_provider = update
+            .map(|update| &update.previous_provider)
+            .unwrap_or(&plan.route.provider);
+        if providers.revision != expected_revision
             || !providers
                 .value
                 .providers
                 .iter()
-                .any(|provider| provider == &plan.route.provider)
+                .any(|provider| provider == expected_provider)
         {
             return Err(stale_plan());
         }
@@ -960,6 +1030,9 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
             if current_hash != record.config_intended_hash {
                 return self.mark_manual(guard, record, now_ms, "ATTACH_RECOVERY_CONFIG_CONFLICT");
             }
+            if let Some(update) = &record.provider_update {
+                update.reconcile(&self.provider_store, guard, true)?;
+            }
             let mut revision = self.journal_store.load_locked(guard)?.revision;
             let mut state = record.state;
             if state == AttachJournalState::Prepared {
@@ -1012,6 +1085,9 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
         if let Some(reference) = record.new_gateway_binding_ref.as_deref() {
             self.gateway.revoke(guard, reference)?;
         }
+        if let Some(update) = &record.provider_update {
+            update.reconcile(&self.provider_store, guard, false)?;
+        }
         let revision = self.journal_store.load_locked(guard)?.revision;
         self.transition_journal_locked(
             guard,
@@ -1019,13 +1095,20 @@ impl<G: GatewayBindingLifecycle> AttachTransactionCoordinator<G> {
             &record.operation_id,
             AttachJournalState::RolledBack,
             now_ms,
-            None,
+            record.last_error_code.clone(),
         )?;
         Ok(())
     }
 
     fn rollback_record_config(&self, record: &AttachJournalRecord) -> Result<()> {
         let path = Path::new(&record.config_path);
+        if let Some(update) = &record.provider_update {
+            return update.restore_config(
+                path,
+                &record.config_intended_hash,
+                &record.config_before_hash,
+            );
+        }
         let source = fs::read_to_string(path)?;
         let projection = record.managed_projection.as_ref().ok_or_else(|| {
             AppError::new(

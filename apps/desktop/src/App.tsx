@@ -1233,6 +1233,7 @@ export function App() {
                 setEditingGatewayProvider(null);
               } catch (error) {
                 useAppStore.getState().setError(formatError(error));
+                throw error;
               }
             }}
             onCancel={() => setEditingGatewayProvider(null)}

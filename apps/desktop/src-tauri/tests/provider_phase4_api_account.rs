@@ -1233,3 +1233,222 @@ fn existing_provider_is_reused_only_when_explicitly_selected() {
     let empty = CredentialReferenceDto::None;
     assert_eq!(serde_json::to_value(empty).unwrap()["kind"], "none");
 }
+
+fn create_gateway_model_account(home: &std::path::Path) -> ProviderDefinitionDto {
+    let request = deepseek_chat_request();
+    let ApiAccountProviderSelectionV2::New { provider } = request.provider.clone() else {
+        unreachable!()
+    };
+    let mut state = ProviderApiV2State::default();
+    let plan = plan_api_account_service_v2(home, request, &mut state, 1_000).unwrap();
+    execute_api_account_service_v2(
+        home,
+        ExecuteApiAccountRequestV2 {
+            plan_id: plan.plan_id,
+            fingerprint: plan.fingerprint,
+            api_key: None,
+        },
+        &mut state,
+        1_100,
+    )
+    .unwrap();
+    *provider
+}
+
+#[test]
+fn gateway_account_saves_models_with_unchanged_or_new_default() {
+    for selected in ["model-a", "model-c"] {
+        let home = tempfile::tempdir().unwrap();
+        let mut provider = create_gateway_model_account(home.path());
+        provider.default_model = selected.into();
+        provider.models[1] = ProviderModelDto {
+            id: "model-c".into(),
+            label: "Model C".into(),
+            context_window: Some(128_000),
+        };
+        let before = list_provider_hub_view_v2(home.path()).unwrap();
+        let original: toml::Value =
+            fs::read_to_string(home.path().join(".codex-deepseek-chat/config.toml"))
+                .unwrap()
+                .parse()
+                .unwrap();
+        let saved = localagentmanager_core::update_provider_service_v2(
+            home.path(),
+            CreateProviderRequestV2 {
+                expected_revision: before.revision,
+                provider,
+            },
+            "2026-09-12T08:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(saved.default_model, selected);
+        assert_eq!(
+            saved
+                .models
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["model-a", "model-c"]
+        );
+        let binding = list_binding_views_service_v2(home.path())
+            .unwrap()
+            .remove(0);
+        assert_eq!(binding.selected_model, selected);
+        assert_eq!(binding.provider_revision, saved.store_revision);
+        let config: toml::Value =
+            fs::read_to_string(home.path().join(".codex-deepseek-chat/config.toml"))
+                .unwrap()
+                .parse()
+                .unwrap();
+        assert_eq!(config["model"].as_str(), Some(selected));
+        assert_eq!(config.get("mcp_servers"), original.get("mcp_servers"));
+        assert_eq!(
+            config.get("approval_policy"),
+            original.get("approval_policy")
+        );
+        let catalog: serde_json::Value = serde_json::from_slice(
+            &fs::read(home.path().join(".codex-deepseek-chat/models.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            catalog["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| m["slug"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["model-a", "model-c"]
+        );
+        let hub = localagentmanager_core::provider_runtime::ProviderHubPaths::for_home(home.path())
+            .canonical_root()
+            .to_owned();
+        let gateways: serde_json::Value =
+            serde_json::from_slice(&fs::read(hub.join("gateway-bindings.json")).unwrap()).unwrap();
+        let active = gateways["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["revokedAt"].is_null())
+            .collect::<Vec<_>>();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0]["selectedModel"], selected);
+        assert_eq!(active[0]["provider"]["models"][1]["id"], "model-c");
+    }
+}
+
+fn gateway_model_files(home: &std::path::Path) -> Vec<Vec<u8>> {
+    let hub = localagentmanager_core::provider_runtime::ProviderHubPaths::for_home(home)
+        .canonical_root()
+        .to_owned();
+    [
+        hub.join("providers.json"),
+        hub.join("bindings.json"),
+        hub.join("gateway-bindings.json"),
+        home.join(".codex-deepseek-chat/config.toml"),
+        home.join(".codex-deepseek-chat/models.json"),
+    ]
+    .iter()
+    .map(|p| fs::read(p).unwrap())
+    .collect()
+}
+
+#[test]
+fn gateway_model_update_rejects_invalid_input_and_conflicts_without_writes() {
+    for case in [
+        "empty",
+        "duplicate",
+        "default",
+        "stale",
+        "drift",
+        "connection",
+        "shared",
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let mut provider = create_gateway_model_account(home.path());
+        provider.models.push(ProviderModelDto {
+            id: "model-c".into(),
+            label: "Model C".into(),
+            context_window: None,
+        });
+        let mut revision = list_provider_hub_view_v2(home.path()).unwrap().revision;
+        match case {
+            "empty" => provider.models.clear(),
+            "duplicate" => provider.models.push(provider.models[0].clone()),
+            "default" => provider.default_model = "missing".into(),
+            "stale" => revision -= 1,
+            "connection" => provider.base_url = "https://other.example.test/v1".into(),
+            "drift" => {
+                let path = home.path().join(".codex-deepseek-chat/config.toml");
+                let source = fs::read_to_string(&path)
+                    .unwrap()
+                    .replace("model = \"model-a\"", "model = \"externally-changed\"");
+                fs::write(path, source).unwrap();
+            }
+            "shared" => {
+                let hub = localagentmanager_core::provider_runtime::ProviderHubPaths::for_home(
+                    home.path(),
+                )
+                .canonical_root()
+                .to_owned();
+                let path = hub.join("bindings.json");
+                let mut data: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                let mut second = data["bindings"][0].clone();
+                second["profileId"] = "another-account".into();
+                data["bindings"].as_array_mut().unwrap().push(second);
+                fs::write(path, serde_json::to_vec(&data).unwrap()).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let before = gateway_model_files(home.path());
+        let error = localagentmanager_core::update_provider_service_v2(
+            home.path(),
+            CreateProviderRequestV2 {
+                expected_revision: revision,
+                provider,
+            },
+            "2026-09-12T08:00:00Z",
+        )
+        .unwrap_err();
+        let expected = match case {
+            "empty" | "default" => "PROVIDER_DEFAULT_MODEL_MISSING",
+            "duplicate" => "PROVIDER_MODEL_DUPLICATE",
+            "stale" => "STORE_REVISION_CONFLICT",
+            "drift" => "CODEX_CONFIG_OWNERSHIP_CONFLICT",
+            "connection" | "shared" => "PROVIDER_HAS_BINDINGS_REBIND_REQUIRED",
+            _ => unreachable!(),
+        };
+        assert_eq!(error.code, expected, "{case}");
+        assert_eq!(
+            gateway_model_files(home.path()),
+            before,
+            "partial mutation for {case}: {}",
+            error.code
+        );
+    }
+}
+
+#[test]
+fn gateway_model_update_catalog_failure_preserves_provider_and_binding() {
+    let home = tempfile::tempdir().unwrap();
+    let mut provider = create_gateway_model_account(home.path());
+    provider.default_model = "model-b".into();
+    let revision = list_provider_hub_view_v2(home.path()).unwrap().revision;
+    let before = gateway_model_files(home.path());
+    let catalog = home.path().join(".codex-deepseek-chat/models.json");
+    fs::remove_file(&catalog).unwrap();
+    fs::create_dir(&catalog).unwrap();
+    let error = localagentmanager_core::update_provider_service_v2(
+        home.path(),
+        CreateProviderRequestV2 {
+            expected_revision: revision,
+            provider,
+        },
+        "2026-09-12T08:00:00Z",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "CODEX_MODEL_CATALOG_INVALID");
+    fs::remove_dir(&catalog).unwrap();
+    fs::write(&catalog, &before[4]).unwrap();
+    assert_eq!(gateway_model_files(home.path()), before);
+}

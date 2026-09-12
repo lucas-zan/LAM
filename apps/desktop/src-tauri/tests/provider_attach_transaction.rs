@@ -79,6 +79,7 @@ fn record(id: &str, profile: &str, created_at_ms: u64) -> AttachJournalRecord {
         created_at_ms,
         updated_at_ms: created_at_ms,
         last_error_code: None,
+        provider_update: None,
     }
 }
 
@@ -1047,4 +1048,181 @@ fn startup_recovery_entry_point_is_bounded_and_surfaces_outcomes() {
             remaining: 0
         }
     );
+}
+
+fn model_update_plan(value: &Fixture) -> (ProfileAttachPlan, ProviderProfileV2) {
+    let previous = value
+        .provider_store
+        .load_or_default()
+        .unwrap()
+        .value
+        .providers[0]
+        .clone();
+    let mut next = previous.clone();
+    next.models[1].id = "model-c".into();
+    next.default_model = "model-c".into();
+    let bindings = value.binding_store.load_or_default().unwrap();
+    let plan = plan_profile_attach(
+        plan_provider_route(RoutePlanInput {
+            provider: next,
+            selected_model: "model-c".into(),
+            adapters: AdapterCatalog::standard(),
+        }),
+        AttachPlanContext {
+            profile_id: "profile-a".into(),
+            config_path: value.config_path.to_string_lossy().into(),
+            provider_store_revision: value.provider_store.load_or_default().unwrap().revision + 1,
+            expected_binding_revision: Some(bindings.value.bindings[0].revision),
+            binding_store_revision: bindings.revision,
+            source_config_hash: localagentmanager_core::provider_config_editor::config_hash(
+                &fs::read(&value.config_path).unwrap(),
+            ),
+            binding_drifted: false,
+            credential_ready: true,
+            gateway: GatewayPlanContext {
+                base_url: "http://127.0.0.1:43123/v1".into(),
+                available: true,
+                endpoint_version: 1,
+            },
+            planner_options: BTreeMap::new(),
+            auth_helper_path: "/usr/bin/true".into(),
+            provider_hub_root: value._root.path().to_string_lossy().into(),
+            gateway_binding_id: Some(uuid::Uuid::new_v4().to_string()),
+        },
+    );
+    (plan, previous)
+}
+
+#[test]
+fn model_update_recovers_all_files_before_and_after_binding_commit() {
+    for fault in [
+        TransactionFault::CrashAfterPrepared,
+        TransactionFault::CrashAfterConfigCommitted,
+        TransactionFault::FailBindingCommit,
+        TransactionFault::CrashAfterBindingCommitted,
+    ] {
+        let value = fixture(ProviderProtocol::ChatCompletions);
+        let mut registry = DryRunRegistry::new(300_000, 128);
+        let original = attach_plan(&value, "model-a", None);
+        let ticket = registry.issue(&original, 1_000);
+        coordinator(&value)
+            .execute_attach(&mut registry, &ticket, &original, 1_001, None)
+            .unwrap();
+        let catalog_path = value._root.path().join("models.json");
+        localagentmanager_core::gateway::catalog::write_codex_model_catalog(
+            value._root.path(),
+            &original.route.provider.models,
+        )
+        .unwrap();
+        let catalog_before = fs::read(&catalog_path).unwrap();
+        let config_before = fs::read(&value.config_path).unwrap();
+        let (plan, previous) = model_update_plan(&value);
+        let ticket = registry.issue(&plan, 2_000);
+        coordinator(&value)
+            .execute_provider_update(&mut registry, &ticket, &plan, &previous, 2_001, Some(fault))
+            .unwrap_err();
+        let journal = value.journal_store.load_or_default().unwrap();
+        assert_eq!(journal.value.records.last().unwrap().journal_version, 2);
+        coordinator(&value).recover_pending(3_000, 100).unwrap();
+        let saved = value.provider_store.load_or_default().unwrap();
+        let binding = value
+            .binding_store
+            .load_or_default()
+            .unwrap()
+            .value
+            .bindings
+            .remove(0);
+        if fault == TransactionFault::CrashAfterBindingCommitted {
+            assert_eq!(saved.value.providers[0].default_model, "model-c");
+            assert_eq!(binding.selected_model, "model-c");
+            assert!(String::from_utf8(fs::read(&catalog_path).unwrap())
+                .unwrap()
+                .contains("model-c"));
+        } else {
+            assert_eq!(saved.value.providers[0], previous);
+            assert_eq!(binding.selected_model, "model-a");
+            assert_eq!(fs::read(&catalog_path).unwrap(), catalog_before);
+            assert_eq!(fs::read(&value.config_path).unwrap(), config_before);
+        }
+        assert_eq!(
+            coordinator(&value)
+                .recover_pending(4_000, 100)
+                .unwrap()
+                .remaining,
+            0
+        );
+    }
+}
+
+#[test]
+fn model_update_rejects_stale_revision_and_ticket_replay() {
+    let value = fixture(ProviderProtocol::ChatCompletions);
+    let mut registry = DryRunRegistry::new(300_000, 128);
+    let original = attach_plan(&value, "model-a", None);
+    let ticket = registry.issue(&original, 1_000);
+    coordinator(&value)
+        .execute_attach(&mut registry, &ticket, &original, 1_001, None)
+        .unwrap();
+    let (plan, previous) = model_update_plan(&value);
+    let ticket = registry.issue(&plan, 2_000);
+    coordinator(&value)
+        .execute_provider_update(&mut registry, &ticket, &plan, &previous, 2_001, None)
+        .unwrap();
+    assert!(coordinator(&value)
+        .execute_provider_update(&mut registry, &ticket, &plan, &previous, 2_001, None)
+        .is_err());
+    let (stale, previous) = model_update_plan(&value);
+    let ticket = registry.issue(&stale, 3_000);
+    let snapshot = value.provider_store.load_or_default().unwrap();
+    value
+        .provider_store
+        .compare_and_swap(snapshot.revision, &snapshot.value)
+        .unwrap();
+    assert_eq!(
+        coordinator(&value)
+            .execute_provider_update(&mut registry, &ticket, &stale, &previous, 3_001, None)
+            .unwrap_err()
+            .code,
+        "ATTACH_PLAN_STALE"
+    );
+}
+
+#[test]
+fn model_update_journal_rejects_catalog_paths_outside_the_profile() {
+    let value = fixture(ProviderProtocol::ChatCompletions);
+    let mut registry = DryRunRegistry::new(300_000, 128);
+    let original = attach_plan(&value, "model-a", None);
+    let ticket = registry.issue(&original, 1_000);
+    coordinator(&value)
+        .execute_attach(&mut registry, &ticket, &original, 1_001, None)
+        .unwrap();
+    let (plan, previous) = model_update_plan(&value);
+    let ticket = registry.issue(&plan, 2_000);
+    coordinator(&value)
+        .execute_provider_update(
+            &mut registry,
+            &ticket,
+            &plan,
+            &previous,
+            2_001,
+            Some(TransactionFault::CrashAfterPrepared),
+        )
+        .unwrap_err();
+    let before = fs::read(&value.config_path).unwrap();
+    let snapshot = value.journal_store.load_or_default().unwrap();
+    let mut data = serde_json::to_value(snapshot.value).unwrap();
+    data["records"].as_array_mut().unwrap().last_mut().unwrap()["providerUpdate"]["catalogPath"] =
+        value.config_path.to_string_lossy().to_string().into();
+    value
+        .journal_store
+        .compare_and_swap(snapshot.revision, &serde_json::from_value(data).unwrap())
+        .unwrap();
+    assert_eq!(
+        coordinator(&value)
+            .recover_pending(3_000, 100)
+            .unwrap_err()
+            .code,
+        "ATTACH_JOURNAL_INVALID"
+    );
+    assert_eq!(fs::read(&value.config_path).unwrap(), before);
 }
